@@ -70,11 +70,34 @@ fi
 # --- Python deps for the agent --------------------------------------------
 log "installing backend + agent Python dependencies"
 $SUDO apt-get install -y --no-install-recommends python3-pip python3-venv
-$SUDO pip3 install --quiet --break-system-packages \
-  -r "$REPO_ROOT/backend/requirements.txt" \
-  websocket-client \
-  selenium \
-  pillow 2>/dev/null || log "WARN: some python packages failed; the agent may fall back"
+# The old form of this line was `... 2>/dev/null || log "WARN"`, which threw away
+# pip's error *and* its exit status.  A failed install of uvicorn therefore
+# presented as nothing at all until boot.sh reported "the app is not up", with
+# the real reason sitting in a log nobody was reading.  Requirements and extras
+# are installed separately so one optional failure cannot take uvicorn with it,
+# and a failure is now loud.
+if $SUDO pip3 install --quiet --break-system-packages -r "$REPO_ROOT/backend/requirements.txt"; then
+  log "  ok  backend requirements"
+else
+  log "FATAL: backend requirements failed to install; the app will not start."
+  log "       run this without --quiet to see which package broke."
+  exit 1
+fi
+
+# Optional extras: nice to have, genuinely not required to serve the screen.
+if $SUDO pip3 install --quiet --break-system-packages websocket-client selenium pillow; then
+  log "  ok  agent extras (websocket-client, selenium, pillow)"
+else
+  log "WARN: some agent extras failed; the agent falls back without them"
+fi
+
+# Prove the app's own imports work, so boot.sh does not discover the problem.
+if python3 -c "import uvicorn, fastapi, websockets" 2>/dev/null; then
+  log "  ok  uvicorn + fastapi + websockets import cleanly"
+else
+  log "FATAL: uvicorn/fastapi/websockets are not importable by python3"
+  exit 1
+fi
 
 # --- persistent profile ----------------------------------------------------
 mkdir -p "$CHROME_PROFILE" "$DESKTOP_RUN_DIR" "$WORKSPACE"

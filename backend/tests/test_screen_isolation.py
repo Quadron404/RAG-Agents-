@@ -32,12 +32,29 @@ def read(name: str) -> str:
     return (CODES / name).read_text(encoding="utf-8")
 
 
+def read_repo(rel: str) -> str:
+    return (REPO / rel).read_text(encoding="utf-8")
+
+
 def code_lines(text: str) -> list[str]:
-    """Drop comments and blanks so a check cannot be satisfied by a comment."""
+    """Drop comments and blanks so a check cannot be satisfied by a comment.
+
+    A trailing comment is stripped too, for the same reason: `x11vnc -localhost
+    # never on 0.0.0.0` is a file that *explains* the rule, not one that breaks
+    it, and treating it as a violation would only train people to delete the
+    explanation.
+    """
     out = []
     for ln in text.splitlines():
         stripped = ln.strip()
-        if stripped and not stripped.startswith("#"):
+        if not stripped or stripped.startswith("#"):
+            continue
+        # A '#' inside a string literal would be misread, but the only strings
+        # checked here are hosts, ports and flags, none of which contain one.
+        if "#" in stripped:
+            head = stripped.split("#", 1)[0].strip()
+            stripped = head or ""
+        if stripped:
             out.append(stripped)
     return out
 
@@ -45,12 +62,101 @@ def code_lines(text: str) -> list[str]:
 # --- 1. x11vnc stays on loopback -------------------------------------------
 # -localhost is what confines the RFB stream.  Without it x11vnc binds every
 # interface and 5900 becomes a world-readable VNC server with no passphrase.
+#
+# Read through code_lines, not the raw text: both files have a comment that
+# *mentions* -localhost to explain why it matters, and a raw substring check was
+# satisfied by that comment.  test_bind_mutations.py proves the difference by
+# deleting the flag and watching this fail.
 computer = read("start-computer.sh")
-if "-localhost" not in computer:
+if not any("-localhost" in ln for ln in code_lines(computer)):
     failures.append("x11vnc is started without -localhost, so 5900 would bind every interface")
 
-if "-nolisten tcp" not in computer:
+if not any("-nolisten tcp" in ln for ln in code_lines(computer)):
     failures.append("Xvfb is started without -nolisten tcp, so the X server would accept TCP clients")
+
+# The daemon owns a second x11vnc, and it is the one that actually runs.
+daemon_code = code_lines(read_repo("backend/vm_agent/daemon.py"))
+if not any("-localhost" in ln for ln in daemon_code):
+    failures.append("daemon.py starts x11vnc without -localhost, so 5900 would bind every interface")
+
+# The shell script writes it as one flag ("-nolisten tcp"); the daemon writes it
+# as two argv entries ('"-nolisten", "tcp"'), so both spellings are accepted.
+if not (any("-nolisten tcp" in ln for ln in daemon_code)
+        or any('"-nolisten"' in ln for ln in daemon_code)):
+    failures.append("daemon.py starts Xvfb without -nolisten tcp, so X would accept TCP clients")
+
+# --- 1b. no listener anywhere binds a wildcard ------------------------------
+# This is the check that the real machine failed.  Three processes were binding
+# 0.0.0.0 -- the app, the agent daemon, and (by default) Settings.host -- so a
+# static grep for "127.0.0.1" passed while the live run reported three FAILs.
+#
+# Every bind in the repository is now a literal, so a wildcard is a hard failure
+# rather than something a reviewer has to notice.  Comments are excluded: they
+# are allowed to *mention* 0.0.0.0 to explain why it is wrong.
+DAEMON = read_repo("backend/vm_agent/daemon.py")
+CONFIG = read_repo("backend/app/config.py")
+BOOT = read_repo("codespace/boot.sh")
+
+# (file, label, the call that must be loopback)
+BINDS = (
+    (BOOT, "codespace/boot.sh", "uvicorn"),
+    (DAEMON, "backend/vm_agent/daemon.py", "ThreadingHTTPServer"),
+    (CONFIG, "backend/app/config.py", "HOST"),
+)
+
+for text, label, needle in BINDS:
+    for line in code_lines(text):
+        if "0.0.0.0" not in line:
+            continue
+        # A line may legitimately mention the wildcard only inside a string it
+        # is rejecting, e.g. a guard that refuses it.
+        if needle in line or "bind" in line.lower() or "host" in line.lower():
+            failures.append(
+                f"{label} binds 0.0.0.0 on a line that actually starts a listener: {line.strip()}"
+            )
+            break
+    else:
+        continue
+    break
+
+# The agent daemon is the most dangerous of the three -- it drives the browser
+# and runs commands for the user -- so it gets its own explicit assertion
+# rather than relying on the grep above.
+if not re.search(r"ThreadingHTTPServer\(\(host,\s*port\)", DAEMON):
+    failures.append(
+        "daemon.py does not bind the agent server to the loopback `host` variable"
+    )
+if not re.search(r'def main\(port: int = 9000, host: str = "127\.0\.0\.1"\)', DAEMON):
+    failures.append("daemon.py's main() does not default the agent host to 127.0.0.1")
+
+if not re.search(r"--host\s+127\.0\.0\.1", BOOT):
+    failures.append(
+        "codespace/boot.sh does not start uvicorn with --host 127.0.0.1; it would bind every interface"
+    )
+if not re.search(r'_get\("HOST",\s*"127\.0\.0\.1"\)', CONFIG):
+    failures.append(
+        "config.py defaults HOST to something other than 127.0.0.1, so a bare `python -m app.main` would bind every interface"
+    )
+
+# The committed template is what a fresh Codespace copies from, so a wildcard
+# there is worse than a wildcard in the code: it is the documented, blessed
+# way to configure the app, and it reaches the real machine via .env.
+ENV_EXAMPLE = read_repo("backend/.env.example")
+env_lines = [
+    ln.strip()
+    for ln in ENV_EXAMPLE.splitlines()
+    if ln.strip() and not ln.strip().startswith("#")
+]
+for line in env_lines:
+    if line.startswith("HOST="):
+        if line.split("=", 1)[1].strip() != "127.0.0.1":
+            failures.append(
+                f"backend/.env.example sets HOST={line.split('=', 1)[1].strip()!r}; "
+                "copying it to .env publishes the app on every interface"
+            )
+        break
+else:
+    failures.append("backend/.env.example does not set HOST; the default should be stated explicitly")
 
 # --- 2. websockify stays on loopback ----------------------------------------
 for name in ("start-computer.sh", "supervise.sh"):

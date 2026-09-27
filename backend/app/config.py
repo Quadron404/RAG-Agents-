@@ -40,7 +40,14 @@ def _get_bool(key: str, default: str = "0") -> bool:
 
 @dataclass
 class Settings:
-    host: str = field(default_factory=lambda: _get("HOST", "0.0.0.0"))
+    # 127.0.0.1, never 0.0.0.0.  The app is published by a Cloudflare Quick
+    # Tunnel, which dials in over loopback from the same machine, so a wildcard
+    # bind is never required -- and it would put the app, and therefore
+    # /websockify and the signed-in Chrome behind it, on every interface the
+    # Codespace has.  HOST is still honoured for a container network you
+    # control, but it must be set deliberately; the Codespace launcher passes
+    # 127.0.0.1 on the command line, which wins over this value regardless.
+    host: str = field(default_factory=lambda: _get("HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(_get("PORT", "8000")))
     data_dir: str = field(default_factory=lambda: _get("DATA_DIR", "./data"))
 

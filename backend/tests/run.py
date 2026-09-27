@@ -17,6 +17,9 @@ TESTS = (
     "test_websockify_proxy",
     "test_vnc_bridge",
     "test_rfb_handshake",
+    # Runs last: it edits files to prove the isolation checks actually fail when
+    # a listener is opened to a wildcard, and restores them afterwards.
+    "test_bind_mutations",
 )
 
 

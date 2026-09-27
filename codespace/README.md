@@ -170,6 +170,16 @@ It is not a way around the lock: `/ws/screen` is session-gated exactly like
 `/websockify`. The badge in the top-left of the Computer view always says which
 route is live: **Quick tunnel** or **Local relay**.
 
+| `vnc_port` | `5900` | x11vnc / RFB. `-localhost`, so no public port. |
+| `websockify_port` | `6080` | the RFB→WebSocket hop the app's `/websockify` proxies to. Loopback only. |
+| `backend_port` | `8000` | the app. Loopback only, and the *only* port the tunnel publishes. |
+| `agent_port` | `9000` | the browser/files/terminal daemon. Loopback only. |
+
+Nothing in that table may ever be a wildcard. Three of them were `0.0.0.0` at
+one point and a live run caught it; `backend/tests/test_bind_mutations.py` now
+mutates each bind back to a wildcard and fails if the suite stops noticing, so
+the mistake cannot be reintroduced quietly.
+
 ## Troubleshooting
 
 Start with `bash codespace/verify.sh` — it names the failing step, which is
@@ -182,5 +192,9 @@ usually faster than reading logs by hand.
 | Screen stuck on "connecting" | The tunnel is up but the origin is not. Check `listening 6080`. |
 | 502 from Cloudflare | The backend on 8000 is not running. Check `backend.log`. |
 | `cloudflared: command not found` | Run `codespace/install.sh`, or use the Codespaces port forward — the screen still works over `/ws/screen`. |
+| The app is not up, and `backend.log` shows `ModuleNotFoundError` | `install.sh` never completed. It now exits non-zero and says so; re-run `sudo bash codespace/install.sh`. `boot.sh` also picks `backend/.venv` if the deps are there. |
+| `boot.sh` prints `FATAL: no python with uvicorn+fastapi` | Neither the venv nor system python3 has the requirements. `sudo bash codespace/install.sh`. |
+| RFB is up but the Computer view cannot connect | websockify on 6080 is not running. It is supervised by both the daemon and `supervise.sh`; check `/display/status`, which reports `websockify` and its pid, and `/tmp/websockify.log`. |
+| `/display/status` says `vnc: true` but nothing is viewable | `vnc` being true only means RFB is listening. Check `websockify` in the same payload — that was the exact shape of the 6080 failure. |
 | Chrome logs out every rebuild | `CHROME_PROFILE` is pointing off the persistent volume. |
 | Blank screen, everything "up" | Chrome may not have started. Check `chromium.log` and `/display/status`. |

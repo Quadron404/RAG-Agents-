@@ -707,6 +707,11 @@ DESKTOP_SIZE = os.environ.get("DESKTOP_SIZE", "1365x768")
 DESKTOP_DEPTH = int(os.environ.get("DESKTOP_DEPTH", "24"))
 DESKTOP_WM = os.environ.get("DESKTOP_WM", "fluxbox")
 VNC_PORT = int(os.environ.get("VNC_PORT", "5900"))
+# The RFB -> WebSocket hop.  The app proxies /websockify here after checking the
+# session cookie, so this port is the only way the framebuffer leaves the
+# machine and it is bound to loopback like every other one.
+WEBSOCKIFY_PORT = int(os.environ.get("WEBSOCKIFY_PORT", "6080"))
+NOVNC_WEB = os.environ.get("NOVNC_WEB", "/usr/share/novnc")
 VNC_PASSWORD = os.environ.get("VNC_PASSWORD", "")
 CHROME_PROFILE = os.environ.get("CHROME_PROFILE", "/workspaces/chrome-profile")
 CHROME_DEBUG_PORT = int(os.environ.get("CHROME_DEBUG_PORT", str(CDP_DEBUG_PORT)))
@@ -1074,6 +1079,12 @@ def _desktop_status() -> dict:
         "vnc_pid": _read_pid("vnc"),
         "vnc_clients": _clients_connected(VNC_PORT),
         "vnc_password": bool(VNC_PASSWORD),
+        # Reported so /display/status can distinguish "RFB is up" from "there is
+        # actually a way in".  A healthy x11vnc with a dead 6080 is exactly the
+        # failure that looked fine from the outside.
+        "websockify": _port_listening(WEBSOCKIFY_PORT),
+        "websockify_port": WEBSOCKIFY_PORT,
+        "websockify_pid": _read_pid("websockify"),
         "chromium": _port_listening(CHROME_DEBUG_PORT),
         "chromium_pid": _read_pid("chromium"),
         "cdp_port": CHROME_DEBUG_PORT,
@@ -1083,6 +1094,41 @@ def _desktop_status() -> dict:
     }
 
 
+def _ensure_websockify() -> None:
+    """Keep websockify alive on 127.0.0.1:6080.
+
+    This belongs here, not only in codespace/supervise.sh.  The daemon is the
+    process that owns the screen chain, and websockify is the last link in it
+    (RFB 5900 -> WebSocket 6080 -> the app's /websockify).  When it was started
+    only by the shell supervisor, a race between the two left 6080 down while
+    everything upstream reported healthy -- x11vnc up, Chrome up, agent up, and
+    no way in.
+
+    Both the daemon and supervise.sh can start it; whichever gets there first
+    wins and the other sees the port listening and does nothing.  The bind is
+    written as 127.0.0.1 explicitly rather than relying on a flag, because this
+    is the one port that must never appear on a public interface.
+    """
+    if not _x_running():
+        return
+    if _alive("websockify") and _port_listening(WEBSOCKIFY_PORT):
+        return
+    _kill_pid("websockify")
+    web_root = NOVNC_WEB
+    argv = [
+        "websockify",
+        f"--web={web_root}",
+        f"127.0.0.1:{WEBSOCKIFY_PORT}",
+        f"127.0.0.1:{VNC_PORT}",
+    ]
+    _spawn("websockify", argv)
+    _note_restart("websockify")
+    for _ in range(40):
+        if _port_listening(WEBSOCKIFY_PORT):
+            break
+        time.sleep(0.25)
+
+
 def _desktop_ensure() -> dict:
     """Bring the whole stack up now (used by the backend and by /tool/exec)."""
     with _desktop_spawn_lock:
@@ -1090,6 +1136,7 @@ def _desktop_ensure() -> dict:
         _ensure_x()
         _ensure_wm()
         _ensure_vnc()
+        _ensure_websockify()
         _ensure_chromium()
     return _desktop_status()
 
@@ -1100,7 +1147,7 @@ def _desktop_restart(chromium_only: bool = False) -> dict:
             _kill_pid("chromium", 9)
             time.sleep(0.5)
         else:
-            for name in ("chromium", "vnc", "wm", "xvfb"):
+            for name in ("chromium", "websockify", "vnc", "wm", "xvfb"):
                 _kill_pid(name, 9)
             time.sleep(0.5)
     return _desktop_ensure()
@@ -1127,6 +1174,7 @@ def _desktop_supervisor_loop() -> None:
                 _ensure_x()
                 _ensure_wm()
                 _ensure_vnc()
+                _ensure_websockify()
                 _ensure_chromium()
         except Exception:
             pass
@@ -1439,7 +1487,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, result)
 
 
-def main(port: int = 9000):
+def main(port: int = 9000, host: str = "127.0.0.1"):
     # Bring up the real graphical session immediately so the VM screen is
     # already there by the time the backend probes it.
     try:
@@ -1449,8 +1497,13 @@ def main(port: int = 9000):
     threading.Thread(
         target=_desktop_supervisor_loop, name="desktop-supervisor", daemon=True
     ).start()
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"vm-agent daemon listening on 0.0.0.0:{port} workspace={WORKSPACE}", flush=True)
+    # 127.0.0.1, never 0.0.0.0.  This daemon can drive the browser, read the
+    # user's files and run shell commands on their behalf, so it is the single
+    # most damaging port on the machine to expose.  Nothing reaches it from
+    # outside: the backend talks to it over loopback, and the Quick Tunnel only
+    # publishes the app on :8000.
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"vm-agent daemon listening on {host}:{port} workspace={WORKSPACE}", flush=True)
     print(
         f"desktop display={DESKTOP_DISPLAY} size={DESKTOP_SIZE} vnc_port={VNC_PORT}",
         flush=True,
@@ -1460,4 +1513,15 @@ def main(port: int = 9000):
 
 if __name__ == "__main__":
     import sys
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 9000)
+
+    # --host is opt-in and only for someone deliberately debugging on another
+    # host; the default is loopback because that is the only correct value in a
+    # Codespace.  Refuse 0.0.0.0 unless it is asked for by name.
+    _args = sys.argv[1:]
+    _host = os.environ.get("AGENT_HOST", "127.0.0.1")
+    if "--host" in _args:
+        _i = _args.index("--host")
+        if _i + 1 < len(_args):
+            _host = _args[_i + 1]
+            del _args[_i : _i + 2]
+    main(int(_args[0]) if _args else 9000, _host)

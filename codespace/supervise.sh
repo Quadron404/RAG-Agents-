@@ -37,25 +37,60 @@ start_agent() {
   CHROME_DEBUG_PORT="$CHROME_DEBUG_PORT" \
   DESKTOP_RUN_DIR="$DESKTOP_RUN_DIR" \
   DESKTOP_LOG_DIR="$DESKTOP_LOG_DIR" \
+  WEBSOCKIFY_PORT="$WEBSOCKIFY_PORT" \
+  NOVNC_WEB="$NOVNC_WEB" \
+  # AGENT_HOST is not set: the daemon defaults to 127.0.0.1 and that is the only
+  # correct value here.  This daemon drives the browser and runs commands for
+  # the user, so it must never be reachable from another host.
   setsid python3 "$AGENT_PY" "$AGENT_PORT" \
     >>"$DESKTOP_LOG_DIR/agent.log" 2>&1 &
   CHILD_PID[agent]=$!
+  # The daemon tracks its children in RUN_DIR/<name>.pid, so the supervisor and
+  # the daemon must agree on the directory or they fight over pid files.
   echo "$CHILD_PID[agent]" > "$RUN_DIR/supervisor-agent.pid"
-  log "agent started (pid ${CHILD_PID[agent]})"
+  log "agent started (pid ${CHILD_PID[agent]}) on 127.0.0.1:$AGENT_PORT"
+
+  if ! listening "$AGENT_PORT"; then
+    sleep 2
+    if ! listening "$AGENT_PORT"; then
+      log "WARNING: the agent is not answering on 127.0.0.1:$AGENT_PORT; see $DESKTOP_LOG_DIR/agent.log"
+    fi
+  fi
 }
 
 start_websockify() {
-  # Already up (e.g. started by hand) means nothing to do.
+  # Already up (e.g. started by hand, or by the agent daemon, which owns this
+  # link too) means nothing to do.  Both supervisors use the same port and the
+  # same pid file name, so the loser of the race exits without a second bind.
   if listening "$WEBSOCKIFY_PORT"; then
     log "websockify already listening on 127.0.0.1:$WEBSOCKIFY_PORT"
     return 0
+  fi
+  # Only start it once RFB is actually accepting, or websockify comes up and
+  # then sits there with nothing to connect to.
+  if ! listening "$VNC_PORT"; then
+    log "waiting for x11vnc on 127.0.0.1:$VNC_PORT before starting websockify"
+    for _ in $(seq 1 30); do
+      listening "$VNC_PORT" && break
+      sleep 1
+    done
   fi
   setsid websockify "--web=$NOVNC_WEB" \
     "127.0.0.1:$WEBSOCKIFY_PORT" "127.0.0.1:$VNC_PORT" \
     >>"$DESKTOP_LOG_DIR/websockify.log" 2>&1 &
   CHILD_PID[websockify]=$!
-  echo "$CHILD_PID[websockify]" > "$RUN_DIR/supervisor-websockify.pid"
-  log "websockify started (pid ${CHILD_PID[websockify]})"
+  # The same name the daemon uses, so the two supervisors cannot each spawn a
+  # websockify and fight over the port.
+  echo "$CHILD_PID[websockify]" > "$RUN_DIR/websockify.pid"
+  for _ in $(seq 1 20); do
+    listening "$WEBSOCKIFY_PORT" && break
+    sleep 0.5
+  done
+  if listening "$WEBSOCKIFY_PORT"; then
+    log "websockify started (pid ${CHILD_PID[websockify]}) on 127.0.0.1:$WEBSOCKIFY_PORT"
+  else
+    log "WARNING: websockify did not open 127.0.0.1:$WEBSOCKIFY_PORT; see $DESKTOP_LOG_DIR/websockify.log"
+  fi
 }
 
 start_tunnel() {
@@ -91,6 +126,9 @@ ensure_websockify() {
     kill -9 "${CHILD_PID[websockify]}" 2>/dev/null
     sleep 1
   fi
+  # A stale pid file left by a dead process must not be mistaken for a live one,
+  # or every later check agrees with itself and the port stays down forever.
+  rm -f "$RUN_DIR/websockify.pid"
   start_websockify
 }
 
@@ -110,6 +148,13 @@ while true; do
     start_agent
   fi
 
+  # websockify is supervised twice on purpose: the daemon owns the screen chain
+  # and restarts this link on its own 2s tick, and this loop covers the case
+  # where the daemon itself is the thing that failed.  Both are idempotent.
+  if ! listening "$WEBSOCKIFY_PORT" && ! listening "$VNC_PORT"; then
+    log "the whole screen chain is down; restarting the agent"
+    start_agent
+  fi
   ensure_websockify
 
   if ! child_alive tunnel; then
