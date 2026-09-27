@@ -3,16 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import auth
 from .agents.commander import Commander
 from .config import Settings, load_settings
 from .db import Database
@@ -22,6 +24,7 @@ from .providers import build_providers
 from .tools.executor import Executor
 from .tools.workspace import WorkspaceClient
 from .vm import vnc as vnc_bridge
+from .vm import websockify_proxy
 from .workspace import WorkspaceManager
 
 settings = load_settings()
@@ -55,12 +58,112 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RAG Agents Backend", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware on purpose.  The UI and the screen are served from this
+# same process, so every request is same-origin and CORS is not needed -- and a
+# wildcard here would be actively wrong: `Access-Control-Allow-Origin: *` is
+# incompatible with credentialed requests, and re-enabling it would mean
+# either dropping the session cookie or reflecting arbitrary origins.  A
+# separate frontend origin (Vite in development) is proxied by Vite, not by this
+# process, so it does not need an exception here either.
+
+
+# --- who is allowed in ------------------------------------------------------
+# The Quick Tunnel puts this app on the open internet, and the Computer view is
+# a live keyboard-driven signed-in browser.  A trycloudflare.com URL is not a
+# secret, so every route that could touch the machine, the conversations or the
+# screen requires a session.  /health, /auth/* and the static UI stay open: the
+# first two are needed to log in, and the third is the login page itself.
+# Paths that must work before anybody has logged in: the health probe, the login
+# endpoints themselves, and the static assets that make up the login page.  The
+# catch-all UI at "/" is public for the same reason -- it *is* the login page.
+#
+# Deliberately absent: /websockify and /ws/screen.  The screen is the thing worth
+# protecting, and /ws/screen has an explicit check in its own handler because HTTP
+# middleware does not run for WebSocket upgrades.
+_PUBLIC_EXACT = frozenset({"/health", "/auth/login", "/auth/status", "/auth/logout"})
+_PUBLIC_PREFIXES = ("/assets/", "/favicon")
+
+
+def _is_public(path: str) -> bool:
+    if path in _PUBLIC_EXACT:
+        return True
+    return any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
+
+
+def _session_ok(request: Request) -> bool:
+    if not auth.enabled():
+        # No passphrase configured.  Refuse to serve rather than serve openly:
+        # a missing secret should stop the deployment, not silently disable the
+        # only thing protecting a signed-in browser.
+        return False
+    return auth.check_cookie(request.cookies.get("rag_session"))
+
+
+@app.middleware("http")
+async def require_session(request: Request, call_next):
+    """Refuse unauthenticated HTTP requests to anything but the login page.
+
+    A Quick Tunnel is a public URL.  Without this, /threads, /file and the
+    agent tools would all be open to anyone who learned the link, so the
+    check has to live in front of the routes rather than inside each handler --
+    a new route added later would otherwise be public by default.
+    """
+    path = request.url.path
+    if _is_public(path):
+        return await call_next(request)
+    # Fail closed: no passphrase configured means nobody can be authenticated,
+    # so the route is refused rather than served.  An unconfigured secret must
+    # stop the deployment, not quietly disable the only thing standing between a
+    # public tunnel and a signed-in browser.
+    if auth.enabled() and _session_ok(request):
+        return await call_next(request)
+    # The SPA is served from "/", so an unauthenticated visitor is sent to the
+    # app itself and the frontend shows the login screen.  Anything else gets a
+    # plain 401, which is what a fetch() expects.
+    if path == "/" or not path.startswith(("/threads", "/sysinfo", "/file", "/cdp", "/computer", "/screen", "/auth")):
+        return await call_next(request)
+    return JSONResponse(
+        {"ok": False, "error": "authentication required", "auth_required": True},
+        status_code=401,
+    )
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    """Whether a passphrase is required, and whether this caller has one."""
+    return {
+        "auth_required": auth.enabled(),
+        "authenticated": _session_ok(request),
+    }
+
+
+class LoginBody(BaseModel):
+    passphrase: str = ""
+
+
+@app.post("/auth/login")
+async def auth_login(body: LoginBody, request: Request):
+    if not auth.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "no passphrase is configured on the server"},
+            status_code=503,
+        )
+    if not auth.check_passphrase(body.passphrase):
+        # Deliberately vague: a message that distinguishes "wrong passphrase"
+        # from "no such user" helps someone guessing.
+        return JSONResponse({"ok": False, "error": "incorrect passphrase"}, status_code=401)
+    return JSONResponse(
+        {"ok": True},
+        headers={"Set-Cookie": auth.session_cookie(auth._request_is_secure(request))},
+    )
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    return JSONResponse(
+        {"ok": True},
+        headers={"Set-Cookie": auth.cleared_cookie(auth._request_is_secure(request))},
+    )
 
 
 class NewThreadBody(BaseModel):
@@ -175,15 +278,15 @@ async def proxy_cdp_status(user_id: str = ""):
 
 
 # ---------------------------------------------------------------------------
-# Live screen — the real framebuffer over VNC
+# Live screen - the real framebuffer over VNC
 #
-# Production path: the Computer view connects straight to
-#   wss://computer.<domain>/websockify
-# which Cloudflare Access authenticates and the tunnel forwards to
-# websockify on loopback.  Nothing below is on that route.
+# Production path: the Computer view opens /websockify on the tunnel's own
+# origin, which this app proxies to websockify on loopback after checking the
+# session cookie.  Nothing below is on that route.
 #
 # Fallback path: /ws/screen relays raw RFB over this backend so the screen
-# still works while developing, or if the tunnel is down.
+# still works while developing, or if the tunnel is down.  It is gated the same
+# way, so it is a different path and not a weaker one.
 # ---------------------------------------------------------------------------
 
 
@@ -210,26 +313,88 @@ def _screen_payload(listening: bool, display: dict, note: str = "") -> dict:
     }
 
 
+# Only a real quick-tunnel origin is worth publishing.  The file is written by
+# codespace/start-tunnel.sh, but PUBLIC_URL_FILE is configurable and a stale or
+# hand-edited value must not be able to aim the viewer somewhere unexpected --
+# and "somewhere" is a live keyboard-driven browser, so a bogus origin here is
+# not a cosmetic bug.  Requiring the full https://<name>.trycloudflare.com shape
+# also means a lookalike such as ....trycloudflare.com.evil.com is rejected.
+_TUNNEL_ORIGIN_RE = re.compile(
+    r"^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$"
+)
+
+
+def _published_url() -> tuple[str, str]:
+    """The Quick Tunnel's current public origin, read from disk.
+
+    A Quick Tunnel is assigned a fresh ``trycloudflare.com`` hostname every time
+    cloudflared starts and cannot be told what it will be, so there is nothing to
+    configure ahead of time.  The tunnel script therefore writes the URL it was
+    handed into a file, and this reads it.
+
+    Reading a file on every call -- rather than caching at startup -- is what
+    makes a tunnel restart work: the next ``/screen/config`` sees the new
+    hostname and the viewer reconnects to it with no rebuild and no redeploy.
+
+    Anything that is not recognisably a quick-tunnel origin returns empty, and
+    empty means "use the in-app relay" rather than "send the viewer somewhere
+    unexpected".  A loopback URL fails that check too, which is correct: it names
+    this machine, not a published tunnel.
+
+    Returns (origin, age_seconds).  age lets the UI explain a stale URL instead
+    of quietly showing a screen that has been dead for an hour.
+    """
+    path = settings.public_url_file
+    try:
+        raw = open(path, encoding="utf-8").read().strip()
+    except OSError:
+        return "", 0.0
+    # cloudflared can echo http:// in some versions; the public edge is always
+    # https, so normalise before validating rather than after.
+    if raw.startswith("http://"):
+        raw = "https://" + raw[len("http://") :]
+    origin = raw.rstrip("/")
+    if not _TUNNEL_ORIGIN_RE.match(origin):
+        return "", 0.0
+    try:
+        age = max(0.0, time.time() - os.path.getmtime(path))
+    except OSError:
+        age = 0.0
+    return origin, age
+
+
 @app.get("/screen/config")
-async def screen_config():
+async def screen_config(request: Request):
     """Where the Computer view should open its WebSocket.
 
-    This is the one place that knows the public route exists, so the hostname
-    stays a server-side setting.  When COMPUTER_WS_URL is unset the client
-    falls back to this backend's own relay, which is correct for local
-    development and never correct for production.
+    The public route is the same origin this app is served from, which is what
+    makes the session cookie first-party for the WebSocket upgrade: the browser
+    has already proved who it is to load the page, and carries the same cookie
+    when it opens the screen.  Nothing about the screen can be reached without
+    that cookie, which is what makes an unguessable-but-not-secret tunnel URL
+    acceptable here.
     """
-    public = settings.computer_ws_url
+    origin, age = _published_url()
+    # Only advertise a public route we can actually vouch for.
+    public = f"{origin}/websockify" if origin else ""
+    # The WebSocket() constructor would normalise https->wss for us, but handing
+    # the viewer a literal wss:// URL keeps the value honest about what it is and
+    # keeps it usable by anything that is not a browser.
+    ws_public = public.replace("https://", "wss://", 1) if public else ""
     return {
         "ok": True,
         "mode": "tunnel" if public else "bridge",
-        # The authenticated, Cloudflare-proxied endpoint.
-        "wsUrl": public,
+        # Same-origin, authenticated by the session cookie.
+        "wsUrl": ws_public,
         # Used only in bridge mode; the client appends nothing to it.
         "bridgePath": "/ws/screen",
         # noVNC negotiates the binary subprotocol; websockify serves it.
         "wsProtocols": ["binary"],
         "websockifyPort": computer.websockify_port,
+        # Lets the UI say the tunnel moved, or that it has been gone a while.
+        "publicOrigin": origin,
+        "publicUrlAgeSeconds": round(age, 1),
+        "authRequired": auth.enabled(),
     }
 
 
@@ -282,14 +447,41 @@ async def screen_browser_restart():
     return JSONResponse(content=result)
 
 
+@app.websocket("/websockify")
+async def ws_websockify(websocket: WebSocket):
+    """The public screen endpoint: this app -> local websockify -> RFB.
+
+    This is the only path from the internet to the remote Chrome, and it is on
+    the same origin as the UI, so the session cookie that let the user load the
+    page is presented here too.  A browser cannot add headers to a WebSocket
+    handshake, which is exactly why the cookie -- not a bearer token -- is the
+    credential.
+
+    websockify on :6080 is never published.  The Quick Tunnel points at this
+    process, so the RFB stream and 5900 stay on loopback and the tunnel is the
+    only door.
+    """
+    if not _session_ok(websocket):
+        # 1008 = policy violation.  Denying before accept() means the client
+        # gets a clean rejection rather than a screen that connects and then
+        # hangs, which is indistinguishable from a broken tunnel.
+        await websocket.close(code=1008)
+        return
+    target = websockify_proxy.loopback_websockify_url(computer.websockify_port)
+    await websockify_proxy.proxy_websockify(websocket, target)
+
+
 @app.websocket("/ws/screen")
 async def ws_screen(websocket: WebSocket):
     """Fallback relay: a binary WebSocket straight to the VNC server.
 
-    Used only when no public COMPUTER_WS_URL is configured.  The socket carries
-    raw RFB, so status and control stay on the HTTP routes above and the client
-    never has to demultiplex two protocols.
+    Used when no Quick Tunnel is publishing a public URL, e.g. during local
+    development.  The socket carries raw RFB, so status and control stay on the
+    HTTP routes above and the client never has to demultiplex two protocols.
     """
+    if not _session_ok(websocket):
+        await websocket.close(code=1008)
+        return
     target = _screen_endpoint()
     if target is None:
         await websocket.close(code=1008)
@@ -303,6 +495,12 @@ async def ws_screen(websocket: WebSocket):
 
 @app.websocket("/ws/{user_id}")
 async def ws_endpoint(websocket: WebSocket, user_id: str):
+    # The app session is a control channel: it starts the computer, runs the
+    # agents and reads their conversations.  On a public tunnel it needs the
+    # same session cookie as everything else.
+    if not _session_ok(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     await websocket.send_json({"type": "connected", "user_id": user_id})
     active_thread = None

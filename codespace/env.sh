@@ -23,8 +23,11 @@ export CHROME_DEBUG_PORT="${CHROME_DEBUG_PORT:-9222}"
 
 # --- ports (loopback only) -------------------------------------------------
 # x11vnc exports the real framebuffer as RFB.  websockify turns that into a
-# WebSocket and serves the noVNC client.  Both bind 127.0.0.1 and nothing else:
-# the only route out is the Cloudflare Tunnel, which is authenticated.
+# WebSocket and serves the noVNC client.  Both bind 127.0.0.1 and nothing else.
+#
+# The tunnel publishes neither of them.  It publishes the app on BACKEND_PORT,
+# and the app proxies /websockify to 6080 after checking the session cookie, so
+# RFB never has a public port of its own.
 export VNC_PORT="${VNC_PORT:-5900}"
 export WEBSOCKIFY_PORT="${WEBSOCKIFY_PORT:-6080}"
 export NOVNC_WEB="${NOVNC_WEB:-/usr/share/novnc}"
@@ -50,15 +53,21 @@ export DESKTOP_RUN_DIR="${DESKTOP_RUN_DIR:-/tmp/ragdesktop}"
 export DESKTOP_LOG_DIR="${DESKTOP_LOG_DIR:-/tmp}"
 
 # --- cloudflare ------------------------------------------------------------
-# Deliberately NOT a quick tunnel: a trycloudflare.com URL is public, changes on
-# every restart and cannot be put behind Access.  This is a named tunnel whose
-# token arrives as a Codespace secret.
-export CF_TUNNEL_TOKEN="${CF_TUNNEL_TOKEN:-}"
-# Where cloudflared's config lives.  Copy cloudflared/config.yml.example to this
-# path and set hostname + origin, or export COMPUTER_HOSTNAME and let
-# start-tunnel.sh generate it.
-export CF_CONFIG="${CF_CONFIG:-$REPO_ROOT/codespace/cloudflared/config.yml}"
-export COMPUTER_HOSTNAME="${COMPUTER_HOSTNAME:-}"
+# A Quick Tunnel: no account, no domain, no token, no config file.  cloudflared
+# prints a random https://<something>.trycloudflare.com origin on startup, which
+# changes on every restart, so nothing can be hardcoded anywhere.
+#
+# What protects the screen is therefore NOT the URL -- a trycloudflare hostname
+# turns up in DNS and proxy logs, and anyone who sees it can call the same
+# origin.  What protects it is the app's own session: RAG_AUTH_TOKEN mints a
+# cookie, and the app refuses /websockify without one.  The tunnel is only a
+# pipe; the passphrase is the lock.
+export CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-cloudflared}"
+# Only the app is published.  5900 and 6080 stay on loopback forever.
+export TUNNEL_ORIGIN="http://127.0.0.1:$BACKEND_PORT"
+# The tunnel script writes the live origin here; /screen/config reads it so the
+# browser learns the current hostname instead of guessing or being rebuilt.
+export PUBLIC_URL_FILE="${PUBLIC_URL_FILE:-$DESKTOP_RUN_DIR/public-url}"
 
 # --- helpers ---------------------------------------------------------------
 log() { printf '[computer] %s\n' "$*" >&2; }

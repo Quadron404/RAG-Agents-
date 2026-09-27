@@ -2,7 +2,9 @@ import { Search, Settings } from "lucide-react";
 import { useUi, type ViewId } from "../store";
 import { useCore } from "../core";
 import { runSummary } from "../lib/agents";
+import { useAuth } from "../lib/auth";
 import { IconButton } from "./ui";
+import { SignOutButton } from "./LoginScreen";
 
 const TITLES: Record<ViewId, { title: () => string; sub: () => string }> = {
   chat: {
@@ -75,6 +77,7 @@ export function TopBar() {
           />
         ) : null}
         <IconButton icon={Settings} onClick={() => setSettingsOpen(true)} title="Settings" ariaLabel="Settings" />
+        {useAuth((s) => s.required) ? <SignOutButton /> : null}
       </div>
     </header>
   );

@@ -2,3 +2,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 httpx>=0.27.0
 pydantic>=2.7.0
+
+# /websockify relays the WebSocket to the local websockify, so this is imported
+# directly rather than relied on as a transitive dependency of uvicorn[standard].
+websockets>=12.0

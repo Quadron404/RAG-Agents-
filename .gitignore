@@ -61,3 +61,9 @@ backend/_vm-archive/
 .DS_Store
 Thumbs.db
 *.swp
+
+# --- runtime tunnel state -------------------------------------------------
+# The tunnel script writes the live trycloudflare URL here, and the backend
+# reads it. It is machine state, changes on every restart, and has no business
+# in version control.
+public-url

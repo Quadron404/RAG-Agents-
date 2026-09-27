@@ -23,6 +23,9 @@ export default defineConfig({
     proxy: {
       // /ws covers the agent session and the raw-RFB /ws/screen relay.
       "/ws": { target: BACKEND.replace(/^http/, "ws"), ws: true },
+      // /auth is what mints the session cookie, so it has to be proxied too or
+      // the login form would 404 in dev and the app would be unusable.
+      "/auth": BACKEND,
       "/threads": BACKEND,
       "/computer": BACKEND,
       "/screen": BACKEND,

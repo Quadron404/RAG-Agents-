@@ -10,8 +10,11 @@ import subprocess
 import sys
 
 TESTS = (
+    "test_auth",
     "test_screen_url",
     "test_screen_isolation",
+    "test_tunnel_url",
+    "test_websockify_proxy",
     "test_vnc_bridge",
 )
 

@@ -1,38 +1,48 @@
-import { api, wsUrl } from "../core";
+import { apiFetch, wsUrl } from "../core";
 
 /* ============================================================================
    Where the live screen lives.
 
    Two routes, one implementation of the viewer:
 
-   tunnel  (production)
-     The Computer view opens a WebSocket straight to
-     wss://computer.<domain>/websockify.  Cloudflare Access authenticates it and
-     the tunnel forwards it to websockify on the remote machine's loopback.
-     The backend is not in the data path at all, so no frame ever touches the
-     API process.
+   tunnel  (deployed)
+     A Cloudflare Quick Tunnel publishes the RAG Agents app on a random
+     trycloudflare.com origin.  The Computer view opens a WebSocket to
+     /websockify on that same origin; the app proxies the last hop to websockify
+     on the machine's loopback.
 
-   bridge  (development / tunnel outage)
+     The tunnel URL is not a secret, so it is not what protects the screen: the
+     session cookie is.  Because /websockify is same-origin with the app, the
+     cookie the browser already presented to load the page rides along with the
+     upgrade automatically -- no second login, no token in the URL.
+
+     The hostname changes every time the tunnel restarts, so it is never
+     hardcoded.  The server reads the live one from the tunnel script and
+     /screen/config hands it over, which is what lets a restarted tunnel be
+     picked up on the next load.
+
+   bridge  (local development, or no tunnel running)
      The backend relays raw RFB over its own WebSocket at /ws/screen.  Same
-     protocol, same noVNC client, just one extra hop.  Convenient locally and
-     the reason the screen still works when Cloudflare is down -- but it is
-     never the production route, because it is not covered by Access.
+     protocol, same noVNC client, one extra hop, and no Cloudflare involved.
 
-   The choice is a *server* setting (COMPUTER_WS_URL) surfaced through
-   /screen/config, so the hostname lives in exactly one place and the bundle
-   never has to be rebuilt when it changes.
+   Both require the same session, so neither is a way around the lock screen.
    ========================================================================== */
 
 export type ScreenMode = "tunnel" | "bridge";
 
 export interface ScreenConfig {
   mode: ScreenMode;
-  /** The authenticated, Cloudflare-proxied endpoint. Empty in bridge mode. */
+  /** The public, session-gated endpoint. Empty in bridge mode. */
   wsUrl: string;
   /** Backend path used only in bridge mode. */
   bridgePath: string;
   /** noVNC negotiates the binary subprotocol; websockify serves it. */
   wsProtocols: string[];
+  /** The tunnel's current origin, for display. */
+  publicOrigin?: string;
+  /** How long ago that URL was published; large means the tunnel has moved on. */
+  publicUrlAgeSeconds?: number;
+  authRequired?: boolean;
 }
 
 const FALLBACK: ScreenConfig = {
@@ -44,13 +54,30 @@ const FALLBACK: ScreenConfig = {
 
 let cached: ScreenConfig | null = null;
 let inflight: Promise<ScreenConfig> | null = null;
+let fetchedAt = 0;
 
-/** Fetch (once) how the viewer should connect. Falls back to the bridge. */
-export function loadScreenConfig(): Promise<ScreenConfig> {
-  if (cached) return Promise.resolve(cached);
+/**
+ * How long one answer is trusted.
+ *
+ * A Quick Tunnel is given a new random hostname every time it restarts, so a
+ * config cached for the life of the page would keep pointing noVNC at an
+ * address that no longer resolves.  Re-reading on a timer means a tab left open
+ * across a tunnel restart reconnects to the new origin by itself.
+ */
+const TTL_MS = 30_000;
+
+/**
+ * Fetch how the viewer should connect, falling back to the bridge.
+ *
+ * Cached briefly (not forever) to absorb the bursts of mounts that happen when
+ * several views come up together, while still noticing a new tunnel URL.
+ */
+export function loadScreenConfig(force = false): Promise<ScreenConfig> {
+  const fresh = Date.now() - fetchedAt < TTL_MS;
+  if (!force && cached && fresh) return Promise.resolve(cached);
   // De-duplicate the concurrent calls that happen when two views mount at once.
-  if (inflight) return inflight;
-  inflight = fetch(api("/screen/config"))
+  if (!force && inflight) return inflight;
+  const p = apiFetch("/screen/config")
     .then((r) => (r.ok ? (r.json() as Promise<ScreenConfig>) : FALLBACK))
     .then((cfg) => {
       cached = {
@@ -58,16 +85,21 @@ export function loadScreenConfig(): Promise<ScreenConfig> {
         wsUrl: cfg?.wsUrl || "",
         bridgePath: cfg?.bridgePath || FALLBACK.bridgePath,
         wsProtocols: cfg?.wsProtocols?.length ? cfg.wsProtocols : FALLBACK.wsProtocols,
+        publicOrigin: cfg?.publicOrigin,
+        publicUrlAgeSeconds: cfg?.publicUrlAgeSeconds,
+        authRequired: cfg?.authRequired,
       };
       return cached;
     })
     .catch(() => FALLBACK)
     .then((cfg) => {
       cached = cfg;
+      fetchedAt = Date.now();
       inflight = null;
       return cfg;
     });
-  return inflight;
+  if (!force) inflight = p;
+  return p;
 }
 
 /** The WebSocket URL noVNC should open, given the resolved config. */
@@ -97,17 +129,17 @@ export interface ScreenStatus {
 }
 
 export async function fetchScreenStatus(): Promise<ScreenStatus> {
-  const res = await fetch(api("/screen/status"));
+  const res = await apiFetch("/screen/status");
   if (!res.ok) throw new Error(`screen status ${res.status}`);
   return (await res.json()) as ScreenStatus;
 }
 
 /** Ask the remote machine to bring its display stack up. */
 export async function ensureDisplay(): Promise<void> {
-  await fetch(api("/screen/ensure"), { method: "POST" });
+  await apiFetch("/screen/ensure", { method: "POST" });
 }
 
 /** Restart the remote browser; the screen then follows the real state. */
 export async function restartRemoteBrowser(): Promise<void> {
-  await fetch(api("/screen/browser/restart"), { method: "POST" });
+  await apiFetch("/screen/browser/restart", { method: "POST" });
 }

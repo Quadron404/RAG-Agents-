@@ -7,15 +7,18 @@ browser anywhere in the path.
 
 ```
 your browser
-  │  wss://computer.<your-domain>/websockify
+  │  https://<random>.trycloudflare.com/websockify
   ▼
-Cloudflare edge  ──▶  Cloudflare Access  (who are you?)
+Cloudflare edge          (a pipe, not a lock)
   │
   ▼
-cloudflared  ──▶  websockify 127.0.0.1:6080  ──▶  x11vnc 127.0.0.1:5900
-                                                          │
-                                                          ▼
-                                              Xvfb :99 ─▶ Google Chrome
+cloudflared  ──▶  RAG Agents app 127.0.0.1:8000
+                      │  session cookie?  no → 1008, nothing moves
+                      ▼  yes
+                   websockify 127.0.0.1:6080  ──▶  x11vnc 127.0.0.1:5900
+                                                            │
+                                                            ▼
+                                                Xvfb :99 ─▶ Google Chrome
 ```
 
 The agents' three apps (Browser, Files, Terminal) reach the same machine over
@@ -23,32 +26,32 @@ HTTP on loopback, through `backend/vm_agent/daemon.py`.
 
 ## The one rule
 
-**Nothing is published except an authenticated Cloudflare hostname.** The VNC
-and WebSocket ports bind to `127.0.0.1`, the tunnel connection is outbound, and
-GitHub's forwarded ports stay private. If the Access policy is wrong, the screen
-is reachable — so treat the Access policy as part of the product, not as
-optional setup.
+**Only the app is published, and the app decides who gets in.**
+
+The Quick Tunnel points at port 8000 and nothing else. 5900 and 6080 bind
+`127.0.0.1` and are never given a public port, so the framebuffer has no address
+of its own — the only way in is `/websockify`, and the app refuses that without a
+session.
+
+This matters more than usual here, because a quick tunnel's hostname is **not a
+secret**. It appears in DNS, in proxy logs and in browser history. So it is never
+treated as the credential. The passphrase (`RAG_AUTH_TOKEN`) is; see below.
 
 ## First run
 
-1. **Create the tunnel** in Cloudflare Zero Trust → Networks → Tunnels, and
-   copy its token.
-2. **Add two Codespaces secrets** (Settings → Codespaces → *your codespace* →
+1. **Add one Codespaces secret** (Settings → Codespaces → *your codespace* →
    Codespaces secrets):
 
    | Name | Value |
    | --- | --- |
-   | `CF_TUNNEL_TOKEN` | the tunnel token from step 1 |
-   | `COMPUTER_HOSTNAME` | e.g. `computer.example.com` |
+   | `RAG_AUTH_TOKEN` | a long random passphrase, e.g. `openssl rand -base64 24` |
 
-   `COMPUTER_HOSTNAME` is the only place the domain is written down. The viewer
-   URL (`wss://<host>/websockify`) and the generated tunnel config are both
-   derived from it, so they cannot drift apart.
+   That is the whole setup. There is no Cloudflare account, no domain, no tunnel
+   to create and no access policy to write, because a quick tunnel needs none of
+   them.
 
-3. **Protect the hostname** with an Access policy — see below. Do this before
-   sharing the link with anyone.
-4. Open the Codespace. The devcontainer installs the stack and starts
-   everything; the build log ends with a status block like:
+2. Open the Codespace. The devcontainer installs the stack and starts
+   everything; the log ends with a status block like:
 
    ```
    [computer] display   up   (1365x768 on :99)
@@ -56,31 +59,35 @@ optional setup.
    [computer] RFB       up   127.0.0.1:5900  (loopback only)
    [computer] noVNC     up   127.0.0.1:6080  (loopback only)
    [computer] backend   up   :8000
-   [computer] tunnel    started
-   [computer] screen    https://computer.example.com/websockify
+   [computer] public    https://witty-pandas-repeat-7x9k.trycloudflare.com  (passphrase required)
+   [computer] screen    https://witty-pandas-repeat-7x9k.trycloudflare.com/websockify  (via the app, not exposed directly)
    ```
 
-## The Access policy
+   Open that URL and you get the passphrase prompt. Behind it is a live,
+   signed-in browser — so treat the passphrase like the screen it unlocks.
 
-The screen shows a signed-in browser on a real desktop. Configure it like the
-sensitive application it is:
+3. **If `RAG_AUTH_TOKEN` is not set, the app refuses every route and every
+   WebSocket.** That is deliberate. A public tunnel in front of someone's signed-in
+   browser must not come up open because a secret was forgotten, so a missing
+   passphrase stops the deployment instead of disabling the only lock there is.
 
-- **Who** — specific identities (email, email domain, or your IdP group), not
-  "everyone".
-- **How** — a second factor: OTP, or your IdP's own MFA.
-- **Session** — a short idle timeout, around 30 minutes.
+## The hostname changes; the app follows
 
-Then open the hostname in a private window and confirm you are challenged.
-A screen reachable without a login is a live view of someone's browser.
+A quick tunnel is assigned a random `trycloudflare.com` name every time it
+starts, so there is nothing to configure and nothing to hardcode:
 
-### Why the app and screen share one hostname
+- `start-tunnel.sh` reads the URL cloudflared prints and writes it to
+  `PUBLIC_URL_FILE` (by default `/tmp/ragdesktop/public-url`).
+- `/screen/config` reads that file on every request and hands the current origin
+  to the browser.
+- The viewer re-reads it periodically, so a tunnel that restarts is picked up
+  without a rebuild or a redeploy.
 
-The tunnel routes `^/websockify(/.*)?$` to websockify and **everything else** to
-the backend on port 8000. That is deliberate. Access hands the browser a
-first-party cookie for the hostname, so the noVNC WebSocket upgrade carries it
-with no CORS handling at all. Put the screen on a separate hostname and it
-becomes a cross-site request, which browsers increasingly answer by dropping the
-cookie — the user gets bounced to the login page mid-session.
+`/screen/config` also reports `publicUrlAgeSeconds`, so the UI can say a URL has
+been dead for a while rather than just failing quietly.
+
+The last URL wins, and the file is removed on exit — a stale hostname is worse
+than none, because the app would advertise an address Cloudflare has forgotten.
 
 ## The scripts
 
@@ -89,7 +96,7 @@ cookie — the user gets bounced to the login page mid-session.
 | `env.sh` | The one place that decides display, ports and profile. Every value is overridable from the environment, which is how the multi-user layout later gets one browser per user instead of a shared one. |
 | `install.sh` | Installs Chrome, Xvfb, Fluxbox, x11vnc, websockify, noVNC, cloudflared and the Python deps. Run by the devcontainer; safe to re-run. |
 | `start-computer.sh` | Brings up the display, Chrome, x11vnc and websockify. Run it directly when you just want a local screen. |
-| `start-tunnel.sh` | Generates the tunnel config from `COMPUTER_HOSTNAME` and runs `cloudflared` with the token. |
+| `start-tunnel.sh` | Runs `cloudflared tunnel --url http://127.0.0.1:8000` and records the URL it was given. |
 | `supervise.sh` | Keeps the agent, websockify and tunnel alive. This is what the Codespace runs. |
 | `boot.sh` | The Codespace entry point: build the UI, then the screen stack, then the backend. |
 
@@ -100,8 +107,8 @@ source codespace/env.sh
 
 bash codespace/install.sh          # first run only
 bash codespace/start-computer.sh   # display + Chrome + screen
-bash codespace/start-tunnel.sh     # only once CF_TUNNEL_TOKEN is set
-bash codespace/boot.sh              # or just do all of the above
+bash codespace/start-tunnel.sh     # the public URL
+bash codespace/boot.sh             # or just do all of the above
 ```
 
 Useful checks:
@@ -112,8 +119,8 @@ listening 6080     # websockify is up
 listening 9000     # the agent is up
 
 curl -s 127.0.0.1:9000/display/status | jq
-curl -s 127.0.0.1:8000/screen/config | jq      # mode and wsUrl the UI will use
-curl -s 127.0.0.1:8000/health     | jq
+curl -s 127.0.0.1:8000/auth/status  | jq   # is auth on, is this session good
+curl -s 127.0.0.1:8000/health       | jq
 
 # raw noVNC, bypassing the app entirely -- the fastest way to separate
 # "the screen is broken" from "the app is broken"
@@ -122,6 +129,9 @@ open http://127.0.0.1:6080/vnc.html
 
 Logs are in `/tmp`: `supervisor.log`, `agent.log`, `chromium.log`,
 `cloudflared.log`, `backend.log`, `frontend-build.log`.
+
+The `/websockify` and `/health` and `/auth/status` endpoints above need a cookie;
+`/health` and `/auth/status` are open on purpose so a probe can use them.
 
 ## The profile is the session
 
@@ -133,23 +143,23 @@ anywhere on the container filesystem.
 
 ## The fallback route
 
-If `COMPUTER_HOSTNAME` is unset, `/screen/config` returns `mode: "bridge"` and
-the viewer connects to the backend's own relay at `/ws/screen` instead. Same
-protocol, one extra hop, and it works with no Cloudflare setup at all — which
-makes it the right way to develop locally.
+If the tunnel is not up, `/screen/config` returns `mode: "bridge"` and the viewer
+connects to the backend's own relay at `/ws/screen` instead. Same protocol, one
+extra hop, and it needs no Cloudflare at all — which makes it the right way to
+develop locally.
 
-It is a development convenience and nothing more. That route is protected by the
-app's own authentication, not by Access, so do not point production at it. The
-badge in the top-left of the Computer view always says which one is live:
-**Secure tunnel** or **Local relay**.
+It is not a way around the lock: `/ws/screen` is session-gated exactly like
+`/websockify`. The badge in the top-left of the Computer view always says which
+route is live: **Quick tunnel** or **Local relay**.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
+| Login page, and the passphrase is rejected | `RAG_AUTH_TOKEN` differs between the shell that started the backend and the one you are testing from, or the secret is missing and every route is refusing. Check `backend.log` and `boot.sh`'s warning. |
+| `mode: "bridge"` when you expected a tunnel | No URL in `$PUBLIC_URL_FILE`. Check `cloudflared.log`; the tunnel takes a few seconds to be assigned a hostname. |
 | Screen stuck on "connecting" | The tunnel is up but the origin is not. Check `listening 6080`. |
-| Bounced to the Access login repeatedly | Screen and app are on different hostnames, so the cookie is being dropped. |
 | 502 from Cloudflare | The backend on 8000 is not running. Check `backend.log`. |
-| `CF_TUNNEL_TOKEN is not set` | The secret is missing, or the Codespace was created before it was added — recreate or restart it. |
+| `cloudflared: command not found` | Run `codespace/install.sh`, or use the Codespaces port forward — the screen still works over `/ws/screen`. |
 | Chrome logs out every rebuild | `CHROME_PROFILE` is pointing off the persistent volume. |
 | Blank screen, everything "up" | Chrome may not have started. Check `chromium.log` and `/display/status`. |

@@ -165,18 +165,19 @@ export function VncScreen({ running }: { running: boolean }) {
     <div className="vncscreen">
       <div className="vnc__bar">
         {/* The route is user-visible on purpose: it is the difference between
-            an authenticated edge and a plain relay, and "which one am I on?"
-            should never be a guess. */}
+            going out through a published tunnel and going through the in-app
+            relay, and "which one am I on?" should never be a guess.  Both are
+            session-gated; this is about the path, not the permission. */}
         <span
           className={`vnc__route vnc__route--${mode}`}
           title={
             mode === "tunnel"
-              ? "Connected through the authenticated secure tunnel"
-              : "Relayed by this app's backend — development only"
+              ? "Reaching the screen through this app's public tunnel, which requires your session"
+              : "Relayed by this app's backend — no tunnel involved"
           }
         >
           {mode === "tunnel" ? <ShieldCheck size={14} /> : <Lock size={14} />}
-          {mode === "tunnel" ? "Secure tunnel" : "Local relay"}
+          {mode === "tunnel" ? "Quick tunnel" : "Local relay"}
         </span>
 
         <div className={`vnc__status vnc__status--${state}`} data-state={state}>

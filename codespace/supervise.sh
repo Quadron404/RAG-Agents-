@@ -59,8 +59,11 @@ start_websockify() {
 }
 
 start_tunnel() {
-  if [ -z "$CF_TUNNEL_TOKEN" ]; then
-    log "CF_TUNNEL_TOKEN not set - tunnel NOT started (screen stays local only)"
+  # A quick tunnel needs no credential, so it always starts when cloudflared is
+  # installed.  It is still optional: without cloudflared the app is reachable
+  # through the Codespaces port forward and the screen works over /ws/screen.
+  if ! command -v "$CLOUDFLARED_BIN" >/dev/null 2>&1; then
+    log "cloudflared not installed - public tunnel NOT started (Codespaces port forward only)"
     return 0
   fi
   setsid bash "$CODESPACE_DIR/start-tunnel.sh" \
@@ -109,18 +112,26 @@ while true; do
 
   ensure_websockify
 
-  if [ -n "${CF_TUNNEL_TOKEN:-}" ] && ! child_alive tunnel; then
+  if ! child_alive tunnel; then
     log "cloudflared died; restarting"
     start_tunnel
   fi
 
-  # A periodic one-line status makes the Codespace log useful on its own.
+  # A periodic one-line status makes the Codespace log useful on its own.  The
+  # tunnel hostname goes in the log rather than the UI, because it changes on
+  # every restart and an operator comparing it against /health is the whole
+  # point of the line.
   if [ $((TICK % 12)) -eq 0 ]; then
     x_state="down"
     [ -S "/tmp/.X11-unix/X${DESKTOP_DISPLAY#:}" ] && x_state="up"
     vnc_state="down"; listening "$VNC_PORT" && vnc_state="up"
     ws_state="down";  listening "$WEBSOCKIFY_PORT" && ws_state="up"
     chrome_state="down"; listening "$CHROME_DEBUG_PORT" && chrome_state="up"
-    log "status x=$x_state chrome=$chrome_state rfb=$vnc_state ws=$ws_state"
+    tunnel_state="none"
+    if [ -s "$PUBLIC_URL_FILE" ]; then tunnel_state="live"; fi
+    log "status x=$x_state chrome=$chrome_state rfb=$vnc_state ws=$ws_state tunnel=$tunnel_state"
+    if [ "$tunnel_state" = "live" ]; then
+      log "  $(cat "$PUBLIC_URL_FILE")"
+    fi
   fi
 done

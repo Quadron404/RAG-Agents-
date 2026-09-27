@@ -4,9 +4,9 @@ A multi-agent RAG system with a **Computer** the agents — and you — can actu
 use: a real Google Chrome on a real Linux desktop, in a real browser tab, driven
 by your own mouse and keyboard.
 
-The Computer runs in a **GitHub Codespace** and reaches you through an
-authenticated **Cloudflare Tunnel**. There is no VM, no hypervisor, and no
-screenshot loop in the path.
+The Computer runs in a **GitHub Codespace** and reaches you through a
+**Cloudflare Quick Tunnel** guarded by the app's own passphrase. There is no VM,
+no hypervisor, and no screenshot loop in the path.
 
 ## What the Computer is
 
@@ -22,8 +22,8 @@ RAG Agents ──▶ Computer ──▶ Live Screen  (noVNC, the real framebuffe
                   └─▶ Terminal   a real shell on the machine
 ```
 
-- **Live screen**: `wss://computer.<your-domain>/websockify`, behind Cloudflare
-  Access.
+- **Live screen**: `/websockify` on the tunnel's own origin, after the app has
+  checked your session.
 - **Browser / Files / Terminal**: the same machine, reached over HTTP on
   loopback by `backend/vm_agent/daemon.py`.
 - **Profile**: `/workspaces/chrome-profile`, on the persistent volume, so the
@@ -36,16 +36,18 @@ passes through the model.
 
 ### In a Codespace (the real setup)
 
-The devcontainer installs everything and starts the stack. Add two
-[Codespaces secrets](https://github.com/settings/codespaces) first:
+Add one [Codespaces secret](https://github.com/settings/codespaces):
 
 | Secret | Value |
 | --- | --- |
-| `CF_TUNNEL_TOKEN` | your named Cloudflare Tunnel token |
-| `COMPUTER_HOSTNAME` | e.g. `computer.example.com` |
+| `RAG_AUTH_TOKEN` | a long random passphrase, e.g. `openssl rand -base64 24` |
 
-Then protect the hostname with a Cloudflare Access policy, and open the
-Codespace. Full walkthrough, architecture notes and troubleshooting in
+That is the whole setup — no Cloudflare account, no domain, no tunnel to create
+and no access policy to write, because a quick tunnel needs none of them. Open the
+Codespace, take the `https://<random>.trycloudflare.com` URL from the log, and
+enter the passphrase.
+
+Full walkthrough, architecture notes and troubleshooting in
 [`codespace/README.md`](codespace/README.md).
 
 ### Locally (development)
@@ -55,7 +57,7 @@ Codespace. Full walkthrough, architecture notes and troubleshooting in
 cd backend
 python -m venv .venv && .venv\Scripts\activate     # or: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env                                # add provider keys
+cp .env.example .env                                # add provider keys + RAG_AUTH_TOKEN
 python -m uvicorn app.main:app --reload --port 8000
 
 # frontend (second terminal)
@@ -64,10 +66,13 @@ npm install
 npm run dev
 ```
 
-With no `COMPUTER_HOSTNAME` set, `/screen/config` returns `mode: "bridge"` and
-the viewer talks to the backend's own relay at `/ws/screen`. That is the
-development path and needs no Cloudflare setup. The badge in the Computer view
-shows which route is live.
+With no tunnel running, `/screen/config` returns `mode: "bridge"` and the viewer
+talks to the backend's own relay at `/ws/screen`. That is the development path
+and needs no Cloudflare. The badge in the Computer view shows which route is live.
+
+`RAG_AUTH_TOKEN` is not optional: with no passphrase the app refuses every route
+and every WebSocket, so a forgotten secret stops the deployment rather than
+publishing a signed-in browser.
 
 Checks:
 
@@ -82,10 +87,12 @@ cd Frontend && npm run build             # typecheck is part of the build
 backend/
   app/
     main.py             HTTP + WebSocket API, and the /screen/* routes
-    config.py           settings, incl. the derived screen URL
+    auth.py             the passphrase gate and its signed session cookie
+    config.py           settings, incl. where the tunnel URL is published
     agents/             commander, navigator, workers
     providers/          LLM providers and the router
     tools/              tool registry, executor, WorkspaceClient
+    vm/websockify_proxy.py  the /websockify -> :6080 relay
     vm/vnc.py           the fallback RFB-over-WebSocket relay
     workspace/          WorkspaceManager: the remote machine's lifecycle
   vm_agent/daemon.py    the agent on the machine: browser, files, terminal
@@ -104,34 +111,36 @@ of the product rather than optional setup:
 - `x11vnc` binds `127.0.0.1:5900` only.
 - `websockify` binds `127.0.0.1:6080` only.
 - `Xvfb` runs with `-nolisten tcp`.
+- The Quick Tunnel publishes **only** port 8000. It never points at websockify, so
+  there is no route to the framebuffer that skips the app.
 - The tunnel connection is outbound; nothing is opened on the machine.
+- `/websockify`, `/ws/screen` and `/ws/{user}` all require a session, and the
+  tunnel URL is *not* treated as a credential — a `trycloudflare.com` hostname
+  turns up in DNS and logs, so the passphrase is what actually gates the screen.
 - GitHub's forwarded ports stay private, for debugging only.
-- The only external route is a hostname behind Cloudflare Access.
 - `backend/tests/test_screen_isolation.py` fails the build if any of that stops
-  being true.
+  being true, and `test_auth.py` / `test_websockify_proxy.py` fail it if the gate
+  or the relay stops working.
 
-Quick tunnels (`trycloudflare.com`) are not used anywhere: those URLs are
-public, change on every restart, and cannot be put behind Access.
+## The two routes the screen can take
 
-## The three routes the screen can take
-
-| Route | When | Protection |
+| Route | When | Path |
 | --- | --- | --- |
-| **Secure tunnel** | `COMPUTER_HOSTNAME` set | Cloudflare Access |
-| **Local relay** | no hostname set | the app's own auth; development only |
-| `/ws/screen`** | used by the relay | never the production path |
+| **Quick tunnel** | a tunnel URL is published | browser → tunnel → app `/websockify` → websockify :6080 |
+| **Local relay** | no tunnel running | browser → app `/ws/screen` → x11vnc :5900 |
 
-The app and the screen are served from **one hostname** on purpose: the Access
-cookie is then first-party for both, so the WebSocket upgrade needs no CORS
-handling. Splitting them across hostnames makes the screen a cross-site request,
-which browsers increasingly answer by dropping the cookie.
+Both require the same session. The app and the screen share one origin on
+purpose, which is what lets the session cookie ride along with the WebSocket
+upgrade with no CORS handling at all.
 
 ## Status
 
 Verified locally: backend imports, all routes respond, the frontend typechecks
-and builds, the RFB relay round-trips bytes in both directions, and the
-isolation checks pass.
+and builds, `/websockify` relays binary frames in both directions behind a
+session, unauthenticated HTTP and WebSocket access is refused, the tunnel script
+finds the URL cloudflared prints and follows a restart, the RFB relay
+round-trips bytes in both directions, and the isolation checks pass.
 
-Not yet verified: anything that needs the real machine — Cloudflare Tunnel and
-Access acceptance, Chrome rendering, profile persistence across a Codespace
-rebuild, and latency. Those need the Codespace, a domain, and the tunnel token.
+Not yet verified: anything that needs the real machine — Chrome rendering,
+profile persistence across a Codespace rebuild, an end-to-end login through a
+live Quick Tunnel, and latency. Those need the Codespace and a `RAG_AUTH_TOKEN`.

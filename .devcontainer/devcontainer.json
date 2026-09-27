@@ -56,9 +56,14 @@
     "VNC_PORT": "5900",
     "WEBSOCKIFY_PORT": "6080",
     "AGENT_PORT": "9000",
+    "BACKEND_PORT": "8000",
     "DESKTOP_RUN_DIR": "/tmp/ragdesktop",
-    "DESKTOP_LOG_DIR": "/tmp"
+    "DESKTOP_LOG_DIR": "/tmp",
+    "PUBLIC_URL_FILE": "/tmp/ragdesktop/public-url"
   },
+  // RAG_AUTH_TOKEN is deliberately absent. The app refuses every route without
+  // it, so a missing secret stops the deployment instead of publishing a live
+  // signed-in browser. Add it under Settings > Codespaces > Codespaces secrets.
 
   "postCreateCommand": "sudo bash codespace/install.sh && sudo mkdir -p /workspaces/chrome-profile && sudo chown -R codespace:codespace /workspaces/chrome-profile",
 

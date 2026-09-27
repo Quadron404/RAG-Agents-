@@ -34,7 +34,7 @@ export interface VncStats {
 export interface VncSessionOptions {
   onState: (state: VncState, detail?: string) => void;
   onStats: (stats: VncStats) => void;
-  /** Lets the UI say which route it took, e.g. "secure tunnel" vs "relay". */
+  /** Lets the UI say which route it took, e.g. "quick tunnel" vs "relay". */
   onRoute?: (mode: ScreenConfig["mode"]) => void;
 }
 

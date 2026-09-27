@@ -186,5 +186,10 @@ class WorkspaceManager:
             "screen_host": target[0] if target else "",
             "screen_port": target[1] if target else 0,
             "websockify_port": self.websockify_port,
-            "public_ws_url": self.settings.computer_ws_url,
+            # The public screen URL is not knowable from here: a Quick Tunnel is
+            # given a random hostname at runtime and the tunnel script records
+            # it.  /screen/config reads that file; /health just says whether the
+            # relay is configured, so an operator can tell "no tunnel" apart
+            # from "tunnel publishing a different address".
+            "public_url_file": self.settings.public_url_file,
         }

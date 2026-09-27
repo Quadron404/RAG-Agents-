@@ -11,6 +11,18 @@ const BACKEND: string = (import.meta.env.VITE_BACKEND as string) || "";
 
 export const api = (path: string): string => (BACKEND ? BACKEND + path : path);
 
+/**
+ * fetch() for API calls, with the session cookie attached.
+ *
+ * The app is served from the same origin as the screen -- the Quick Tunnel
+ * publishes this process, and the Computer view opens /websockify on the same
+ * host -- so the HttpOnly session cookie is what authorises both.  "include" is
+ * what makes the browser attach it, and routing every call through one helper
+ * means no endpoint can quietly end up without a credential.
+ */
+export const apiFetch = (path: string, init: RequestInit = {}): Promise<Response> =>
+  fetch(api(path), { credentials: "include", ...init });
+
 export function wsUrl(path: string): string {
   if (BACKEND) {
     return BACKEND.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + path;
@@ -428,7 +440,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async refreshThreads() {
     try {
-      const r = await fetch(api(`/threads?user_id=${USER}`));
+      const r = await apiFetch(`/threads?user_id=${USER}`);
       const d = await r.json();
       set({ threads: d.threads || [] });
       if (!get().activeThreadId && d.threads?.length) {
@@ -441,7 +453,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async newChat() {
     try {
-      const r = await fetch(api("/threads"), {
+      const r = await apiFetch("/threads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: USER, title: "New conversation" }),
@@ -463,7 +475,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async loadMessages(id) {
     try {
-      const r = await fetch(api(`/threads/${id}/messages`));
+      const r = await apiFetch(`/threads/${id}/messages`);
       const d = await r.json();
       const server = (d.messages || []) as Message[];
       const cur = get().messages[id] || [];
@@ -516,7 +528,7 @@ export const useCore = create<CoreState>((set, get) => ({
   async computerStart() {
     set({ computer: { ...emptyComputer, booting: true, msg: "starting the computer…" } });
     try {
-      const r = await fetch(api("/computer/start"), {
+      const r = await apiFetch("/computer/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: USER }),
@@ -547,7 +559,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async computerStop() {
     try {
-      await fetch(api("/computer/stop"), {
+      await apiFetch("/computer/stop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: USER }),
@@ -564,7 +576,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async refreshSysinfo() {
     try {
-      const r = await fetch(api("/sysinfo"));
+      const r = await apiFetch("/sysinfo");
       const d = await r.json();
       if (d && !d.ok && d.error) {
         // Remote computer unreachable — handled by computer_status elsewhere

@@ -38,27 +38,6 @@ def _get_bool(key: str, default: str = "0") -> bool:
     return _get(key, default).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _screen_ws_url() -> str:
-    """Where the live screen lives, as a WebSocket URL.
-
-    The app and the screen are served from one hostname, so the Access cookie
-    the browser already holds for the app also authorises the screen.  Deriving
-    the URL from COMPUTER_HOSTNAME keeps the domain in a single setting: the
-    tunnel config and the viewer can never drift apart.
-    """
-    explicit = _get("COMPUTER_WS_URL", "").strip()
-    if explicit:
-        return explicit
-    host = _get("COMPUTER_HOSTNAME", "").strip()
-    if not host:
-        # No tunnel configured: the viewer falls back to this backend's own
-        # relay at /ws/screen, which is a development convenience only.
-        return ""
-    if host.startswith(("http://", "https://")):
-        return "wss://" + host.split("://", 1)[1].rstrip("/") + "/websockify"
-    return f"wss://{host.rstrip('/')}/websockify"
-
-
 @dataclass
 class Settings:
     host: str = field(default_factory=lambda: _get("HOST", "0.0.0.0"))
@@ -85,21 +64,31 @@ class Settings:
 
     # --- Live screen (the real framebuffer over VNC) ------------------------
     # x11vnc exports the Codespace's X display as RFB on 127.0.0.1:5900 and
-    # websockify turns that into a WebSocket on 127.0.0.1:6080.  Neither is
-    # published; the only external route is the Cloudflare Tunnel.
+    # websockify turns that into a WebSocket on 127.0.0.1:6080.  Neither is ever
+    # published.  The Cloudflare Quick Tunnel points at this app on :8000, and
+    # /websockify relays the last hop to :6080 -- so the RFB stream and both
+    # ports stay on loopback and the only door is a route that requires a
+    # session cookie.
     screen_vnc_enabled: bool = field(default_factory=lambda: _get_bool("SCREEN_VNC_ENABLED", "1"))
     screen_vnc_port: int = field(default_factory=lambda: int(_get("SCREEN_VNC_PORT", "5900")))
     screen_ws_port: int = field(default_factory=lambda: int(_get("SCREEN_WS_PORT", "6080")))
 
-    # The public, Access-protected WebSocket the Computer view connects to.
-    # Usually derived from COMPUTER_HOSTNAME so there is exactly one place to
-    # set the domain: set the hostname once, and the app, the tunnel config and
-    # the viewer URL all agree.  Override COMPUTER_WS_URL only if the screen
-    # really lives somewhere else.
-    computer_ws_url: str = field(default_factory=lambda: _screen_ws_url())
+    # Where codespace/start-tunnel.sh records the Quick Tunnel URL it was
+    # assigned.  Read on every /screen/config call so a tunnel restart is picked
+    # up without a redeploy.  /tmp is deliberate: it is scratch state, not
+    # configuration, and must not end up in git.
+    public_url_file: str = field(
+        default_factory=lambda: _get("PUBLIC_URL_FILE", "/tmp/ragdesktop/public-url")
+    )
 
-    # The Vite build to serve, so the app and the screen share one origin.
+    # The Vite build to serve, so the app and the screen are one origin and the
+    # session cookie is first-party for the WebSocket upgrade.
     frontend_dist: str = field(default_factory=lambda: _get("FRONTEND_DIST", ""))
+
+    # The passphrase that guards the app.  There is no default on purpose: with
+    # none set, every route except /health and /auth/* refuses to serve, so a
+    # forgotten secret fails closed instead of exposing a signed-in browser.
+    auth_token: str = field(default_factory=lambda: _get("RAG_AUTH_TOKEN", "").strip())
 
     max_text_chars: int = field(default_factory=lambda: int(_get("MAX_TEXT_CHARS", "8000")))
     max_web_chars: int = field(default_factory=lambda: int(_get("MAX_WEB_CHARS", "12000")))

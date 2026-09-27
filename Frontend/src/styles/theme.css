@@ -4411,3 +4411,126 @@ textarea {
     -webkit-backdrop-filter: blur(22px) saturate(1.6);
   }
 }
+/* ============================================================================
+   Login
+
+   The full-screen gate.  Because the app is published at a public tunnel URL
+   and the Computer view is a live signed-in browser, this is the only thing
+   rendered without a session -- so it is deliberately quiet: one field, one
+   button, and an explicit reminder that what is behind it is a real machine.
+   ========================================================================== */
+
+.login {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg0);
+}
+
+.login__card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 34px 28px 28px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--bg1);
+  box-shadow: var(--shadow-2);
+  text-align: center;
+}
+
+.login__orb {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  border-radius: 19px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.login__title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.login__sub {
+  margin: 0 0 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.login__label {
+  align-self: flex-start;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 560;
+  color: var(--text-2);
+}
+
+.login__field {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 13px;
+  background: var(--bg2);
+  color: var(--text-3);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login__field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.login__field input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.login__field input:focus {
+  outline: none;
+}
+
+.login__field input::placeholder {
+  color: var(--text-3);
+  letter-spacing: 0.14em;
+}
+
+.login__error {
+  align-self: stretch;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 11px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 13px;
+  text-align: left;
+}
+
+.login__submit {
+  align-self: stretch;
+  margin-top: 16px;
+}

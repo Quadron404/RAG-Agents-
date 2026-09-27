@@ -41,9 +41,9 @@ else
 fi
 
 # --- 3) the RAG Agents backend --------------------------------------------
-# Serves the built UI and proxies the 3 apps to the agent, so the whole
-# product is one origin: same host as the WebSocket, which is what lets the
-# Cloudflare Access cookie ride along with it.
+# Serves the built UI and proxies /websockify to the local websockify, so the
+# whole product is one origin.  Same host for the page and the WebSocket is what
+# lets the session cookie ride along with the upgrade without any extra work.
 if [ -f "$RUN_DIR/backend.pid" ] && kill -0 "$(cat "$RUN_DIR/backend.pid" 2>/dev/null)" 2>/dev/null; then
   log "backend already running"
 else
@@ -59,13 +59,14 @@ else
 fi
 
 # --- 4) status -------------------------------------------------------------
-sleep 3
+# The tunnel is started by the supervisor, so give it a moment to be handed a
+# hostname before reporting on it.
+sleep 8
 x_state="down";  [ -S "/tmp/.X11-unix/X${DESKTOP_DISPLAY#:}" ] && x_state="up"
 chrome_state="down"; listening "$CHROME_DEBUG_PORT" && chrome_state="up"
 vnc_state="down"; listening "$VNC_PORT" && vnc_state="up"
 ws_state="down";  listening "$WEBSOCKIFY_PORT" && ws_state="up"
 api_state="down"; listening "$BACKEND_PORT" && api_state="up"
-tunnel_state="skipped"; [ -n "${CF_TUNNEL_TOKEN:-}" ] && tunnel_state="started"
 
 log "======================================"
 log " display   $x_state   ($DESKTOP_SIZE on $DESKTOP_DISPLAY)"
@@ -73,13 +74,23 @@ log " chrome    $chrome_state   profile: $CHROME_PROFILE"
 log " RFB       $vnc_state   127.0.0.1:$VNC_PORT  (loopback only)"
 log " noVNC     $ws_state   127.0.0.1:$WEBSOCKIFY_PORT  (loopback only)"
 log " backend   $api_state   :$BACKEND_PORT"
-log " tunnel    $tunnel_state"
-if [ -n "${COMPUTER_HOSTNAME:-}" ]; then
-  log " public    https://$COMPUTER_HOSTNAME  (Cloudflare Access required)"
-  log " screen    https://$COMPUTER_HOSTNAME/websockify"
+
+if [ -s "$PUBLIC_URL_FILE" ]; then
+  log " public    $(cat "$PUBLIC_URL_FILE")  (passphrase required)"
+  log " screen    $(cat "$PUBLIC_URL_FILE")/websockify  (via the app, not exposed directly)"
 else
-  log " public    (set COMPUTER_HOSTNAME to publish; viewer will use the relay)"
+  log " public    (tunnel not up yet; check $DESKTOP_LOG_DIR/cloudflared.log)"
+  log "            until then the viewer falls back to the in-app /ws/screen relay)"
 fi
+
+if [ -z "${RAG_AUTH_TOKEN:-}" ] && [ -z "$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" 2>/dev/null | cut -d= -f2-)" ]; then
+  log ""
+  log " WARNING: RAG_AUTH_TOKEN is not set.  The app will refuse every route"
+  log "          until it is, which is deliberate -- a public tunnel in front of"
+  log "          a signed-in browser must never open by default.  Set it in"
+  log "          backend/.env or as a Codespaces secret, then restart the backend."
+fi
+
 log "======================================"
 log " local noVNC check:  http://127.0.0.1:$WEBSOCKIFY_PORT/vnc.html"
 log " logs: $DESKTOP_LOG_DIR/{supervisor,agent,cloudflared,backend}.log"
