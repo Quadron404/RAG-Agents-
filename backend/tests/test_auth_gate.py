@@ -137,6 +137,18 @@ if verify:
         'grep -s \'^RAG_AUTH_TOKEN=\' "$REPO_ROOT/backend/.env"' in verify,
         "verify.sh falls back to backend/.env, where the token normally lives",
     )
+    # The app takes the FIRST occurrence of the key (config.py only fills a name
+    # that is not already set), so a verifier reading the last one would test a
+    # different passphrase than the server is running -- and report a bogus
+    # "the passphrase was rejected".
+    check(
+        re.search(r"head -n1 \| cut -d=", verify) is not None,
+        "verify.sh reads the same occurrence of the key that the app does",
+    )
+    check(
+        re.search(r"grep -s '\^RAG_AUTH_TOKEN=' \"\$REPO_ROOT/backend/\.env\" \| tail", verify) is None,
+        "verify.sh does not read a later duplicate key than the app",
+    )
     # The regression proper: gating the login section on the *shell* variable.
     check(
         '[ -z "$PUBLIC_URL" ] || [ -z "${RAG_AUTH_TOKEN:-}" ]' not in verify,

@@ -157,7 +157,11 @@ PUBLIC_URL=""
 # through its own environment and hands out a cookie instead.
 AUTH_TOKEN="${RAG_AUTH_TOKEN:-}"
 if [ -z "$AUTH_TOKEN" ] && [ -f "$REPO_ROOT/backend/.env" ]; then
-  AUTH_TOKEN="$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" | tail -n1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
+  # head, not tail: config.py populates the environment with
+  # `if key not in os.environ`, so the *first* RAG_AUTH_TOKEN in the file is the
+  # one the app actually uses.  Reading the last one here would make the
+  # verifier test a different passphrase than the server is running.
+  AUTH_TOKEN="$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" | head -n1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
 fi
 
 if [ -n "$PUBLIC_URL" ]; then
