@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
+  Expand,
   Gauge,
   Loader2,
   Lock,
+  Minimize,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -14,6 +16,7 @@ import {
   ensureDisplay,
   fetchScreenStatus,
   restartRemoteBrowser,
+  watchScreenConfig,
   type ScreenMode,
   type ScreenStatus,
 } from "../lib/screen";
@@ -44,12 +47,14 @@ const DEBUG_KEY = "rag.vnc.debug";
 export function VncScreen({ running }: { running: boolean }) {
   const computerMsg = useCore((s) => s.computer.msg);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<VncSession | null>(null);
   const [state, setState] = useState<VncState>("connecting");
   const [detail, setDetail] = useState("");
   const [mode, setMode] = useState<ScreenMode>("bridge");
   const [stats, setStats] = useState<VncStats | null>(null);
   const [reconnects, setReconnects] = useState(0);
+  const [movedTo, setMovedTo] = useState("");
   const [showStats, setShowStats] = useState<boolean>(() => {
     try {
       return localStorage.getItem(DEBUG_KEY) === "1" || new URLSearchParams(location.search).has("vncdebug");
@@ -94,7 +99,26 @@ export function VncScreen({ running }: { running: boolean }) {
     return () => ro.disconnect();
   }, [running]);
 
-  // 3) independent health poll: shows real state even mid-reconnect
+  // 3) follow the tunnel when it is handed a new hostname.
+  //
+  // The Quick Tunnel picks a fresh trycloudflare.com origin every time
+  // cloudflared restarts, so a tab left open across a restart is pointing at a
+  // name that no longer resolves.  Nothing here is hardcoded and nothing needs a
+  // rebuild: the watcher re-reads /screen/config, and the moment the advertised
+  // WebSocket URL differs from the one in use the session moves to it.
+  useEffect(() => {
+    if (!running) return;
+    return watchScreenConfig((cfg) => {
+      if (sessionRef.current?.syncTo(cfg)) {
+        haptic("light");
+        setDetail("");
+        setMovedTo(cfg.publicOrigin ?? "");
+        setReconnects((n) => n + 1);
+      }
+    });
+  }, [running]);
+
+  // 4) independent health poll: shows real state even mid-reconnect
   const poll = useCallback(async () => {
     if (!running) return;
     try {
@@ -119,14 +143,43 @@ export function VncScreen({ running }: { running: boolean }) {
     }
   }, [showStats]);
 
+  // The "the tunnel moved" note is about the moment of recovery, so it goes away
+  // once the screen is actually back rather than lingering for the session.
+  useEffect(() => {
+    if (state === "connected") setMovedTo("");
+  }, [state]);
+
   const toggleStats = () => {
     haptic("light");
     setShowStats((v) => !v);
   };
 
+  // Fullscreen on the stage, not on the page: the status bar and the Computer
+  // tabs stay put, so going fullscreen reads as "give the screen the whole
+  // panel" rather than "leave RAG Agents".
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    const onChange = () => setFull(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    haptic("medium");
+    const stage = stageRef.current;
+    if (!stage) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await stage.requestFullscreen();
+    } catch {
+      /* blocked by the browser; the button just does nothing */
+    }
+  };
+
   const reconnect = () => {
     haptic("medium");
     setDetail("");
+    setMovedTo("");
     sessionRef.current?.reconnectNow();
   };
 
@@ -196,6 +249,18 @@ export function VncScreen({ running }: { running: boolean }) {
         {desktop && desktop.chromium === false && state === "connected" ? (
           <span className="vnc__meta vnc__meta--warn">no browser running</span>
         ) : null}
+        {/* RFB being up only means the framebuffer is being served.  Without the
+            WebSocket hop there is still no way in, and that is exactly the shape
+            the 6080 failure took -- so it gets its own badge rather than looking
+            like a healthy screen. */}
+        {desktop && desktop.websockify === false ? (
+          <span
+            className="vnc__meta vnc__meta--warn"
+            title={`Nothing is listening on 127.0.0.1:${desktop.websockify_port ?? 6080}, so the screen cannot be reached`}
+          >
+            screen not reachable
+          </span>
+        ) : null}
 
         <button
           className={`icon-btn${showStats ? " icon-btn--toggle" : ""}`}
@@ -205,6 +270,15 @@ export function VncScreen({ running }: { running: boolean }) {
           aria-pressed={showStats}
         >
           <Activity size={15} />
+        </button>
+        <button
+          className="icon-btn"
+          onClick={toggleFullscreen}
+          title={full ? "Leave fullscreen" : "Fullscreen the screen"}
+          aria-label={full ? "Leave fullscreen" : "Fullscreen the screen"}
+          aria-pressed={full}
+        >
+          {full ? <Minimize size={16} /> : <Expand size={16} />}
         </button>
         <button className="icon-btn" onClick={reconnect} title="Reconnect the screen" aria-label="Reconnect the screen">
           <RefreshCw size={16} />
@@ -222,7 +296,7 @@ export function VncScreen({ running }: { running: boolean }) {
         </div>
       ) : null}
 
-      <div className={`vnc__stage vnc__stage--${phase}`}>
+      <div className={`vnc__stage vnc__stage--${phase}`} ref={stageRef}>
         <div className="vnc__screen" ref={hostRef} />
 
         {phase === "boot" ? (
@@ -244,9 +318,20 @@ export function VncScreen({ running }: { running: boolean }) {
             <div className="vnc__overlaySub">
               {detail || (state === "connecting" ? "opening the screen…" : "the screen is not answering")}
             </div>
+            {movedTo ? (
+              <div className="vnc__overlayNote">
+                The tunnel moved to a new address and the screen followed it.
+              </div>
+            ) : null}
             {mode === "tunnel" && state === "disconnected" ? (
               <div className="vnc__overlayNote">
                 If this is the first visit, you may need to sign in again.
+              </div>
+            ) : null}
+            {desktop && desktop.websockify === false ? (
+              <div className="vnc__overlayNote">
+                The framebuffer is being served on 5900, but nothing is listening on{" "}
+                {desktop.websockify_port ?? 6080} — the remote machine's screen is not reachable.
               </div>
             ) : null}
             {backend && !backend.listening ? (
@@ -267,7 +352,7 @@ export function VncScreen({ running }: { running: boolean }) {
 
         {phase === "live" ? (
           <>
-            <div className="vnc__hint">Click the screen to type · Esc for the remote machine</div>
+            <div className="vnc__hint">Click the screen to type · scroll to scroll · Esc for the remote machine</div>
             <button className="vnc__restart" onClick={restartBrowser} disabled={busy} title="Restart the remote browser">
               {busy ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />} Restart browser
             </button>

@@ -107,6 +107,59 @@ export function screenSocketUrl(cfg: ScreenConfig): string {
   return cfg.mode === "tunnel" ? cfg.wsUrl : wsUrl(cfg.bridgePath);
 }
 
+/* --- live tunnel watch ----------------------------------------------------- */
+
+/**
+ * Watch for the tunnel being handed a new hostname, and say so.
+ *
+ * A Quick Tunnel gets a random origin on every start, so a long-lived tab can
+ * end up pointing noVNC at a hostname Cloudflare has already forgotten.  Two
+ * things have to notice that, and only one of them used to:
+ *
+ *   - the connection itself, which fails and retries with backoff.  That does
+ *     recover, but only by accident: the retry can fire while the 30s cache is
+ *     still warm, hand the same dead origin back, and take several rounds of
+ *     growing backoff to eventually read a fresh config.
+ *   - this poll, which compares the URL it is pointed at against the one the
+ *     server reports and fires the moment they differ.
+ *
+ * So a restarted tunnel is picked up in one poll interval instead of whenever
+ * the backoff happens to exceed the cache TTL.  Returns an unsubscribe.
+ */
+const WATCH_INTERVAL_MS = 15_000;
+
+export function watchScreenConfig(
+  onChange: (cfg: ScreenConfig) => void,
+  intervalMs: number = WATCH_INTERVAL_MS
+): () => void {
+  let stopped = false;
+  let lastSocketUrl = "";
+
+  const tick = async () => {
+    if (stopped) return;
+    let cfg: ScreenConfig;
+    try {
+      // force: the cache is exactly what would hide a changed URL.
+      cfg = await loadScreenConfig(true);
+    } catch {
+      return;
+    }
+    if (stopped) return;
+    const next = screenSocketUrl(cfg);
+    if (!next || next === lastSocketUrl) return;
+    const first = lastSocketUrl === "";
+    lastSocketUrl = next;
+    if (!first) onChange(cfg);
+  };
+
+  void tick();
+  const id = setInterval(tick, intervalMs);
+  return () => {
+    stopped = true;
+    clearInterval(id);
+  };
+}
+
 /* --- status and controls -------------------------------------------------- */
 
 export interface ScreenStatus {
@@ -122,6 +175,9 @@ export interface ScreenStatus {
     x?: boolean;
     vnc?: boolean;
     vnc_clients?: number;
+    /** True when the RFB->WebSocket hop is up, i.e. the screen is reachable. */
+    websockify?: boolean;
+    websockify_port?: number;
     chromium?: boolean;
     restarts?: Record<string, number>;
     error?: string;

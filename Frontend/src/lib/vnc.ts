@@ -60,6 +60,9 @@ export class VncSession {
   private height = 0;
   private keyGuard: ((e: KeyboardEvent) => void) | null = null;
   private inputWatchers: Array<() => void> = [];
+  /** The socket URL currently in use, so a tunnel move can be detected. */
+  private activeUrl = "";
+  private focusOnPointer: ((e: PointerEvent) => void) | null = null;
 
   constructor(target: HTMLElement, opts: VncSessionOptions) {
     this.target = target;
@@ -124,6 +127,10 @@ export class VncSession {
       this.target.removeEventListener("keydown", this.keyGuard, true);
       this.keyGuard = null;
     }
+    if (this.focusOnPointer) {
+      this.target.removeEventListener("pointerdown", this.focusOnPointer, true);
+      this.focusOnPointer = null;
+    }
     const rfb = this.rfb;
     this.rfb = null;
     if (rfb) {
@@ -136,21 +143,46 @@ export class VncSession {
     this.target.replaceChildren();
   }
 
-  private open(): void {
+  private open(cfg?: ScreenConfig): void {
     if (this.stopped) return;
     this.setState(this.attempt === 0 ? "connecting" : "reconnecting");
     this.teardown();
     // A newer open() (or a stop()) can land while the chunk is in flight.
     const token = ++this.openToken;
-    void Promise.all([loadRfb(), loadScreenConfig()])
-      .then(([RFB, cfg]) => {
+    void Promise.all([loadRfb(), cfg ? Promise.resolve(cfg) : loadScreenConfig()])
+      .then(([RFB, resolved]) => {
         if (this.stopped || token !== this.openToken) return;
-        this.opts.onRoute?.(cfg.mode);
-        this.attach(RFB, cfg);
+        this.opts.onRoute?.(resolved.mode);
+        this.activeUrl = screenSocketUrl(resolved);
+        this.attach(RFB, resolved);
       })
       .catch((err: unknown) => {
         this.scheduleRetry(err instanceof Error ? err.message : "could not load the screen client");
       });
+  }
+
+  /**
+   * Follow the server to a new origin.
+   *
+   * Called when the tunnel watcher sees /screen/config advertise a different
+   * WebSocket URL, which happens whenever the Quick Tunnel is handed a new
+   * hostname.  Reconnecting straight away -- rather than waiting for the
+   * connection to time out and the retry backoff to climb past the config cache
+   * -- is what makes a restarted tunnel recover in about a second instead of
+   * about half a minute.
+   *
+   * Returns true if it actually moved, so the caller can log/report it.
+   */
+  syncTo(cfg: ScreenConfig): boolean {
+    if (this.stopped) return false;
+    const next = screenSocketUrl(cfg);
+    if (!next || next === this.activeUrl) return false;
+    this.opts.onRoute?.(cfg.mode);
+    this.clearRetry();
+    this.teardown();
+    this.attempt = 0;
+    this.open(cfg);
+    return true;
   }
 
   private attach(RFB: typeof import("@novnc/novnc").default, cfg: ScreenConfig): void {
@@ -266,6 +298,26 @@ export class VncSession {
     };
     this.keyGuard = guard;
     this.target.addEventListener("keydown", guard, true);
+
+    // noVNC only receives key events while its own element holds focus.  After a
+    // reconnect, a click anywhere on the screen, or the browser moving focus
+    // because the user tabbed away and came back, the first keystrokes would
+    // otherwise go to RAG Agents instead of the remote Chrome.  Taking focus on
+    // pointer-down is what makes "click, then type" work the way people expect.
+    const takeFocus = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      // Let noVNC's own handler process the click first; focus afterwards.
+      window.setTimeout(() => {
+        if (this.stopped || !this.rfb) return;
+        try {
+          this.rfb.focus({ preventScroll: true });
+        } catch {
+          /* focus is best effort */
+        }
+      }, 0);
+    };
+    this.focusOnPointer = takeFocus;
+    this.target.addEventListener("pointerdown", takeFocus, true);
 
     const mark = () => {
       this.lastInputAt = performance.now();
