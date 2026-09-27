@@ -1,0 +1,30 @@
+# Line endings are a correctness issue here, not a preference.
+#
+# The Codespace is Linux. A shell script committed with CRLF fails on the very
+# first line -- "bad interpreter: /usr/bin/env: bash\r" -- and the entire
+# desktop stack, tunnel and boot sequence is built out of shell scripts. So
+# text is normalised to LF in the repository and checked out as-is everywhere.
+* text=auto eol=lf
+
+# Binaries: never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.db binary
+*.qcow2 binary
+*.iso binary
+*.exe binary
+*.dll binary
+
+# Keep generated and vendored trees out of the text rules entirely.
+Frontend/package-lock.json -diff
+Frontend/dist/** binary
+backend/_vm-archive/** binary
+
+# Keep the diff readable for things where whitespace is noise.
+*.md whitespace=-trailing-space
