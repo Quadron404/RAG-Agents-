@@ -24,7 +24,15 @@ if [ ! -f "$REPO_ROOT/Frontend/dist/index.html" ]; then
   if (cd "$REPO_ROOT/Frontend" && npm run build) >>"$DESKTOP_LOG_DIR/frontend-build.log" 2>&1; then
     log "frontend built"
   else
-    log "WARNING: frontend build failed; see $DESKTOP_LOG_DIR/frontend-build.log"
+    # Fatal, not a warning.  With no dist the app falls back to the bundled
+    # prototype in backend/app/static, which answers every request perfectly --
+    # it is just a stale page with no login screen, no Computer view and no VNC.
+    # A warning here is how a failed build reached someone as a working app.
+    log "FATAL: the frontend build failed.  The app would serve the fallback"
+    log "       prototype, which has no login screen and no screen view."
+    log "       last lines of $DESKTOP_LOG_DIR/frontend-build.log:"
+    tail -n 20 "$DESKTOP_LOG_DIR/frontend-build.log" 2>/dev/null | while read -r l; do log "         $l"; done
+    exit 1
   fi
 else
   log "frontend already built"

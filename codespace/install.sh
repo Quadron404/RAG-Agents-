@@ -99,6 +99,41 @@ else
   exit 1
 fi
 
+# --- frontend dependencies ---------------------------------------------------
+# This step was simply missing, so Frontend/node_modules only ever existed if
+# somebody ran npm by hand.  boot.sh then tried `npm run build` on a machine
+# with no vite and no tsc, the build failed, and -- because the app falls back
+# to the bundled prototype when Frontend/dist is absent -- the deployment came
+# up serving a stale page with no login screen and no screen view.
+if ! command -v npm >/dev/null 2>&1; then
+  log "installing node + npm (needed to build the UI)"
+  $SUDO apt-get install -y --no-install-recommends nodejs npm
+fi
+
+if [ -f "$REPO_ROOT/Frontend/package-lock.json" ]; then
+  log "installing frontend dependencies (npm ci)"
+  if (cd "$REPO_ROOT/Frontend" && npm ci --no-audit --no-fund); then
+    log "  ok  frontend dependencies installed from the lockfile"
+  else
+    log "FATAL: npm ci failed; the UI cannot be built without these"
+    exit 1
+  fi
+else
+  log "FATAL: Frontend/package-lock.json is missing, so dependencies cannot be pinned"
+  log "       regenerate it with: (cd Frontend && npm install)"
+  exit 1
+fi
+
+# Build here rather than leaving it to boot.sh, so a broken build is reported by
+# the thing that installed the dependencies instead of surfacing later as a
+# fallback prototype.
+if (cd "$REPO_ROOT/Frontend" && npm run build); then
+  log "  ok  frontend built (Frontend/dist)"
+else
+  log "FATAL: the frontend build failed; the app would serve the fallback prototype"
+  exit 1
+fi
+
 # --- persistent profile ----------------------------------------------------
 mkdir -p "$CHROME_PROFILE" "$DESKTOP_RUN_DIR" "$WORKSPACE"
 log "chrome profile: $CHROME_PROFILE"

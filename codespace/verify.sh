@@ -209,6 +209,32 @@ else
     bad "GET / returned ${code:-no response}, expected 200"
   fi
 
+  # "GET / returned 200" is not the same as "the app is being served".  When
+  # Frontend/dist is missing the app deliberately falls back to the bundled
+  # prototype in backend/app/static, which also answers 200 -- a stale page with
+  # no login screen, no Computer view and no VNC.  That is precisely how a failed
+  # frontend build reached a user as a green verification run, so the check has
+  # to be about *which* page came back, not whether one did.
+  ui="$(curl -fsS --max-time 10 "$PUBLIC_URL/" 2>/dev/null || true)"
+  if printf '%s' "$ui" | grep -q '/assets/index-'; then
+    ok "the built UI is being served, not the fallback prototype"
+  else
+    bad "the tunnel is serving the fallback prototype instead of the built UI; Frontend/dist is missing or the build failed -- see $DESKTOP_LOG_DIR/frontend-build.log"
+  fi
+
+  # And the bundle index.html points at has to exist.  A dist directory left over
+  # from an older build references hashed filenames that a newer build deleted,
+  # which serves a page that then fails to load any JavaScript at all.
+  ui_asset="$(printf '%s' "$ui" | grep -o '/assets/index-[A-Za-z0-9_-]*\.js' | head -n1)"
+  if [ -n "$ui_asset" ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_URL$ui_asset" 2>/dev/null)"
+    if [ "$code" = "200" ]; then
+      ok "the UI bundle loads ($ui_asset)"
+    else
+      bad "index.html references $ui_asset but it returned ${code:-no response}; Frontend/dist is stale"
+    fi
+  fi
+
   # This is the acceptance criterion, checked through the public entry point
   # rather than in-process: no cookie, no screen.
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_URL/screen/config" 2>/dev/null)"

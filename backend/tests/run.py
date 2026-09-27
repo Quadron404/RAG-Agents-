@@ -16,6 +16,7 @@ TESTS = (
     # check that proves it.  Without this the outage reached a user as an
     # all-green run.
     "test_auth_gate",
+    "test_ui_served",
     "test_screen_url",
     "test_screen_isolation",
     "test_tunnel_url",
