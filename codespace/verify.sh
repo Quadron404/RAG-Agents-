@@ -144,6 +144,22 @@ fi
 PUBLIC_URL=""
 [ -s "$PUBLIC_URL_FILE" ] && PUBLIC_URL="$(cat "$PUBLIC_URL_FILE")"
 
+# Resolve the passphrase the same way the backend does, so the login checks
+# below actually run.  They used to test `[ -n "${RAG_AUTH_TOKEN:-}" ]` -- the
+# *shell* variable -- and skip the entire section when it was unset, which is the
+# normal case: the token lives in backend/.env or as a Codespaces secret and is
+# never exported into the shell that runs this script.  So the one check that
+# would have caught "the server has no passphrase" was itself the thing being
+# skipped, and the run reported all-clear.
+#
+# Note this is a fallback for the check only.  It is read here, in the
+# verifier's own process, and is never passed to the app: the app gets the token
+# through its own environment and hands out a cookie instead.
+AUTH_TOKEN="${RAG_AUTH_TOKEN:-}"
+if [ -z "$AUTH_TOKEN" ] && [ -f "$REPO_ROOT/backend/.env" ]; then
+  AUTH_TOKEN="$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" | tail -n1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
+fi
+
 if [ -n "$PUBLIC_URL" ]; then
   ok "the tunnel published $(cat "$PUBLIC_URL_FILE")"
 else
@@ -198,12 +214,21 @@ else
     bad "GET /screen/config returned ${code:-no response} without a session, expected 401"
   fi
 
-  # And the app must know a passphrase is configured at all, otherwise it is
-  # refusing everything for a reason nobody will discover.
-  if [ -n "${RAG_AUTH_TOKEN:-}" ]; then
-    ok "RAG_AUTH_TOKEN is set in this shell"
+  # The app must know a passphrase is configured, or it is refusing every route
+  # for a reason nobody will discover from the UI.  Asked of the server rather
+  # than of the shell, because "did the operator export the right variable" is
+  # not the question -- "is the deployment actually usable" is.
+  status_body="$(curl -fsS --max-time 10 "$PUBLIC_URL/auth/status" 2>/dev/null || true)"
+  if printf '%s' "$status_body" | grep -q '"auth_required":true'; then
+    ok "the server reports that a passphrase is required"
   else
-    skip "RAG_AUTH_TOKEN is not exported in this shell (it may still be a Codespaces secret)"
+    bad "the server reports no passphrase is configured, so it refuses every route; set RAG_AUTH_TOKEN and restart the backend"
+  fi
+
+  if [ -n "$AUTH_TOKEN" ]; then
+    ok "a passphrase was found for the login check"
+  else
+    skip "no passphrase available to the verifier (server may use a Codespaces secret)"
   fi
 fi
 
@@ -211,13 +236,18 @@ fi
 head_ "5. Logging in through the tunnel"
 # ---------------------------------------------------------------------------
 COOKIE=""
-if [ -z "$PUBLIC_URL" ] || [ -z "${RAG_AUTH_TOKEN:-}" ]; then
-  skip "cannot log in without both a tunnel URL and the passphrase"
+if [ -z "$PUBLIC_URL" ]; then
+  skip "cannot log in without a tunnel URL"
+elif [ -z "$AUTH_TOKEN" ]; then
+  # A tunnel with no passphrase to test against is a broken deployment, and it
+  # used to be reported as a skip -- which is how "the whole app 401s" reached a
+  # user with an all-green verification behind it.
+  bad "the tunnel is public but no passphrase could be read, so login is unverifiable; set RAG_AUTH_TOKEN in backend/.env or as a Codespaces secret"
 else
   JAR="$(mktemp)"
   if curl -fsS --max-time 10 -c "$JAR" -X POST "$PUBLIC_URL/auth/login" \
        -H 'Content-Type: application/json' \
-       --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$RAG_AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
+    --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
        >/dev/null 2>&1; then
     ok "the passphrase was accepted"
   else
@@ -274,7 +304,7 @@ else
   jar2="$(mktemp)"
   curl -fsS --max-time 10 -c "$jar2" -X POST "$PUBLIC_URL/auth/login" \
     -H 'Content-Type: application/json' \
-    --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$RAG_AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
+    --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
     >/dev/null 2>&1
 
   DESKTOP_SIZE="$DESKTOP_SIZE" PUBLIC_URL="$PUBLIC_URL" COOKIE_JAR="$jar2" python3 - <<'PY'
@@ -407,7 +437,14 @@ head_ "The URL to open"
 # ---------------------------------------------------------------------------
 if [ -n "$PUBLIC_URL" ]; then
   printf '  \033[1m%s\033[0m\n\n' "$PUBLIC_URL"
-  printf '  Sign in with the passphrase from RAG_AUTH_TOKEN.\n'
+  if [ -n "$AUTH_TOKEN" ]; then
+    printf '  Sign in with the passphrase from RAG_AUTH_TOKEN.\n'
+  else
+    printf '  \033[31mThere is no passphrase set, so this URL will show the login\n'
+    printf '  screen to nobody and refuse every request.\033[0m Set one with:\n\n'
+    printf "    printf 'RAG_AUTH_TOKEN=%%s\\\\n' 'your-passphrase' >> backend/.env\n"
+    printf '    bash codespace/boot.sh\n\n'
+  fi
   printf '  The Computer view then connects to %s/websockify,\n' "$PUBLIC_URL"
   printf '  which the app proxies to websockify on 127.0.0.1:%s.\n\n' "$WEBSOCKIFY_PORT"
   printf '  This hostname changes every time the tunnel restarts. It is not a\n'

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, LogOut, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { haptic } from "../lib/haptics";
 import { useAuth } from "../lib/auth";
@@ -106,10 +106,67 @@ export function SignOutButton() {
 }
 
 /**
+ * Shown when the server has no passphrase configured.
+ *
+ * This state used to fall through to the app, on the assumption that a
+ * deployment without a passphrase would simply work.  It does not: the backend
+ * fails closed on purpose and refuses every route when RAG_AUTH_TOKEN is unset,
+ * so the workspace rendered fine and then answered every call with
+ * `{"error": "authentication required"}`.  A missing secret presented as a
+ * mysteriously broken Computer tab, which is a genuinely bad way to find out.
+ *
+ * Naming the variable is the whole point.  Whoever hit this should not have to
+ * read the backend to learn that the deployment was never finished.
+ */
+function NoPassphraseScreen() {
+  const check = useAuth((s) => s.check);
+  const [retrying, setRetrying] = useState(false);
+
+  // Re-check rather than reload: once the token is set and the backend is
+  // restarted, this turns into the normal login screen in place.
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await check();
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className="login">
+      <div className="login__card">
+        <div className="login__orb" />
+        <ShieldAlert size={26} />
+        <h1 className="login__title">Server not configured</h1>
+        <p className="login__sub">
+          This deployment has no <code>RAG_AUTH_TOKEN</code> set, so the backend is
+          refusing every request rather than serving a signed-in browser to the open
+          internet. That is the intended safe behaviour, not a bug.
+        </p>
+        <p className="login__sub">
+          Set the token, then restart the backend:
+        </p>
+        <pre className="login__code">
+          {`printf 'RAG_AUTH_TOKEN=%s\\n' 'your-passphrase' >> backend/.env\nbash codespace/boot.sh`}
+        </pre>
+        <button className="btn" onClick={() => void retry()} disabled={retrying}>
+          {retrying ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
+          Check again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Decides between the app and the lock screen.
  *
- * `auth_required` comes from the server, so a deployment with no passphrase
- * configured still works locally instead of showing a login nobody can pass.
+ * `auth_required` comes from the server.  It is false only when no passphrase is
+ * configured at all, and that is a broken deployment rather than an open one --
+ * see NoPassphraseScreen -- so it gets its own screen instead of either the app
+ * (which cannot make a single successful request) or a login form that nobody
+ * could ever pass.
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const checked = useAuth((s) => s.checked);
@@ -134,7 +191,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (required && !authenticated) return <LoginScreen />;
-  if (required && authenticated && status === "offline") return <LoginScreen />;
+  if (!required) return <NoPassphraseScreen />;
+  if (!authenticated) return <LoginScreen />;
+  if (status === "offline") return <LoginScreen />;
   return <>{children}</>;
 }

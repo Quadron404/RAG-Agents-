@@ -48,54 +48,68 @@ fi
 # whole product is one origin.  Same host for the page and the WebSocket is what
 # lets the session cookie ride along with the upgrade without any extra work.
 if [ -f "$RUN_DIR/backend.pid" ] && kill -0 "$(cat "$RUN_DIR/backend.pid" 2>/dev/null)" 2>/dev/null; then
-  log "backend already running"
-else
-  # Prefer the project venv.  A previous version of this script ran a bare
-  # `python3 -m uvicorn`, which died with ModuleNotFoundError on a Codespace
-  # where install.sh had installed into the venv, and the symptom was simply
-  # "the app is not up" with the reason buried in a log nobody was reading.
-  BACKEND_PY=""
-  for cand in "$REPO_ROOT/backend/.venv/bin/python" "$(command -v python3 || true)"; do
-    if [ -n "$cand" ] && [ -x "$cand" ]; then
-      if "$cand" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
-        BACKEND_PY="$cand"
-        break
-      fi
-    fi
+  # Restart rather than leave it alone.  RAG_AUTH_TOKEN is read from this
+  # process's environment when it starts, so "set the token in backend/.env and
+  # re-run boot.sh" has to actually produce a new process -- keeping the old one
+  # meant the documented fix silently did nothing and the app kept refusing
+  # every route.  The backend is stateless and session cookies are self-contained
+  # HMACs, so a restart costs one dropped request and invalidates nothing.
+  OLD_PID="$(cat "$RUN_DIR/backend.pid" 2>/dev/null)"
+  log "backend already running (pid $OLD_PID); restarting to pick up current configuration"
+  kill "$OLD_PID" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$OLD_PID" 2>/dev/null || break
+    sleep 0.3
   done
+  kill -9 "$OLD_PID" 2>/dev/null
+  rm -f "$RUN_DIR/backend.pid"
+fi
 
-  if [ -z "$BACKEND_PY" ]; then
-    log "FATAL: no python with uvicorn+fastapi.  Run codespace/install.sh first."
-    log "       tried: backend/.venv/bin/python, $(command -v python3 || echo 'python3')"
-  else
-    log "using $BACKEND_PY"
-    # 127.0.0.1, never 0.0.0.0.  The Quick Tunnel reaches this port from an
-    # outbound connection, so a public bind is never needed -- and binding
-    # 0.0.0.0 would put the app, and therefore /websockify, on every interface
-    # the Codespace has.  cloudflared, the app, and this process are all on the
-    # same machine; loopback is the whole route.
-    (
-      cd "$REPO_ROOT/backend" || exit 1
-      set -a
-      [ -f .env ] && . ./.env
-      set +a
-      exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
-    ) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
-    echo $! > "$RUN_DIR/backend.pid"
-    log "backend started (pid $!) on 127.0.0.1:$BACKEND_PORT"
-
-    # Wait for it and, if it never arrives, say why instead of leaving the
-    # operator to infer it from a later "not listening" check.
-    for _ in $(seq 1 30); do
-      listening "$BACKEND_PORT" && break
-      kill -0 "$(cat "$RUN_DIR/backend.pid")" 2>/dev/null || break
-      sleep 1
-    done
-    if ! listening "$BACKEND_PORT"; then
-      log "WARNING: the app never came up on 127.0.0.1:$BACKEND_PORT."
-      log "         last lines of $DESKTOP_LOG_DIR/backend.log:"
-      tail -n 15 "$DESKTOP_LOG_DIR/backend.log" 2>/dev/null | while read -r l; do log "         $l"; done
+# Prefer the project venv.  A previous version of this script ran a bare
+# `python3 -m uvicorn`, which died with ModuleNotFoundError on a Codespace
+# where install.sh had installed into the venv, and the symptom was simply
+# "the app is not up" with the reason buried in a log nobody was reading.
+BACKEND_PY=""
+for cand in "$REPO_ROOT/backend/.venv/bin/python" "$(command -v python3 || true)"; do
+  if [ -n "$cand" ] && [ -x "$cand" ]; then
+    if "$cand" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
+      BACKEND_PY="$cand"
+      break
     fi
+  fi
+done
+
+if [ -z "$BACKEND_PY" ]; then
+  log "FATAL: no python with uvicorn+fastapi.  Run codespace/install.sh first."
+  log "       tried: backend/.venv/bin/python, $(command -v python3 || echo 'python3')"
+else
+  log "using $BACKEND_PY"
+  # 127.0.0.1, never 0.0.0.0.  The Quick Tunnel reaches this port from an
+  # outbound connection, so a public bind is never needed -- and binding
+  # 0.0.0.0 would put the app, and therefore /websockify, on every interface
+  # the Codespace has.  cloudflared, the app, and this process are all on the
+  # same machine; loopback is the whole route.
+  (
+    cd "$REPO_ROOT/backend" || exit 1
+    set -a
+    [ -f .env ] && . ./.env
+    set +a
+    exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
+  ) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
+  echo $! > "$RUN_DIR/backend.pid"
+  log "backend started (pid $!) on 127.0.0.1:$BACKEND_PORT"
+
+  # Wait for it and, if it never arrives, say why instead of leaving the
+  # operator to infer it from a later "not listening" check.
+  for _ in $(seq 1 30); do
+    listening "$BACKEND_PORT" && break
+    kill -0 "$(cat "$RUN_DIR/backend.pid")" 2>/dev/null || break
+    sleep 1
+  done
+  if ! listening "$BACKEND_PORT"; then
+    log "WARNING: the app never came up on 127.0.0.1:$BACKEND_PORT."
+    log "         last lines of $DESKTOP_LOG_DIR/backend.log:"
+    tail -n 15 "$DESKTOP_LOG_DIR/backend.log" 2>/dev/null | while read -r l; do log "         $l"; done
   fi
 fi
 

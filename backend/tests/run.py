@@ -11,6 +11,11 @@ import sys
 
 TESTS = (
     "test_auth",
+    # The UI half of the same contract: a missing passphrase must be refused by
+    # the server *and* surfaced by the gate, and the verifier must not skip the
+    # check that proves it.  Without this the outage reached a user as an
+    # all-green run.
+    "test_auth_gate",
     "test_screen_url",
     "test_screen_isolation",
     "test_tunnel_url",
