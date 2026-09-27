@@ -4562,3 +4562,775 @@ textarea {
   align-self: stretch;
   margin-top: 16px;
 }
+
+/* ============================================================================
+   RAG AGENTS DESKTOP
+
+   The Computer page as a desktop: a wallpaper, app icons, and floating glass
+   windows.  The reason it is not a tabbed panel is sizing.  The tab strip used
+   to sit above the content, so the live screen could never own the full height
+   -- the top of the remote Chrome, which is its own tab strip and address bar,
+   was permanently hidden underneath a second row of RAG Agents tabs.
+
+   Everything is built from the existing tokens (--glass, --blur-xl, --line,
+   --shadow-*, --ease-spring) so the desktop inherits both themes instead of
+   hardcoding a palette.
+   ========================================================================= */
+
+.desktop {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--bg0);
+}
+
+/* The wallpaper.  Stacked soft lights rather than one flat wash, so it has
+   depth without competing with the windows sitting on top of it. */
+.desktop__wall {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(58% 42% at 14% 0%, rgba(124, 106, 255, 0.3), transparent 64%),
+    radial-gradient(48% 38% at 88% 6%, rgba(90, 178, 255, 0.24), transparent 62%),
+    radial-gradient(52% 44% at 78% 100%, rgba(236, 112, 236, 0.18), transparent 64%),
+    radial-gradient(46% 40% at 6% 92%, rgba(70, 206, 180, 0.17), transparent 62%),
+    linear-gradient(168deg, var(--bg1) 0%, var(--bg0) 62%, var(--bg2) 100%);
+}
+
+[data-theme="light"] .desktop__wall {
+  background:
+    radial-gradient(58% 42% at 14% 0%, rgba(150, 132, 255, 0.24), transparent 64%),
+    radial-gradient(48% 38% at 88% 6%, rgba(120, 196, 255, 0.2), transparent 62%),
+    radial-gradient(52% 44% at 78% 100%, rgba(248, 140, 248, 0.15), transparent 64%),
+    radial-gradient(46% 40% at 6% 92%, rgba(96, 214, 192, 0.14), transparent 62%),
+    linear-gradient(168deg, var(--bg1) 0%, var(--bg0) 62%, var(--bg2) 100%);
+}
+
+/* A single soft highlight across the top, like light on glass. */
+.desktop__wall::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 62% at 50% -18%, rgba(255, 255, 255, 0.14), transparent 58%);
+}
+
+[data-theme="dark"] .desktop__wall::after {
+  background: radial-gradient(120% 62% at 50% -18%, rgba(255, 255, 255, 0.06), transparent 58%);
+}
+
+/* ---- menu bar ------------------------------------------------------------ */
+
+.deskbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 46px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 14px;
+  background: var(--glass);
+  border-bottom: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  transition: opacity 0.28s ease, transform 0.28s var(--ease-spring);
+}
+
+/* A full-screen window owns the whole surface, so the bar steps aside. */
+.deskbar--behind {
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+
+.deskbar__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.deskbar__mark {
+  width: 9px;
+  height: 9px;
+  align-self: center;
+  border-radius: 3px;
+  background: linear-gradient(140deg, var(--accent), var(--violet));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.deskbar__name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.deskbar__sub {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* ---- app icons ----------------------------------------------------------- */
+
+.deskicons {
+  position: absolute;
+  z-index: 5;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 22px;
+  border-radius: 22px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.5);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-2);
+  animation: deskIn 0.5s var(--ease-spring) both;
+}
+
+.deskicon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 92px;
+  padding: 10px 6px 12px;
+  border: none;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.22s var(--ease-spring), background 0.18s ease;
+}
+
+.deskicon:hover {
+  transform: translateY(-3px);
+  background: var(--glass-2);
+}
+
+.deskicon:active {
+  transform: translateY(-1px) scale(0.97);
+}
+
+.deskicon__tile {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: #fff;
+  overflow: hidden;
+  background: linear-gradient(150deg, var(--accent) 0%, var(--violet) 100%);
+  box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  transition: box-shadow 0.22s ease, transform 0.22s var(--ease-spring);
+}
+
+/* A sheen that sweeps across the tile on hover. */
+.deskicon__tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.42) 50%, transparent 68%);
+  transform: translateX(-120%);
+  transition: transform 0.62s var(--ease-spring);
+}
+
+.deskicon:hover .deskicon__tile::after {
+  transform: translateX(120%);
+}
+
+.deskicon:hover .deskicon__tile {
+  box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.deskicon--open .deskicon__tile {
+  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+}
+
+.deskicon__label {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+
+/* The dot under an icon whose window is open, so state is visible from the
+   desktop without opening anything. */
+.deskicon--open .deskicon__label::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 4px;
+  margin: 4px auto 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.deskhint {
+  position: absolute;
+  z-index: 5;
+  top: 210px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.5);
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: deskIn 0.6s 0.14s var(--ease-spring) both;
+}
+
+/* ---- windows ------------------------------------------------------------- */
+
+.dwin {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  min-height: 200px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-2);
+  transition:
+    transform 0.3s var(--ease-spring),
+    opacity 0.24s ease,
+    box-shadow 0.28s ease,
+    left 0.3s var(--ease-spring),
+    top 0.3s var(--ease-spring),
+    width 0.3s var(--ease-spring),
+    height 0.3s var(--ease-spring);
+  animation: dwinIn 0.26s var(--ease-spring);
+  will-change: transform, opacity;
+}
+
+/* The focused window lifts; unfocused ones recede. This is the whole depth
+   model, and it is why the wallpaper matters. */
+.dwin--active {
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-3);
+}
+
+/* The unfocused-dimming rule needs :not(.dwin--min) as well as its own
+   specificity.  :not() contributes the specificity of its argument, so a plain
+   `.dwin--min { opacity: 0 }` loses to `.dwin:not(.dwin--active)` and a
+   minimised window would sit there at 82% opacity instead of disappearing. */
+.dwin:not(.dwin--active):not(.dwin--min) {
+  opacity: 0.82;
+}
+
+.dwin--browser {
+  background: rgba(10, 11, 15, 0.72);
+}
+
+[data-theme="light"] .dwin--browser {
+  background: rgba(24, 24, 28, 0.9);
+}
+
+.dwin--min {
+  opacity: 0;
+  transform: translateY(26px) scale(0.92);
+  pointer-events: none;
+}
+
+.dwin--closing {
+  animation: dwinOut 0.2s ease forwards;
+  pointer-events: none;
+}
+
+.dwin--full {
+  inset: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0;
+  border: none;
+}
+
+.dwin--max {
+  border-radius: 18px;
+}
+
+/* ---- title bar ----------------------------------------------------------- */
+
+.dwin__bar {
+  position: relative;
+  z-index: 3;
+  height: 42px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--glass-line);
+  background: var(--glass-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.dwin__bar:active {
+  cursor: grabbing;
+}
+
+.dwin--browser .dwin__bar {
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  color: #eef0f6;
+}
+
+.dwin__lights {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dwin__light {
+  width: 12px;
+  height: 12px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: transparent;
+  cursor: pointer;
+  transition: filter 0.16s ease, transform 0.16s var(--ease-spring);
+}
+
+.dwin__light--close {
+  background: #ff5f57;
+}
+
+.dwin__light--min {
+  background: #febc2e;
+}
+
+.dwin__light--max {
+  background: #28c840;
+}
+
+/* Dim until the window is hovered, the way desktop window controls behave, so a
+   row of three coloured dots does not shout from every window at once. */
+.dwin__lights {
+  opacity: 0.62;
+  transition: opacity 0.18s ease;
+}
+
+.dwin:hover .dwin__lights,
+.dwin--active .dwin__lights {
+  opacity: 1;
+}
+
+.dwin__light:hover {
+  filter: brightness(1.12);
+  transform: scale(1.14);
+}
+
+.dwin__light:active {
+  transform: scale(0.94);
+}
+
+.dwin__title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 640;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dwin--browser .dwin__title {
+  color: #eef0f6;
+}
+
+.dwin__title svg {
+  align-self: center;
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.dwin__title em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+.dwin__acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ---- window body: the live screen lives here and fills it ---------------- */
+
+.dwin__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+}
+
+.dwin--browser .dwin__body {
+  background: #07080c;
+}
+
+.dwin__grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  z-index: 6;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.dwin__grip::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  border-radius: 0 0 3px 0;
+  opacity: 0.5;
+}
+
+.dwin--browser .dwin__grip::after {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---- bare mode: the screen reaches the top edge --------------------------- */
+
+/* When the Browser window is maximised or full screen, its title bar stops
+   occupying layout and becomes an overlay that fades in when the pointer comes
+   near the top.  The body then covers the entire window, so the remote Chrome
+   reaches the very top edge -- which is the whole reason this exists: the top
+   of a browser is its tab strip and address bar, and those are the pixels you
+   need most.
+
+   `pointer-events: none` while hidden is load-bearing.  A transparent bar would
+   otherwise still swallow clicks on the top of the remote screen, which is
+   exactly the area this change exists to make reachable. */
+.dwin--bare .dwin__bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.24s ease;
+  background: rgba(10, 11, 15, 0.72);
+  border-bottom-color: transparent;
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+}
+
+.dwin--bare.dwin--chrome .dwin__bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dwin--bare .dwin__body {
+  position: absolute;
+  inset: 0;
+}
+
+.dwin--bare .dwin__grip {
+  display: none;
+}
+
+/* ---- dock ---------------------------------------------------------------- */
+
+.deskdock {
+  position: absolute;
+  z-index: 55;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-2);
+  transition: opacity 0.28s ease, transform 0.28s var(--ease-spring);
+}
+
+.deskdock--behind {
+  opacity: 0;
+  transform: translateX(-50%) translateY(120%);
+  pointer-events: none;
+}
+
+.deskdock__empty {
+  display: block;
+  width: 34px;
+}
+
+.deskdock__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.18s var(--ease-spring);
+}
+
+.deskdock__item:hover {
+  background: var(--bg3);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.deskdock__item--on {
+  color: var(--text);
+}
+
+/* The running dot, matching the icon state on the desktop. */
+.deskdock__item--on::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ---- the live screen, as a window ---------------------------------------- */
+
+/* Controls float at the *bottom* of the stage.  The remote Chrome's own tab
+   strip and address bar are at its top, and a control bar across the top of the
+   window would sit directly on top of them. */
+.vncscreen--bare .vnc__bar--float {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 4;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(12, 13, 18, 0.62);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+  opacity: 0.42;
+  overflow: hidden;
+  transition: opacity 0.24s ease, transform 0.24s var(--ease-spring);
+}
+
+.vncscreen--bare:hover .vnc__bar--float,
+.vncscreen--bare .vnc__bar--float:focus-within,
+.vncscreen--bare .vnc__bar--float:hover {
+  opacity: 1;
+}
+
+/* The hint would otherwise sit on top of the floating pill. */
+.vncscreen--bare .vnc__hint {
+  bottom: 58px;
+}
+
+/* ---- terminal + files, as windows ---------------------------------------- */
+
+.vmterm--window {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+  border-top: none;
+  background: rgba(9, 10, 14, 0.55);
+}
+
+.vmterm__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 120px;
+  padding: 24px;
+  color: var(--text-3);
+  font-family: var(--font, inherit);
+  font-size: 13px;
+  text-align: center;
+}
+
+.dwin--files .dwin__body {
+  background: var(--bg1);
+}
+
+/* ---- motion -------------------------------------------------------------- */
+
+@keyframes dwinIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dwinOut {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes deskIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The icon row centres itself with a translate, so its entrance has to animate
+   the same axis or it visibly jumps. */
+@keyframes deskIconsIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
+.deskicons {
+  animation-name: deskIconsIn;
+}
+
+/* ---- responsive ---------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .deskicons {
+    gap: 6px;
+    padding: 14px 12px;
+  }
+
+  .deskicon {
+    width: 78px;
+  }
+
+  .deskhint {
+    display: none;
+  }
+
+  .dwin {
+    border-radius: 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .deskbar__sub {
+    display: none;
+  }
+
+  .dwin__title em {
+    display: none;
+  }
+}
+
+/* ---- reduced motion ------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .dwin,
+  .deskbar,
+  .deskdock,
+  .deskicons,
+  .deskhint,
+  .deskicon,
+  .deskicon__tile,
+/* `position: relative` is required, not cosmetic: the control bar is a *sibling*
+   of .vnc__stage, not a child of it, so without a positioned ancestor here the
+   absolutely-positioned bar would resolve against the whole window instead of
+   the screen area. */
+.vncscreen--bare {
+  position: relative;
+}
+
+.vncscreen--bare .vnc__bar--float {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .deskicon:hover,
+  .deskdock__item:hover,
+  .dwin__light:hover {
+    transform: none;
+  }
+
+  .deskicon__tile::after {
+    display: none;
+  }
+
+  .dwin,
+  .deskbar,
+  .deskdock,
+  .dwin__bar,
+  .vncscreen--bare .vnc__bar--float,
+  .deskdock__item {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+

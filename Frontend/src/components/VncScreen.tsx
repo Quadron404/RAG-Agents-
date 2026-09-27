@@ -44,7 +44,23 @@ const DEBUG_KEY = "rag.vnc.debug";
  * the server: the authenticated Cloudflare route in production, this app's own
  * relay while developing.
  */
-export function VncScreen({ running }: { running: boolean }) {
+export function VncScreen({
+  running,
+  controls = "bar",
+}: {
+  running: boolean;
+  /**
+   * Where the status/controls strip lives.
+   *
+   * "bar" is the original full-width strip above the screen.  "overlay" floats
+   * the same controls at the *bottom* of the stage instead, which matters
+   * because the top of a remote Chrome is its tab strip and address bar: a
+   * control bar across the top covers precisely the part of the live screen
+   * people need to read and click.  Nothing about the connection changes
+   * between the two.
+   */
+  controls?: "bar" | "overlay";
+}) {
   const computerMsg = useCore((s) => s.computer.msg);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -215,8 +231,8 @@ export function VncScreen({ running }: { running: boolean }) {
   const res = stats && stats.width ? `${stats.width}×${stats.height}` : desktop?.size ?? "";
 
   return (
-    <div className="vncscreen">
-      <div className="vnc__bar">
+    <div className={`vncscreen${controls === "overlay" ? " vncscreen--bare" : ""}`}>
+      <div className={`vnc__bar${controls === "overlay" ? " vnc__bar--float" : ""}`}>
         {/* The route is user-visible on purpose: it is the difference between
             going out through a published tunnel and going through the in-app
             relay, and "which one am I on?" should never be a guess.  Both are
