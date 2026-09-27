@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent OS — Messages</title>
+<style>
+  :root {
+    --bg: #120f14; --bg2: #191421;
+    --in: #241d2c; --in2: #2b2336;
+    --line: rgba(255,255,255,0.08); --line2: rgba(255,255,255,0.16);
+    --text: #f0eae0; --muted: #8f8699; --muted2: #6f6779;
+    --accent: #d7a86a; --accent2: #e08f5a;
+    --self: linear-gradient(135deg, #b07a3e, #cf9450);
+    --bot: #241d2c;
+    --green: #86c58a; --green2: #4caf6d;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: var(--sans); color: var(--text); background: var(--bg); overflow: hidden; }
+
+  #app { display: flex; height: 100vh; max-width: 1400px; margin: 0 auto; box-shadow: 0 0 60px rgba(0,0,0,0.55); }
+
+  /* sidebar */
+  #side { width: 300px; flex: 0 0 auto; background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  #sideHead { padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
+  #sideHead .row { display: flex; align-items: center; gap: 10px; }
+  #sideHead h1 { font-size: 18px; font-weight: 800; letter-spacing: 0.3px; }
+  #sideHead .mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #201408; font-size: 13px; font-weight: 900; }
+  #sideHead .sub { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  #search { width: 100%; margin-top: 12px; font: inherit; font-size: 13px; color: var(--text); background: var(--in); border: 1px solid var(--line); border-radius: 10px; padding: 9px 13px; outline: none; }
+  #search:focus { border-color: rgba(215,168,106,0.4); }
+  #convos { flex: 1; overflow-y: auto; padding: 10px; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+  .conv { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 12px; cursor: pointer; border: 1px solid transparent; transition: background 0.12s ease; }
+  .conv:hover { background: var(--in); }
+  .conv.on { background: var(--in); border-color: var(--line); }
+  .conv .ava { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(135deg, #553d24, #2b2336); border: 1px solid var(--line2); font-size: 16px; position: relative; }
+  .conv .ava .on { position: absolute; bottom: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--green2); border: 2px solid var(--bg2); }
+  .conv .meta { flex: 1; min-width: 0; }
+  .conv .name { font-size: 14px; font-weight: 700; }
+  .conv .prev { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .conv .time { font-size: 10.5px; color: var(--muted2); align-self: flex-start; }
+
+  /* chat column */
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  #chatHead { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: rgba(25,20,33,0.6); backdrop-filter: blur(10px); z-index: 5; }
+  #chatHead .ava { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(135deg, #553d24, #2b2336); border: 1px solid var(--line2); font-size: 15px; }
+  #chatHead .who { flex: 1; min-width: 0; }
+  #chatHead .who .nm { font-size: 14.5px; font-weight: 800; }
+  #chatHead .who .st { font-size: 11.5px; color: var(--muted); }
+  #chatHead .who .st.onl { color: var(--green); }
+  .chbtn { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; font-size: 15px; }
+  .chbtn:hover { color: var(--text); border-color: var(--line2); }
+  .chbtn.on { color: var(--accent); border-color: rgba(215,168,106,0.4); background: rgba(215,168,106,0.1); }
+
+  #msgs { flex: 1; overflow-y: auto; padding: 22px 20px; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; flex-direction: column; gap: 14px; display: flex; }
+  #msgs::-webkit-scrollbar { width: 8px; }
+  #msgs::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+  .msg { display: flex; max-width: 72%; }
+  .msg.user { align-self: flex-end; }
+  .msg.bot { align-self: flex-start; }
+  .bubble { padding: 11px 15px; font-size: 14px; line-height: 1.6; position: relative; border-radius: 16px; }
+  .msg.user .bubble { background: var(--self); color: #fff; border-bottom-right-radius: 5px; box-shadow: 0 4px 18px rgba(176,122,62,0.3); }
+  .msg.bot .bubble { background: var(--bot); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+  .msg .time { font-size: 10.5px; color: var(--muted2); margin-top: 5px; padding: 0 4px; }
+  .msg.user .time { text-align: right; }
+  .msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .msg .meta b { color: var(--accent); }
+
+  .typing { display: inline-flex; gap: 4px; align-items: center; padding: 4px 2px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: ty 1.2s ease infinite; }
+  .typing span:nth-child(2){ animation-delay: 0.15s; } .typing span:nth-child(3){ animation-delay: 0.3s; }
+  @keyframes ty { 0%,60%,100%{ transform: translateY(0); opacity: 0.4; } 30%{ transform: translateY(-4px); opacity: 1; } }
+
+  #composer { padding: 14px 18px 18px; border-top: 1px solid var(--line); background: rgba(18,15,20,0.85); backdrop-filter: blur(10px); }
+  #composer .row { display: flex; align-items: flex-end; gap: 10px; }
+  #input { flex: 1; font: inherit; font-size: 14px; color: var(--text); background: var(--in); border: 1px solid var(--line2); border-radius: 16px; padding: 12px 16px; outline: none; resize: none; max-height: 120px; line-height: 1.4; }
+  #input:focus { border-color: rgba(215,168,106,0.45); box-shadow: 0 0 0 3px rgba(215,168,106,0.12); }
+  #input::placeholder { color: var(--muted2); }
+  #send { width: 46px; height: 46px; flex: 0 0 auto; border-radius: 50%; border: none; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #201408; font-size: 18px; cursor: pointer; display: grid; place-items: center; box-shadow: 0 4px 18px rgba(215,168,106,0.4); }
+  #send:disabled { filter: grayscale(0.8) brightness(0.8); cursor: not-allowed; }
+  .hint { font-size: 11px; color: var(--muted2); text-align: center; margin-top: 8px; }
+  .hint b { color: var(--muted); }
+
+  /* computer panel */
+  #computer {
+    width: 0; flex: 0 0 auto; border-left: 1px solid var(--line); background: #0d0b11;
+    transition: width 0.25s ease; overflow: hidden;
+  }
+  #computer.cpanel.on { width: 46%; min-width: 420px; }
+  #computer.cframe.on { position: fixed; inset: 0; width: 100%; min-width: 0; z-index: 90; border-left: none; }
+  #computer iframe { width: 100%; height: 100%; border: none; display: block; background: #14111a; }
+  #compHead { display: none; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+  #computer.on #compHead { display: flex; }
+  #compHead .t { flex: 1; font-size: 12.5px; font-weight: 800; }
+  #compHead .t small { color: var(--muted); font-weight: 600; margin-left: 6px; }
+  #compHead .chbtn { width: 28px; height: 28px; border-radius: 8px; }
+
+  @media (max-width: 900px) {
+    #side { display: none; }
+    #computer.cpanel.on { width: 100%; min-width: 0; position: fixed; inset: 0; z-index: 80; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="sideHead">
+      <div class="row"><div class="mark">◆</div><h1>Agents</h1></div>
+      <div class="sub">your personal AI workforce</div>
+      <input id="search" placeholder="Search conversations…">
+    </div>
+    <div id="convos"></div>
+  </div>
+
+  <div id="chat">
+    <div id="chatHead">
+      <div class="ava">◆</div>
+      <div class="who">
+        <div class="nm">Agent</div>
+        <div class="st" id="agentSt">connecting…</div>
+      </div>
+      <button class="chbtn" id="compToggle" onclick="toggleComputer()" title="Agent's computer">🖥</button>
+      <button class="chbtn" onclick="toggleFrame()" title="Fullscreen">⛶</button>
+    </div>
+    <div id="msgs"></div>
+    <div id="composer">
+      <div class="row">
+        <textarea id="input" rows="1" placeholder="Message the agent…"></textarea>
+        <button id="send" onclick="send()">➤</button>
+      </div>
+      <div class="hint">agent has its own <b>computer</b> — terminal, files &amp; a <b>browser</b> it can drive</div>
+    </div>
+  </div>
+
+  <div id="computer" class="cpanel">
+    <div id="compHead">
+      <div class="t">Agent's computer <small>— the microVM desktop</small></div>
+      <span style="display:flex;gap:6px">
+        <button class="chbtn" onclick="toggleFrame()" title="Full view">⛶</button>
+        <button class="chbtn" onclick="toggleComputer()">✕</button>
+      </span>
+    </div>
+    <iframe id="compFrame" src="/computer.html?v=${Date.now()}"></iframe>
+  </div>
+</div>
+
+<script>
+const USER = "me";
+let ws = null; let threadId = null; let sending = false; let bubble = null;
+
+const $ = id => document.getElementById(id);
+
+/* ---- conversations ---------- */
+async function loadThreads(){
+  try {
+    const r = await fetch(`/threads?user_id=${USER}`);
+    const d = await r.json();
+    let list = d.threads || [];
+    if (!list.length) {
+      const c = await fetch("/threads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ user_id: USER, title: "Agent" }) });
+      list = [(await c.json())];
+    }
+    renderConvos(list);
+    threadId = list[0].thread_id;
+    const m = await fetch(`/threads/${threadId}/messages`);
+    const md = await m.json();
+    (md.messages||[]).forEach(x => renderHistory(x));
+    scrollBottom();
+  } catch(e) { console.error(e); }
+}
+function renderConvos(list){
+  const box = $("convos"); box.innerHTML = "";
+  list.forEach(t => {
+    const c = document.createElement("div");
+    c.className = "conv on";
+    c.innerHTML = `<div class="ava">◆<span class="on"></span></div><div class="meta"><div class="name">${esc(t.title)}</div><div class="prev">microVM worker — terminal · files · browser</div></div><div class="time">now</div>`;
+    box.appendChild(c);
+  });
+}
+function renderHistory(m){
+  if (m.role === "user") addMsg(`${esc(m.content)}`, true, true);
+  else if (m.role === "assistant" && m.content) addMsg(`${esc(m.content)}`, false, true, m.agent || "commander");
+}
+
+/* ---- chat ---------- */
+function addMsg(html, user, isHistory, agent){
+  const box = $("msgs");
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (user ? "user" : "bot");
+  const meta = agent ? `<div class="meta"><b>${esc(agent)}</b></div>` : "";
+  if (user) {
+    wrap.innerHTML = `<div style="width:100%"><div class="bubble">${html}</div><div class="time">${timeStr()}</div></div>`;
+  } else {
+    wrap.innerHTML = `<div style="width:100%">${meta}<div class="bubble">${html}</div><div class="time">${timeStr()}</div></div>`;
+  }
+  box.appendChild(wrap);
+  if (!isHistory) scrollBottom();
+  return wrap;
+}
+function typingBubble(on){
+  const box = $("msgs");
+  const old = box.querySelector(".msg.typing-wrap");
+  if (old) old.remove();
+  if (!on) return;
+  const wrap = document.createElement("div");
+  wrap.className = "msg bot typing-wrap";
+  wrap.innerHTML = `<div style="width:100%"><div class="bubble"><span class="typing"><span></span><span></span><span></span></span><span style="color:var(--muted);font-size:12px;margin-left:8px">agent is thinking</span></div></div>`;
+  box.appendChild(wrap);
+  scrollBottom();
+}
+function timeStr(){ return new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+function scrollBottom(){ const b=$("msgs"); b.scrollTop = b.scrollHeight; }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+/* ---- computer panel ---------- */
+let compOn = false;
+function toggleComputer(){
+  compOn = !compOn;
+  const c = $("computer");
+  c.classList.toggle("on", compOn);
+  $("compToggle").classList.toggle("on", compOn);
+}
+function toggleFrame(){
+  const c = $("computer");
+  if (c.classList.contains("cframe")) { c.classList.remove("cframe","on"); compOn=false; $("compToggle").classList.remove("on"); }
+  else { c.classList.add("cframe","on"); compOn=true; }
+}
+
+/* ---- send ---------- */
+function send(){
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text || sending || !ws || ws.readyState !== 1) return;
+  sending = true; $("send").disabled = true;
+  addMsg(esc(text), true, false);
+  typingBubble(true);
+  ws.send(JSON.stringify({ type:"message", text, thread_id: threadId }));
+  input.value = ""; autoGrow();
+}
+
+/* ---- autogrow ---------- */
+const ta = $("input");
+function autoGrow(){ ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; }
+ta.addEventListener("input", autoGrow);
+
+/* ---- ws ---------- */
+function connect(){
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/${USER}`);
+  const st = $("agentSt");
+  ws.onopen = () => { st.textContent = "online · microVM ready"; st.classList.add("onl"); ws.send(JSON.stringify({type:"vm_status"})); };
+  ws.onclose = () => { st.textContent = "reconnecting…"; st.classList.remove("onl"); setTimeout(connect, 1500); };
+  ws.onmessage = (m) => {
+    let d; try { d = JSON.parse(m.data); } catch(e){ return; }
+    if (d.type === "thread") { threadId = d.thread_id; return; }
+    if (d.type === "vm") { const on = !!(d.running ?? (d.result && d.result.ok)); st.textContent = on ? "online · microVM ready" : "offline · vm stopped"; st.classList.toggle("onl", on); return; }
+    if (d.type === "event" && d.event) { onEvent(d.event); return; }
+  };
+}
+function onEvent(ev){
+  switch(ev.type){
+    case "plan": break;
+    case "worker_start": {
+      // show the computer when the agent starts working in the VM
+      ensureComputer();
+      typingBubble(true);
+      break;
+    }
+    case "tool_start": {
+      ensureComputer();
+      break;
+    }
+    case "delta": {
+      const box = $("msgs"); const old = box.querySelector(".msg.typing-wrap"); if (old) old.remove();
+      if (!bubble) { bubble = addMsg("", false, false, ev.agent || "commander"); }
+      const b = bubble.querySelector(".bubble");
+      const text = b.textContent + ev.text;
+      b.innerHTML = esc(text) + `<span class="cursor" style="display:inline-block;width:2px;height:14px;background:var(--accent);vertical-align:-2px;margin-left:2px"></span>`;
+      scrollBottom();
+      break;
+    }
+    case "synthesize": {
+      typingBubble(true);
+      break;
+    }
+    case "tool_result": break;
+    default: break;
+  }
+}
+function ensureComputer(){ if (!compOn) toggleComputer(); }
+
+function currentId(){ return threadId; }
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && document.activeElement === $("input")) { e.preventDefault(); send(); }
+});
+
+loadThreads();
+connect();
+</script>
+</body>
+</html>

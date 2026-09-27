@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Agents &middot; Cockpit</title>
+<style>
+  :root {
+    --bg: #12100e;
+    --bg2: #171411;
+    --panel: #1c1815;
+    --panel2: #221d19;
+    --line: rgba(236,229,219,0.07);
+    --line2: rgba(236,229,219,0.12);
+    --text: #ece5db;
+    --muted: #9c9185;
+    --accent: #e0a458;
+    --accent-soft: rgba(224,164,88,0.14);
+    --green: #7fbf7f;
+    --red: #d4877b;
+    --blue: #8fb7d6;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --r: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(1200px 600px at 80% -10%, #241c12 0%, transparent 60%),
+                radial-gradient(900px 500px at -10% 110%, #191a18 0%, transparent 55%),
+                var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  #topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(18,16,14,0.8);
+    backdrop-filter: blur(8px);
+    z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.2px; }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), #c47f30);
+    display: grid; place-items: center; color: #191512; font-weight: 800; font-size: 14px;
+    box-shadow: 0 2px 12px rgba(224,164,88,0.35);
+  }
+  .brand small { color: var(--muted); font-weight: 500; font-size: 12px; }
+  #topbar .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.ok .dot { background: var(--green); box-shadow: 0 0 8px rgba(127,191,127,0.6); }
+  .pill.bad .dot { background: var(--red); box-shadow: 0 0 8px rgba(212,135,123,0.6); }
+  .pill .label { position: relative; top: -0.5px; }
+  button.ghost {
+    font: inherit; cursor: pointer; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    transition: all 0.15s ease;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--line2); }
+
+  #planbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 18px; border-bottom: 1px solid var(--line);
+    background: rgba(18,16,14,0.5);
+    overflow-x: auto; scrollbar-width: none;
+    min-height: 44px;
+  }
+  #planbar::-webkit-scrollbar { display: none; }
+  .plan-chip {
+    white-space: nowrap; font-size: 12px; font-weight: 600;
+    color: var(--muted); padding: 5px 12px; border-radius: 999px;
+    border: 1px dashed var(--line2); background: transparent;
+  }
+  .plan-chip.done { color: var(--green); border-color: rgba(127,191,127,0.35); }
+  .plan-chip.run { color: var(--accent); border-color: rgba(224,164,88,0.5); background: var(--accent-soft); }
+  .plan-chip .n { color: var(--accent); font-weight: 800; margin-right: 5px; }
+
+  #tabs {
+    display: flex; gap: 8px; padding: 12px 18px 0;
+  }
+  .tabbtn {
+    display: flex; align-items: center; gap: 9px;
+    font: inherit; font-size: 13px; font-weight: 700;
+    color: var(--muted); background: transparent; border: 1px solid transparent;
+    padding: 9px 16px; border-radius: 12px; cursor: pointer;
+    transition: all 0.16s ease; position: relative; flex: 0 0 auto;
+  }
+  .tabbtn svg { width: 17px; height: 17px; }
+  .tabbtn:hover { color: var(--text); background: var(--panel); }
+  .tabbtn.on { color: var(--text); background: var(--panel); border-color: var(--line2); }
+  .tabbtn .badge {
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+    background: var(--accent); color: #191512; font-size: 10px; font-weight: 800;
+    display: none; place-items: center;
+  }
+  .tabbtn .badge.show { display: grid; }
+  .tabbtn.live::after {
+    content: ""; position: absolute; top: -1px; left: 18px; right: 18px; height: 2px;
+    background: var(--accent); border-radius: 2px;
+    box-shadow: 0 0 10px var(--accent);
+  }
+
+  #shell {
+    flex: 1; display: flex; min-height: 0;
+    padding: 10px 18px 14px; gap: 12px;
+  }
+  #stage { flex: 1; display: grid; min-width: 0; }
+  .feed {
+    display: none; overflow-y: auto; align-content: start;
+    gap: 10px; padding: 10px 2px 20px;
+    scrollbar-width: thin; scrollbar-color: var(--line2) transparent;
+  }
+  .feed.on { display: grid; }
+  .feed::-webkit-scrollbar { width: 8px; }
+  .feed::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--r); overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  }
+  .card .chead {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 14px; border-bottom: 1px solid var(--line);
+    background: var(--panel2); font-size: 12px; font-weight: 700;
+  }
+  .card .chead .ico { width: 15px; height: 15px; color: var(--accent); flex: 0 0 auto; }
+  .card .chead .name { color: var(--text); }
+  .card .chead .meta { color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .chead .sp { flex: 1; }
+  .card .chead .status { font-size: 11px; color: var(--muted); }
+  .card .chead .status.err { color: var(--red); }
+  .card .chead .status.ok { color: var(--green); }
+  .card .chead .status.run { color: var(--accent); }
+  .card .cbody { padding: 12px 14px; font-size: 13px; line-height: 1.55; }
+  .pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: #d8cfc2;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 340px; overflow-y: auto; scrollbar-width: thin;
+  }
+  .pre::-webkit-scrollbar { width: 7px; }
+  .pre::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+  .path { color: var(--blue); }
+  .key { color: var(--accent); font-weight: 700; }
+  .cmp { color: var(--muted); font-style: italic; }
+  .kbd {
+    display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--accent);
+    background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; margin-right: 4px;
+  }
+
+  .shot { width: 100%; border-radius: 10px; border: 1px solid var(--line2); display: block; background: #0d0b09; }
+  .shotwrap { padding: 8px; }
+  .placeholder {
+    display: grid; place-items: center; height: 100%;
+    padding: 40px; color: var(--muted); font-size: 14px; text-align: center;
+  }
+  .placeholder .big { font-size: 40px; margin-bottom: 12px; filter: drop-shadow(0 4px 14px rgba(0,0,0,0.4)); }
+
+  #answer { margin-top: 4px; }
+  #answer .ansbody { padding: 16px 18px; font-size: 14px; line-height: 1.7; color: var(--text); }
+  #answer .ansbody:empty::before { content: "The commander's final answer will appear here."; color: var(--muted); font-style: italic; }
+  #answer .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; border-radius: 2px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  #composer {
+    display: flex; gap: 10px; align-items: center;
+    padding: 12px 18px 16px; border-top: 1px solid var(--line);
+    background: rgba(18,16,14,0.85); backdrop-filter: blur(8px);
+  }
+  #input {
+    flex: 1; font: inherit; font-size: 14px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line2);
+    border-radius: 14px; padding: 13px 16px; outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    resize: none; max-height: 120px; min-height: 48px; line-height: 1.4;
+  }
+  #input::placeholder { color: var(--muted); }
+  #input:focus { border-color: rgba(224,164,88,0.45); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #send {
+    font: inherit; font-weight: 700; font-size: 14px; cursor: pointer;
+    color: #191512; background: linear-gradient(135deg, var(--accent), #cf8a3d);
+    border: none; border-radius: 14px; padding: 13px 22px;
+    box-shadow: 0 4px 18px rgba(224,164,88,0.35);
+    transition: transform 0.1s ease, filter 0.1s ease;
+  }
+  #send:hover { filter: brightness(1.06); }
+  #send:active { transform: scale(0.97); }
+  #send:disabled { filter: grayscale(0.7) brightness(0.8); cursor: not-allowed; }
+
+  .spin { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 720px) {
+    #planbar { display: none; }
+    #shell { padding: 8px 10px 10px; }
+    .brand small { display: none; }
+    .tabbtn { padding: 8px 11px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="brand">
+      <div class="mark">A</div>
+      <span>Agent Cockpit</span>
+      <small>microVM agent console</small>
+    </div>
+    <div class="spacer"></div>
+    <div class="pill" id="vmPill"><span class="dot"></span><span class="label">VM off</span></div>
+    <div class="pill" id="wsPill"><span class="dot"></span><span class="label">connecting</span></div>
+    <button class="ghost" id="vmBtn" onclick="toggleVm()">Start VM</button>
+  </div>
+
+  <div id="planbar"></div>
+
+  <div id="tabs">
+    <button class="tabbtn on active" data-tab="term" onclick="showTab('term')" title="Terminal">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+      Terminal <span class="badge"></span>
+    </button>
+    <button class="tabbtn" data-tab="files" onclick="showTab('files')" title="Files">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      Files <span class="badge"></span>
+    </button>
+    <button class="tabbtn" data-tab="browser" onclick="showTab('browser')" title="Browser">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+      Browser <span class="badge"></span>
+    </button>
+  </div>
+
+  <div id="shell">
+    <div id="stage">
+      <div class="feed on" id="feed-term"></div>
+      <div class="feed" id="feed-files"></div>
+      <div class="feed" id="feed-browser"></div>
+    </div>
+  </div>
+
+  <div id="answer" class="card" hidden>
+    <div class="chead">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+      <span class="name">Commander</span>
+      <span class="sp"></span>
+      <span class="status" id="ansStatus">composing…</span>
+    </div>
+    <div class="cbody ansbody" id="ansBody"><span class="cursor"></span></div>
+  </div>
+
+  <div id="composer">
+    <textarea id="input" placeholder="Tell the agent task to do… (e.g. research a topic, run commands, browse a site)"></textarea>
+    <button id="send" onclick="send()">Send</button>
+  </div>
+</div>
+
+<script>
+const USER = "me";
+const tabs = { term: "feed-term", files: "feed-files", browser: "feed-browser" };
+const toolTab = {
+  shell: "term",
+  read_file: "files", write_file: "files", list_dir: "files",
+  browser_screenshot: "browser", browser: "browser", web_search: "browser", fetch_url: "browser",
+};
+const counts = { term: 0, files: 0, browser: 0 };
+let current = "term";
+let ws = null;
+let threadId = null;
+let openCards = {};
+let composerLock = false;
+
+const $ = (id) => document.getElementById(id);
+
+function elTag(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function feed(tab) { return $(tabs[tab]); }
+
+function ensureHint(tab) {
+  const f = feed(tab);
+  if (f.dataset.hinted) return;
+  f.dataset.hinted = "1";
+  const ph = document.createElement("div");
+  ph.className = "placeholder";
+  const icons = { term: "›_", files: "▤", browser: "◉" };
+  const txt = { term: "Shell commands and live output will stream here.", files: "Files the agent reads and writes will appear here.", browser: "Pages the agent browses and screenshots will appear here." };
+  ph.innerHTML = `<div><div class="big">${icons[tab]}</div>${txt[tab]}</div>`;
+  f.appendChild(ph);
+}
+
+function showTab(tab) {
+  current = tab;
+  document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  counts[tab] = 0;
+  updateBadges();
+  const b = document.querySelector(`.tabbtn[data-tab="${tab}"]`);
+  b.classList.remove("live");
+  // clear placeholder when a tab is opened with content
+  const f = feed(tab);
+  if (f.children.length) {
+    const ph = f.querySelector(".placeholder");
+    if (ph) ph.remove();
+  }
+}
+
+function updateBadges() {
+  Object.keys(counts).forEach((k) => {
+    const b = document.querySelector(`.tabbtn[data-tab="${k}"] .badge`);
+    b.classList.toggle("show", counts[k] > 0);
+    b.textContent = counts[k] > 99 ? "99+" : counts[k];
+  });
+}
+
+function markLive(tab) {
+  const b = document.querySelector(`.tabbtn[data-tab="${tab}"]`);
+  b.classList.add("live");
+}
+
+function bump(tab) {
+  if (tab !== current) { counts[tab]++; updateBadges(); }
+  markLive(tab);
+}
+
+function scrollBottom(f) { if (f && f.scrollTop != null) { f.scrollTop = f.scrollHeight; } }
+
+function addCard(feedEl, tool, meta, id) {
+  const c = document.createElement("div");
+  c.className = "card";
+  c.dataset.id = id;
+  const head = document.createElement("div");
+  head.className = "chead";
+  const ico = document.createElement("span");
+  ico.className = "ico";
+  const svgs = {
+    shell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>',
+    read_file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+    write_file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>',
+    list_dir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
+    browser_screenshot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    browser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>',
+    web_search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
+    fetch_url: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>',
+  };
+  ico.innerHTML = svgs[tool] || svgs.shell;
+  const name = elTag("span", "name", tool.replace(/_/g, " "));
+  const sp = elTag("span", "sp");
+  const st = elTag("span", "status run", "running");
+  head.append(ico, name, elTag("span", "meta", meta || ""), sp, st);
+  const body = document.createElement("div");
+  body.className = "cbody";
+  const pre = elTag("div", "pre");
+  body.appendChild(pre);
+  c.append(head, body);
+  feedEl.appendChild(c);
+  scrollBottom(feedEl);
+  return { card: c, pre, status: st, body };
+}
+
+function toolMeta(tool, args) {
+  if (tool === "shell") return args.command;
+  if (tool === "read_file" || tool === "write_file" || tool === "list_dir") return args.path;
+  if (tool === "browser_screenshot" || tool === "browser") return args.url || args.action;
+  if (tool === "web_search") return args.query;
+  if (tool === "fetch_url") return args.url;
+  return "";
+}
+
+function fmtShellOut(out) {
+  if (!out) return "";
+  const HOME = "/workspace";
+  let s = String(out).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  s = s.replace(/(`[^`]*`)/g, '<span class="kbd">$1</span>');
+  s = s.replace(new RegExp("(" + HOME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\s]*)", "g"), '<span class="path">$1</span>');
+  return s;
+}
+
+function appendText(el, html) {
+  el.insertAdjacentHTML("beforeend", html);
+  const f = el.closest(".feed");
+  if (f) scrollBottom(f);
+}
+
+function onEvent(ev) {
+  switch (ev.type) {
+    case "delta": {
+      $("answer").hidden = false;
+      $("ansStatus").textContent = ev.agent === "commander" ? "composing…" : `${ev.agent}…`;
+      const body = $("ansBody");
+      const cur = body.querySelector(".cursor");
+      let text = body.innerHTML;
+      if (cur) { text = text.replace(/<span class="cursor"><\/span>$/, ""); }
+      body.innerHTML = text + esc(ev.text) + '<span class="cursor"></span>';
+      if (ev.text) markLive(ev.agent === "commander" ? "term" : "term");
+      break;
+    }
+    case "plan": {
+      renderPlan(ev.plan);
+      break;
+    }
+    case "worker_start": {
+      const f = feed("term");
+      const c = document.createElement("div");
+      c.className = "card";
+      c.style.borderLeft = "3px solid var(--accent)";
+      c.innerHTML = `<div class="cbody" style="padding:10px 14px;font-size:13px;">
+        <span style="font-weight:800;color:var(--accent)">◈ ${esc(ev.agent)}</span>
+        <span style="color:var(--muted)">started</span>
+        <div style="margin-top:4px;font-weight:600">${esc(ev.title || "")}</div>
+        <div style="color:var(--muted);font-size:12px;margin-top:2px">role: ${esc(ev.role || "")}</div>
+      </div>`;
+      f.appendChild(c);
+      scrollBottom(f);
+      markLive("term");
+      break;
+    }
+    case "tool_start": {
+      const tab = toolTab[ev.tool] || "term";
+      const f = feed(tab);
+      const ph = f.querySelector(".placeholder");
+      if (ph) ph.remove();
+      const { card, pre, status } = addCard(f, ev.tool, toolMeta(ev.tool, ev.args || {}), ev.id);
+      openCards[ev.id] = { card, pre, status, tab, tool: ev.tool };
+      if (ev.tool === "shell") {
+        pre.innerHTML = '<span class="key">$</span> ' + fmtShellOut(ev.args && ev.args.command ? ev.args.command : "");
+        bump("term");
+        showTab("term");
+      } else if (ev.tool === "write_file") {
+        pre.innerHTML = `<span class="cmp">writing</span> <span class="path">${esc(ev.args && ev.args.path || "")}</span>`;
+        bump("files");
+      } else if (ev.tool === "read_file") {
+        pre.innerHTML = `<span class="cmp">reading</span> <span class="path">${esc(ev.args && ev.args.path || "")}</span>`;
+        bump("files");
+      } else if (ev.tool === "list_dir") {
+        pre.innerHTML = `<span class="cmp">listing</span> <span class="path">${esc(ev.args && ev.args.path || ".")}</span>`;
+        bump("files");
+      } else if (ev.tool === "browser_screenshot" || ev.tool === "browser") {
+        const url = (ev.args && (ev.args.url || ev.args.action)) || "";
+        pre.innerHTML = `<span class="cmp">browsing</span> <span class="path">${esc(url)}</span>`;
+        bump("browser");
+        showTab("browser");
+      } else {
+        pre.innerHTML = fmtShellOut(ev.args ? JSON.stringify(ev.args) : "");
+        bump("term");
+      }
+      break;
+    }
+    case "tool_output": {
+      const oc = openCards[ev.id];
+      if (oc && oc.tool === "shell") {
+        oc.pre.insertAdjacentHTML("beforeend", fmtShellOut(ev.content));
+        scrollBottom(oc.card.closest(".feed"));
+      }
+      break;
+    }
+    case "tool_result": {
+      const oc = openCards[ev.id];
+      if (!oc) break;
+      const out = ev.output || "";
+      const err = ev.error || "";
+      if (err) {
+        oc.status.className = "status err";
+        oc.status.textContent = "error";
+        const div = document.createElement("div");
+        div.style.cssText = "font-family:var(--mono);font-size:12.5px;color:var(--red);white-space:pre-wrap;word-break:break-word;margin-top:8px;max-height:220px;overflow:auto";
+        div.textContent = err;
+        oc.body.appendChild(div);
+      } else {
+        oc.status.className = "status ok";
+        oc.status.textContent = "done";
+      }
+      if (oc.tool === "shell") {
+        if (out) {
+          const div = document.createElement("div");
+          div.style.cssText = "margin-top:8px;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12.5px;max-height:300px;overflow-y:auto";
+          div.innerHTML = fmtShellOut(out);
+          oc.body.appendChild(div);
+          scrollBottom(oc.card.closest(".feed"));
+        }
+      } else if (oc.tool === "write_file") {
+        const div = document.createElement("div");
+        div.className = "pre";
+        div.innerHTML = '<span style="color:var(--green)">ok</span> content written';
+        oc.body.appendChild(div);
+      } else if (oc.tool === "read_file") {
+        const div = document.createElement("div");
+        div.className = "pre";
+        div.textContent = out;
+        oc.body.appendChild(div);
+        scrollBottom(oc.card.closest(".feed"));
+      } else if (oc.tool === "list_dir") {
+        const div = document.createElement("div");
+        div.className = "pre";
+        div.innerHTML = fmtShellOut(out);
+        oc.body.appendChild(div);
+      } else if (oc.tool === "browser_screenshot" || oc.tool === "browser") {
+        if (out) { oc.pre.innerHTML = fmtShellOut(out); }
+        requestScreen();
+      }
+      delete openCards[ev.id];
+      break;
+    }
+    case "synthesize": {
+      $("ansStatus").textContent = "synthesizing reports…";
+      break;
+    }
+  }
+}
+
+function renderPlan(plan) {
+  const bar = $("planbar");
+  bar.innerHTML = "";
+  if (plan && plan.objective) {
+    const chip = elTag("span", "plan-chip");
+    chip.innerHTML = `<span class="n">◇</span> ${esc(plan.objective)}`;
+    bar.appendChild(chip);
+  }
+  const steps = (plan && plan.steps) || [];
+  steps.forEach((s, i) => {
+    const chip = elTag("span", "plan-chip");
+    chip.dataset.step = i;
+    chip.innerHTML = `<span class="n">${i + 1}</span>${esc(s.title || "step")}`;
+    bar.appendChild(chip);
+  });
+}
+
+function markStepDone(i) {
+  const bar = $("planbar");
+  const chip = bar.querySelector(`.plan-chip[data-step="${i}"]`);
+  if (chip) chip.classList.add("done");
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function requestScreen() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "screen" }));
+}
+
+function onScreen(image) {
+  if (!image) return;
+  const f = feed("browser");
+  const ph = f.querySelector(".placeholder");
+  if (ph) ph.remove();
+  let card = f.querySelector(".card:last-child .shotwrap");
+  if (card) {
+    card.innerHTML = `<img class="shot" src="data:image/png;base64,${image}" alt="browser screenshot">`;
+  } else {
+    const c = document.createElement("div");
+    c.className = "card";
+    c.innerHTML = `<div class="chead"><span class="ico" style="width:15px;height:15px;color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span><span class="name">screen</span></div><div class="shotwrap"><img class="shot" src="data:image/png;base64,${image}" alt="browser screenshot"></div>`;
+    f.appendChild(c);
+  }
+  scrollBottom(f);
+  bump("browser");
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/${USER}`);
+  const wsPill = $("wsPill");
+  ws.onopen = () => { wsPill.classList.remove("bad"); wsPill.classList.add("ok"); wsPill.querySelector(".label").textContent = "live"; ws.send(JSON.stringify({ type: "vm_status" })); };
+  ws.onclose = () => { wsPill.classList.remove("ok"); wsPill.classList.add("bad"); wsPill.querySelector(".label").textContent = "reconnecting"; setTimeout(connect, 1500); };
+  ws.onerror = () => {};
+  ws.onmessage = (m) => {
+    let data;
+    try { data = JSON.parse(m.data); } catch (e) { return; }
+    if (data.type === "event" && data.event) { onEvent(data.event); return; }
+    if (data.type === "thread") { threadId = data.thread_id; return; }
+    if (data.type === "vm") {
+      const running = !!(data.running ?? (data.result && data.result.ok));
+      const vmPill = $("vmPill");
+      vmPill.classList.toggle("ok", running);
+      vmPill.classList.toggle("bad", !running);
+      vmPill.querySelector(".label").textContent = running ? "VM on" : "VM off";
+      $("vmBtn").textContent = running ? "Stop VM" : "Start VM";
+      return;
+    }
+    if (data.type === "screen") { onScreen(data.image); return; }
+    if (data.type === "error") { $("wsPill").querySelector(".label").textContent = data.error; return; }
+  };
+}
+
+function toggleVm() {
+  const running = $("vmPill").classList.contains("ok");
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: running ? "vm_stop" : "vm_start" }));
+}
+
+function send() {
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text || composerLock || !ws || ws.readyState !== 1) return;
+  composerLock = true;
+  $("send").disabled = true;
+  const userCard = document.createElement("div");
+  userCard.className = "card";
+  userCard.style.cssText = "border-color:rgba(224,164,88,0.35);background:linear-gradient(135deg,rgba(224,164,88,0.12),rgba(224,164,88,0.03))";
+  userCard.innerHTML = `<div class="cbody" style="padding:12px 16px"><span style="font-weight:800;color:var(--accent)">You</span><div style="margin-top:4px;font-size:13.5px;line-height:1.6">${esc(text)}</div></div>`;
+  $("feed-term").appendChild(userCard);
+  scrollBottom($("feed-term"));
+  showTab("term");
+  input.value = "";
+  ws.send(JSON.stringify({ type: "message", text, thread_id: threadId }));
+}
+
+function simulateEvents() {
+  // demo driver: populates the cockpit with live activity to visualize the OS view
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); send(); }
+  if (e.key === "1") showTab("term");
+  if (e.key === "2") showTab("files");
+  if (e.key === "3") showTab("browser");
+});
+
+connect();
+["term", "files", "browser"].forEach(ensureHint);
+</script>
+</body>
+</html>

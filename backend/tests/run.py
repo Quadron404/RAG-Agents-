@@ -1,0 +1,48 @@
+"""Run every check in this package.
+
+    python -m tests.run
+
+The tests are plain scripts that raise SystemExit, not pytest functions, so they
+can be run individually while debugging. This runner just runs them all and
+summarises, because the point of the suite is to be run before every deploy.
+"""
+import subprocess
+import sys
+
+TESTS = (
+    "test_screen_url",
+    "test_screen_isolation",
+    "test_vnc_bridge",
+)
+
+
+def main() -> int:
+    results: list[tuple[str, bool, str]] = []
+    for name in TESTS:
+        proc = subprocess.run(
+            [sys.executable, "-m", f"tests.{name}"],
+            capture_output=True,
+            text=True,
+        )
+        results.append((name, proc.returncode == 0, (proc.stdout or proc.stderr).strip()))
+
+    width = max(len(name) for name, _, _ in results)
+    for name, ok, _ in results:
+        print(f"{'PASS' if ok else 'FAIL'}  {name.ljust(width)}")
+
+    failed = [name for name, ok, _ in results if not ok]
+    print()
+    if failed:
+        print(f"{len(failed)} of {len(results)} failed:")
+        for name, ok, out in results:
+            if not ok:
+                print(f"\n--- {name} ---")
+                print(out)
+        return 1
+
+    print(f"all {len(results)} checks pass")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

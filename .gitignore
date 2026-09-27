@@ -1,0 +1,63 @@
+# --- secrets -------------------------------------------------------------
+# Real credentials never go in the repo. The Cloudflare tunnel token is the
+# important one here: it is a bearer credential for the live screen, so anyone
+# holding it can publish the remote machine from anywhere.
+.env
+.env.local
+*.env
+!backend/.env.example
+
+# --- runtime logs and debug output ---------------------------------------
+# Uvicorn output and the raw framebuffer dumps (.ppm) that the old VM debugging
+# produced.  The dumps were 30 MB each and contained actual screen content.
+*.log
+*.ppm
+*.png
+!Frontend/**/*.png
+!docs/**/*.png
+*.jpg
+*.jpeg
+
+# --- generated tunnel config ---------------------------------------------
+# start-tunnel.sh generates this from COMPUTER_HOSTNAME. It holds no secrets
+# and is safe to commit, but keeping it out avoids two copies of the hostname
+# drifting apart.
+codespace/cloudflared/config.yml
+
+# --- build output ---------------------------------------------------------
+Frontend/dist/
+Frontend/node_modules/
+node_modules/
+*.tsbuildinfo
+
+# --- python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- runtime data ---------------------------------------------------------
+# SQLite databases: threads, messages, agent runs.  This is user content, not
+# source, and a committed copy would leak conversation history.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/data/
+data/
+backend/data-test/
+
+# --- archived local VM ----------------------------------------------------
+# 4 GB of QEMU binaries, a disk image and a private key. See the README there.
+# Ignored a second time on purpose, in case this file is ever replaced.
+backend/_vm-archive/
+
+# --- editors and OS -------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

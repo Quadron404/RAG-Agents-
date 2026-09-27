@@ -1,0 +1,70 @@
+{
+  "name": "RAG Agents \u2014 remote computer",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+
+  "customizations": {
+    "codespaces": {
+      "openFiles": [
+        "codespace/README.md"
+      ]
+    },
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+
+  "remoteUser": "codespace",
+
+  "forwardPorts": [6080, 8000],
+
+  // 6080 is the noVNC/websockify port and 8000 is the RAG Agents backend.
+  // "private" means GitHub gates them behind your own GitHub login and never
+  // makes them world-readable.  This is a debugging convenience only: the
+  // user-facing route is the Cloudflare hostname, and these ports are never
+  // published.
+  "onAutoForward": "private",
+
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC (local debug only)",
+      "onAutoForward": "private",
+      "visibility": "private"
+    },
+    "8000": {
+      "label": "RAG Agents backend",
+      "onAutoForward": "private",
+      "visibility": "private"
+    }
+  },
+
+  "remoteEnv": {
+    "DISPLAY": ":99",
+    "DESKTOP_DISPLAY": ":99",
+    "DESKTOP_SIZE": "1365x768",
+    "DESKTOP_WM": "fluxbox",
+    "CHROME_PROFILE": "/workspaces/chrome-profile",
+    "CHROME_START_URL": "https://x.com",
+    "VNC_PORT": "5900",
+    "WEBSOCKIFY_PORT": "6080",
+    "AGENT_PORT": "9000",
+    "DESKTOP_RUN_DIR": "/tmp/ragdesktop",
+    "DESKTOP_LOG_DIR": "/tmp"
+  },
+
+  "postCreateCommand": "sudo bash codespace/install.sh && sudo mkdir -p /workspaces/chrome-profile && sudo chown -R codespace:codespace /workspaces/chrome-profile",
+
+  "postStartCommand": "bash codespace/boot.sh",
+
+  "postAttachCommand": {
+    "server": "sudo usermod -aG video,render,input $USER 2>/dev/null || true"
+  }
+}
