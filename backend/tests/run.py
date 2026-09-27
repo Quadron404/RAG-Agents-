@@ -16,6 +16,7 @@ TESTS = (
     "test_tunnel_url",
     "test_websockify_proxy",
     "test_vnc_bridge",
+    "test_rfb_handshake",
 )
 
 

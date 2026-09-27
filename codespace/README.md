@@ -99,6 +99,7 @@ than none, because the app would advertise an address Cloudflare has forgotten.
 | `start-tunnel.sh` | Runs `cloudflared tunnel --url http://127.0.0.1:8000` and records the URL it was given. |
 | `supervise.sh` | Keeps the agent, websockify and tunnel alive. This is what the Codespace runs. |
 | `boot.sh` | The Codespace entry point: build the UI, then the screen stack, then the backend. |
+| `verify.sh` | Proves the whole path works on the real machine and prints the URL to open. Run this first when something looks broken. |
 
 ### Manual start
 
@@ -110,6 +111,23 @@ bash codespace/start-computer.sh   # display + Chrome + screen
 bash codespace/start-tunnel.sh     # the public URL
 bash codespace/boot.sh             # or just do all of the above
 ```
+
+### Prove it works
+
+```bash
+bash codespace/verify.sh
+```
+
+This is the check to run before trusting a deployment, and the first thing to
+run when something looks wrong. It starts whatever is missing, then asserts the
+whole path end to end: Chrome is in kiosk mode, `5900` and `6080` are bound to
+loopback and nothing else, the tunnel really is a `trycloudflare` origin,
+`/screen/config` is refused over the tunnel without a cookie, the passphrase is
+accepted, and a real RFB handshake returns real framebuffer pixels through
+`/websockify`. It finishes by printing the exact URL to open.
+
+It reports `SKIP` separately from `PASS`, because "could not check" is not the
+same as "fine" — a `SKIP` on the screen check means the check did not happen.
 
 Useful checks:
 
@@ -153,6 +171,9 @@ It is not a way around the lock: `/ws/screen` is session-gated exactly like
 route is live: **Quick tunnel** or **Local relay**.
 
 ## Troubleshooting
+
+Start with `bash codespace/verify.sh` — it names the failing step, which is
+usually faster than reading logs by hand.
 
 | Symptom | Likely cause |
 | --- | --- |

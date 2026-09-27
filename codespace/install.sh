@@ -32,7 +32,8 @@ DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends 
   libgbm1 \
   libasound2t64 \
   procps \
-  net-tools
+  net-tools \
+  iproute2
 
 # --- Google Chrome (NOT Chromium) -----------------------------------------
 if [ -x /usr/bin/google-chrome ]; then

@@ -135,7 +135,7 @@ if (CODES / "cloudflared").is_dir() and not any((CODES / "cloudflared").iterdir(
 # --- 6. the app's own passphrase must be part of the story -------------------
 # The tunnel URL is public by design.  If the passphrase were optional, the
 # design would have no lock on it at all.
-for name in ("env.sh", "boot.sh"):
+for name in ("env.sh", "boot.sh", "verify.sh"):
     if "RAG_AUTH_TOKEN" not in read(name):
         failures.append(f"{name} does not mention RAG_AUTH_TOKEN; the only lock on the screen is missing")
 

@@ -120,7 +120,9 @@ of the product rather than optional setup:
 - GitHub's forwarded ports stay private, for debugging only.
 - `backend/tests/test_screen_isolation.py` fails the build if any of that stops
   being true, and `test_auth.py` / `test_websockify_proxy.py` fail it if the gate
-  or the relay stops working.
+  or the relay stops working. `codespace/verify.sh` then re-checks all of it
+  against the live machine, because a test that only ever talks to a mock cannot
+  catch a port that is bound to the wrong interface.
 
 ## The two routes the screen can take
 
@@ -139,8 +141,13 @@ Verified locally: backend imports, all routes respond, the frontend typechecks
 and builds, `/websockify` relays binary frames in both directions behind a
 session, unauthenticated HTTP and WebSocket access is refused, the tunnel script
 finds the URL cloudflared prints and follows a restart, the RFB relay
-round-trips bytes in both directions, and the isolation checks pass.
+round-trips bytes in both directions, the RFB handshake in the live verifier is
+byte-correct against a canned x11vnc, and the isolation checks pass.
 
 Not yet verified: anything that needs the real machine — Chrome rendering,
 profile persistence across a Codespace rebuild, an end-to-end login through a
 live Quick Tunnel, and latency. Those need the Codespace and a `RAG_AUTH_TOKEN`.
+
+`bash codespace/verify.sh`, run inside the Codespace, is what closes that gap.
+It asserts the whole path on the real machine and prints the URL to open, so
+there is one command to run rather than a checklist to remember.
