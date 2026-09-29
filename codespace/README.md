@@ -120,10 +120,11 @@ bash codespace/verify.sh
 
 This is the check to run before trusting a deployment, and the first thing to
 run when something looks wrong. It starts whatever is missing, then asserts the
-whole path end to end: Chrome is in kiosk mode, `5900` and `6080` are bound to
-loopback and nothing else, the tunnel really is a `trycloudflare` origin,
-`/screen/config` is refused over the tunnel without a cookie, the passphrase is
-accepted, and a real RFB handshake returns real framebuffer pixels through
+whole path end to end: Chrome is running with its normal UI (explicitly *not*
+kiosk, which would hide the tab strip and address bar), `5900` and `6080` are
+bound to loopback and nothing else, the tunnel really is a `trycloudflare`
+origin, `/screen/config` is refused over the tunnel without a cookie, the
+passphrase is accepted, and a real RFB handshake returns real framebuffer pixels through
 `/websockify`. It finishes by printing the exact URL to open.
 
 It reports `SKIP` separately from `PASS`, because "could not check" is not the

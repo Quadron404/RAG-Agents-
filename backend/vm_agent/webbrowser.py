@@ -122,7 +122,7 @@ def _launch_background_chrome():
         "--disable-sync",
         "--disable-features=Translate,MediaRouter,OptimizationHints",
         "--remote-allow-origins=*",
-        "--kiosk",
+        # No --kiosk: it hides the tab strip, new-tab button and address bar.
         "--start-maximized",
         "--window-size=1280,800",
         "--window-position=0,0",

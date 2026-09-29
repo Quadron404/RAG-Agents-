@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bring up the real graphical session and the WebSocket bridge for it.
 #
-#   Xvfb :99  ->  Google Chrome (kiosk)  ->  x11vnc 127.0.0.1:5900
+#   Xvfb :99  ->  Google Chrome (normal window)  ->  x11vnc 127.0.0.1:5900
 #             ->  websockify 127.0.0.1:6080  ->  noVNC over WebSocket
 #
 # Nothing here is recorded, screenshotted or re-encoded.  The pixels are the
@@ -56,8 +56,8 @@ if [ ! -S "/tmp/.X11-unix/X${DESKTOP_DISPLAY#:}" ]; then
 fi
 
 # --- 2) window manager ------------------------------------------------------
-# Kept underneath Chrome on purpose: kiosk hides it, but it is what makes the
-# display behave like a real desktop if the user ever needs a menu or a dialog.
+# Kept underneath Chrome on purpose: it is what makes the display behave like a
+# real desktop if the user ever needs a menu or a dialog.
 if pgrep -f "$DESKTOP_WM" >/dev/null 2>&1; then
   log "$DESKTOP_WM already running"
 else
@@ -68,13 +68,16 @@ else
 fi
 
 # --- 3) Google Chrome ------------------------------------------------------
-# --kiosk makes Chrome fill the whole display, so the user sees the browser
-# rather than a desktop with a window on it.  The profile is persistent, so a
-# manual site login survives every later start.
+# NOT --kiosk.  Kiosk is precisely the mode that hides the tab strip, the
+# new-tab button and the address bar, so it makes the one thing the user came
+# for -- a real, clickable browser -- impossible to drive.  The window is sized
+# and positioned to fill the display instead, which keeps the real Chrome UI on
+# screen.  The profile is persistent, so a manual site login survives every later
+# start.
 if listening "$CHROME_DEBUG_PORT"; then
   log "Chrome already serving CDP on $CHROME_DEBUG_PORT"
 else
-  log "starting Google Chrome (kiosk, profile $CHROME_PROFILE)"
+  log "starting Google Chrome (normal window, profile $CHROME_PROFILE)"
   CHROME_BIN="${CHROME_BINARY:-$(command -v google-chrome || command -v google-chrome-stable || echo /usr/bin/google-chrome)}"
   nohup "$CHROME_BIN" \
     --no-sandbox \
@@ -84,7 +87,6 @@ else
     --remote-allow-origins=* \
     "--remote-debugging-port=$CHROME_DEBUG_PORT" \
     "--user-data-dir=$CHROME_PROFILE" \
-    --kiosk \
     --start-maximized \
     "--window-size=${DESKTOP_SIZE%x*},${DESKTOP_SIZE#*x}" \
     --window-position=0,0 \

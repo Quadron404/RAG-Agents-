@@ -680,7 +680,7 @@ def _desktop_stream_start():
 # ---------------------------------------------------------------------------
 # Desktop supervisor — the REAL graphical session behind the "Live Screen"
 #
-#   Xvfb :99 + real Google Chrome (kiosk)
+#   Xvfb :99 + real Google Chrome (normal window, full UI)
 #     -> x11vnc  (RFB server, 127.0.0.1:5900 only)
 #       -> websockify  127.0.0.1:6080
 #         -> cloudflared tunnel -> Cloudflare Access -> the user's browser
@@ -717,8 +717,9 @@ CHROME_PROFILE = os.environ.get("CHROME_PROFILE", "/workspaces/chrome-profile")
 CHROME_DEBUG_PORT = int(os.environ.get("CHROME_DEBUG_PORT", str(CDP_DEBUG_PORT)))
 RUN_DIR = os.environ.get("DESKTOP_RUN_DIR", "/run/ragdesktop")
 LOG_DIR = os.environ.get("DESKTOP_LOG_DIR", "/var/log/ragdesktop")
-# Chrome fills the whole display in kiosk mode so the user sees the browser
-# rather than the window manager; START_URL is only the first page loaded.
+# Chrome opens as a normal browser window sized to fill the display, so the tab
+# strip, new-tab button and address bar are all on screen and clickable.  It is
+# not kiosk mode: kiosk hides exactly that UI.  START_URL is the first page.
 START_URL = os.environ.get("CHROME_START_URL", "https://x.com")
 
 _desktop_lock = threading.RLock()
@@ -1026,10 +1027,11 @@ def _chromium_argv() -> list:
         # Persistent profile: the user logs into sites by hand, so it must
         # survive restarts and land on the persistent Codespaces volume.
         f"--user-data-dir={CHROME_PROFILE}",
-        # Chrome fills the display so the user sees the browser, not the
-        # window manager.  --kiosk is what actually does it; --start-maximized
-        # is kept for the first paint before kiosk settles.
-        "--kiosk",
+        # Deliberately NOT --kiosk.  Kiosk is exactly the mode that hides the tab
+        # strip, the new-tab button and the address bar, which are the parts of
+        # the framebuffer the user has to be able to click.  The window is sized
+        # and positioned to fill the display instead, so the real Chrome UI is
+        # on screen and usable.
         "--start-maximized",
         f"--window-size={_desktop_width()},{_desktop_height()}",
         "--window-position=0,0",

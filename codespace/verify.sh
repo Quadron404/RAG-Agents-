@@ -101,10 +101,17 @@ else
 fi
 
 # Chrome has to be a real window on the real display, not a process that died.
-if pgrep -f "google-chrome.*--kiosk" >/dev/null 2>&1; then
-  ok "Google Chrome is running in kiosk mode"
+# It must NOT be in kiosk mode: kiosk hides the tab strip, the new-tab button and
+# the address bar, which makes the live screen impossible to drive.  Asserting
+# the absence is the point, so a stray --kiosk fails the check loudly.
+if pgrep -f "google-chrome" >/dev/null 2>&1; then
+  if pgrep -f "google-chrome.*--kiosk" >/dev/null 2>&1; then
+    bad "Google Chrome is running with --kiosk, which hides the tab strip and address bar"
+  else
+    ok "Google Chrome is running with its normal UI (no --kiosk)"
+  fi
 else
-  bad "no Google Chrome kiosk process; see $DESKTOP_LOG_DIR/chromium.log"
+  bad "no Google Chrome process; see $DESKTOP_LOG_DIR/chromium.log"
 fi
 
 # The profile is the user's login state, so where it lives is worth confirming.
