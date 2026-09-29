@@ -2833,20 +2833,58 @@ textarea {
   overflow: hidden;
 }
 
+/* When the stage itself goes fullscreen it becomes the root of the fullscreen
+   subtree, and `flex: 1` no longer means anything.  Pin it to the viewport so
+   the contain-fit is computed against the largest box available and the remote
+   Chrome gets every pixel of the screen. */
+.vnc__stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  background: #07080c;
+}
+
+
+/* The element noVNC is handed.  It must be exactly the visible box: noVNC
+   measures it with getBoundingClientRect() to derive its contain-fit scale, so
+   any padding, border or scrollbar here changes the scale it picks. */
 .vnc__screen {
   position: absolute;
   inset: 0;
+  overflow: hidden;
 }
 
+/* noVNC's own viewport container.
+
+   It ships with `overflow: auto`, and because autoscale picks a *fractional*
+   scale (containerHeight / fbHeight) the canvas very often ends up a fraction of
+   a pixel larger than its container.  That makes the container scrollable, and
+   one wheel gesture over the screen then scrolls the framebuffer out of view --
+   the top of the remote Chrome disappears while the bottom stays on screen, and
+   it stays that way because noVNC's _fixScrollbars only toggles the overflow
+   property, it never resets scrollTop.
+
+   The contain-fit guarantees the whole framebuffer is always within this box,
+   so scrolling it can only ever hide part of the screen.  It is therefore
+   pinned shut, and VncSession resets scrollTop/scrollLeft on every refit. */
 .vnc__screen > div {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .vnc__screen canvas {
   display: block;
   margin: 0 auto;
+  /* Keep wheel and trackpad gestures destined for the remote machine instead of
+     letting the browser try to scroll the viewport around the canvas.
+     Deliberately no max-width/max-height: noVNC maps pointer coordinates
+     through its own _scale, so shrinking the canvas independently of that would
+     desync click targeting from what is drawn. */
+  touch-action: none;
 }
+
 
 .vnc__overlay {
   position: absolute;
@@ -4678,125 +4716,8 @@ textarea {
   color: var(--text-3);
 }
 
-/* ---- app icons ----------------------------------------------------------- */
-
-.deskicons {
-  position: absolute;
-  z-index: 5;
-  top: 84px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 18px 22px;
-  border-radius: 22px;
-  background: var(--glass-2);
-  border: 1px solid var(--glass-line);
-  backdrop-filter: blur(var(--blur)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.5);
-  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-2);
-  animation: deskIn 0.5s var(--ease-spring) both;
-}
-
-.deskicon {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  width: 92px;
-  padding: 10px 6px 12px;
-  border: none;
-  border-radius: 16px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: transform 0.22s var(--ease-spring), background 0.18s ease;
-}
-
-.deskicon:hover {
-  transform: translateY(-3px);
-  background: var(--glass-2);
-}
-
-.deskicon:active {
-  transform: translateY(-1px) scale(0.97);
-}
-
-.deskicon__tile {
-  position: relative;
-  width: 54px;
-  height: 54px;
-  display: grid;
-  place-items: center;
-  border-radius: 16px;
-  color: #fff;
-  overflow: hidden;
-  background: linear-gradient(150deg, var(--accent) 0%, var(--violet) 100%);
-  box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.32);
-  transition: box-shadow 0.22s ease, transform 0.22s var(--ease-spring);
-}
-
-/* A sheen that sweeps across the tile on hover. */
-.deskicon__tile::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.42) 50%, transparent 68%);
-  transform: translateX(-120%);
-  transition: transform 0.62s var(--ease-spring);
-}
-
-.deskicon:hover .deskicon__tile::after {
-  transform: translateX(120%);
-}
-
-.deskicon:hover .deskicon__tile {
-  box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-}
-
-.deskicon--open .deskicon__tile {
-  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px -6px rgba(0, 0, 0, 0.5);
-}
-
-.deskicon__label {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  color: var(--text);
-}
-
-/* The dot under an icon whose window is open, so state is visible from the
-   desktop without opening anything. */
-.deskicon--open .deskicon__label::after {
-  content: "";
-  display: block;
-  width: 4px;
-  height: 4px;
-  margin: 4px auto 0;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.deskhint {
-  position: absolute;
-  z-index: 5;
-  top: 210px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 7px 14px;
-  border-radius: 999px;
-  background: var(--glass-2);
-  border: 1px solid var(--glass-line);
-  backdrop-filter: blur(var(--blur)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.5);
-  color: var(--text-2);
-  font-size: 12px;
-  white-space: nowrap;
-  pointer-events: none;
-  animation: deskIn 0.6s 0.14s var(--ease-spring) both;
-}
+/* ---- app icons: see the dock below.  The desktop keeps its wallpaper clear
+   apart from the windows, so there is no icon grid to lay out. ---- */
 
 /* ---- windows ------------------------------------------------------------- */
 
@@ -4868,6 +4789,15 @@ textarea {
 
 .dwin--max {
   border-radius: 18px;
+}
+
+/* The live screen taking the whole surface: no margin, no radius, nothing
+   between the remote Chrome and the edges of the panel.  Any inset here is
+   subtracted from the box noVNC contain-fits the framebuffer into, so the
+   screen would be scaled down for no reason. */
+.dwin--edge {
+  border-radius: 0;
+  border: none;
 }
 
 /* ---- title bar ----------------------------------------------------------- */
@@ -5073,81 +5003,183 @@ textarea {
   display: none;
 }
 
-/* ---- dock ---------------------------------------------------------------- */
+/* ---- dock ----------------------------------------------------------------
+   The launcher and the window switcher in one strip, the way a real desktop
+   dock works: tap to open, tap again to raise, and a dot under anything running.
+   It is the only permanent furniture on the desktop besides the menu bar. */
 
 .deskdock {
   position: absolute;
   z-index: 55;
   left: 50%;
-  bottom: 14px;
+  bottom: 12px;
   transform: translateX(-50%);
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 46px;
-  padding: 6px;
-  border-radius: 16px;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 20px;
   background: var(--glass);
   border: 1px solid var(--glass-line);
-  backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
-  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(1.7);
-  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-2);
-  transition: opacity 0.28s ease, transform 0.28s var(--ease-spring);
+  backdrop-filter: blur(var(--blur-xl)) saturate(1.8);
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(1.8);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 20px 44px -18px rgba(0, 0, 0, 0.6);
+  transition: opacity 0.3s ease, transform 0.34s var(--ease-spring);
 }
 
+/* Slides away when the live screen owns the whole surface, and returns on
+   hover near the bottom edge. */
 .deskdock--behind {
   opacity: 0;
-  transform: translateX(-50%) translateY(120%);
+  transform: translateX(-50%) translateY(calc(100% + 20px));
   pointer-events: none;
 }
 
-.deskdock__empty {
-  display: block;
-  width: 34px;
-}
-
-.deskdock__item {
+.dockitem {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 13px;
+  gap: 6px;
+  width: 62px;
+  padding: 0;
   border: none;
-  border-radius: 11px;
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 600;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background 0.16s ease, color 0.16s ease, transform 0.18s var(--ease-spring);
+  /* No bounce: one spring curve for lift and release, a short one for press. */
+  transition: transform 0.26s var(--ease-spring);
 }
 
-.deskdock__item:hover {
-  background: var(--bg3);
-  color: var(--text);
-  transform: translateY(-1px);
+.dockitem__tile {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  overflow: hidden;
+  background: linear-gradient(150deg, var(--accent) 0%, var(--violet) 100%);
+  box-shadow: 0 5px 14px -5px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  transition: box-shadow 0.26s ease, filter 0.26s ease;
 }
 
-.deskdock__item--on {
-  color: var(--text);
+.dockitem__tile svg {
+  width: 26px;
+  height: 26px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
 }
 
-/* The running dot, matching the icon state on the desktop. */
-.deskdock__item--on::after {
+/* A sheen that sweeps the tile as it lifts. */
+.dockitem__tile::after {
   content: "";
   position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 34%, rgba(255, 255, 255, 0.4) 50%, transparent 66%);
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease-spring);
+}
+
+.dockitem:hover .dockitem__tile::after {
+  transform: translateX(120%);
+}
+
+.dockitem:hover {
+  transform: translateY(-7px);
+}
+
+.dockitem:hover .dockitem__tile {
+  box-shadow: 0 14px 26px -9px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.44);
+}
+
+/* The neighbours lift a little too, which is what makes a dock read as one
+   object rather than three independent buttons. */
+.deskdock:has(.dockitem:hover) .dockitem:not(:hover) {
+  transform: translateY(-3px);
+}
+
+.dockitem:active {
+  transform: translateY(-1px) scale(0.93);
+  transition-duration: 0.08s;
+}
+
+/* Running, but not focused. */
+.dockitem--open .dockitem__tile {
+  box-shadow: 0 5px 14px -5px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 0 0 1.5px var(--accent);
+}
+
+/* Focused: a brighter ring and full opacity, so it is obvious which window the
+   keystrokes and the next click will land in. */
+.dockitem--active .dockitem__tile {
+  box-shadow: 0 10px 22px -8px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.44), 0 0 0 2.5px var(--accent);
+}
+
+.dockitem--minimized {
+  opacity: 0.66;
+}
+
+.dockitem__label {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: -0.005em;
+  color: var(--text-2);
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.2s ease, transform 0.26s var(--ease-spring);
+}
+
+.dockitem:hover .dockitem__label,
+.dockitem:focus-visible .dockitem__label {
+  opacity: 1;
+  transform: none;
+}
+
+/* The running dot, below the tile so it never overlaps the glyph. */
+.dockitem__dot {
+  position: absolute;
+  bottom: -4px;
   left: 50%;
-  bottom: 3px;
   width: 4px;
   height: 4px;
   margin-left: -2px;
   border-radius: 50%;
   background: var(--accent);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.22s ease, transform 0.3s var(--ease-spring);
+}
+
+.dockitem--open .dockitem__dot {
+  opacity: 1;
+  transform: none;
+}
+
+.dockitem--active .dockitem__dot {
+  width: 14px;
+  margin-left: -7px;
+  border-radius: 999px;
+}
+
+.dockitem:focus-visible {
+  outline: none;
+}
+
+.dockitem:focus-visible .dockitem__tile {
+  box-shadow: 0 0 0 2.5px var(--accent), 0 0 0 5px var(--accent-soft);
 }
 
 /* ---- the live screen, as a window ---------------------------------------- */
+
+/* `position: relative` here is load-bearing, not cosmetic.  The control bar is
+   a *sibling* of .vnc__stage rather than a child of it, so with no positioned
+   ancestor on this element the absolutely-positioned bar would resolve against
+   the whole window instead of the screen area, and the bottom padding it relies
+   on would be measured from the wrong box. */
+.vncscreen--bare {
+  position: relative;
+}
 
 /* Controls float at the *bottom* of the stage.  The remote Chrome's own tab
    strip and address bar are at its top, and a control bar across the top of the
@@ -5231,52 +5263,32 @@ textarea {
   }
 }
 
-@keyframes deskIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* The icon row centres itself with a translate, so its entrance has to animate
-   the same axis or it visibly jumps. */
-@keyframes deskIconsIn {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%);
-  }
-}
-
-.deskicons {
-  animation-name: deskIconsIn;
-}
-
 /* ---- responsive ---------------------------------------------------------- */
 
 @media (max-width: 900px) {
-  .deskicons {
-    gap: 6px;
-    padding: 14px 12px;
-  }
-
-  .deskicon {
-    width: 78px;
-  }
-
-  .deskhint {
-    display: none;
-  }
-
   .dwin {
     border-radius: 14px;
+  }
+
+  .deskdock {
+    gap: 4px;
+    padding: 6px;
+    border-radius: 18px;
+  }
+
+  .dockitem {
+    width: 54px;
+  }
+
+  .dockitem__tile {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+
+  .dockitem__tile svg {
+    width: 23px;
+    height: 23px;
   }
 }
 
@@ -5288,6 +5300,10 @@ textarea {
   .dwin__title em {
     display: none;
   }
+
+  .dockitem__label {
+    display: none;
+  }
 }
 
 /* ---- reduced motion ------------------------------------------------------ */
@@ -5296,41 +5312,38 @@ textarea {
   .dwin,
   .deskbar,
   .deskdock,
-  .deskicons,
-  .deskhint,
-  .deskicon,
-  .deskicon__tile,
-/* `position: relative` is required, not cosmetic: the control bar is a *sibling*
-   of .vnc__stage, not a child of it, so without a positioned ancestor here the
-   absolutely-positioned bar would resolve against the whole window instead of
-   the screen area. */
-.vncscreen--bare {
-  position: relative;
-}
-
-.vncscreen--bare .vnc__bar--float {
+  .dockitem,
+  .dockitem__tile,
+  .dwin__bar,
+  .vncscreen--bare .vnc__bar--float {
     animation: none !important;
     transition: none !important;
   }
 
-  .deskicon:hover,
-  .deskdock__item:hover,
+  .dockitem:hover,
+  .deskdock:has(.dockitem:hover) .dockitem:not(:hover),
   .dwin__light:hover {
     transform: none;
   }
 
-  .deskicon__tile::after {
+  .dockitem__tile::after {
     display: none;
+  }
+
+  /* Labels have nowhere to animate to without motion, so show them outright. */
+  .dockitem__label {
+    opacity: 1;
+    transform: none;
   }
 
   .dwin,
   .deskbar,
   .deskdock,
   .dwin__bar,
-  .vncscreen--bare .vnc__bar--float,
-  .deskdock__item {
+  .vncscreen--bare .vnc__bar--float {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
 }
+
 

@@ -9,18 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import {
-  Cpu,
-  Database,
-  Folder,
-  Globe,
-  HardDrive,
-  Maximize2,
-  Minimize2,
-  Monitor,
-  Power,
-  X,
-} from "lucide-react";
+import { Cpu, Database, HardDrive, Maximize2, Minimize2, Monitor, Power, X } from "lucide-react";
 
 import { useCore } from "../core";
 import { fmtBytes, fmtUptime } from "../lib/format";
@@ -32,28 +21,80 @@ import { VncScreen } from "./VncScreen";
 /* ============================================================================
    RAG Agents desktop
 
-   A desktop metaphor for the Computer page: a wallpaper, a set of app icons,
-   and floating glass windows.  The point of the metaphor is that the live
-   screen becomes an *app* rather than a tab, which is what lets it own the full
-   height of the panel -- previously a tab strip sat above the stage, so the top
-   of the remote Chrome (its tab strip and address bar) was never actually
-   reachable on a laptop screen.
+   A desktop metaphor for the Computer page: a wallpaper, a bottom dock, and
+   floating glass windows.
 
-   Nothing here changes how the screen connects.  VncScreen is mounted exactly
-   as it always was; the only concession is `controls="overlay"`, which floats
-   its toolbar at the bottom of the stage so it stops covering the top of the
-   remote browser.  The CDP screenshot view is gone from the UI entirely, since
-   a still image of a browser is not a browser.
+   The reason it is not a tabbed panel is sizing.  A tab strip used to sit above
+   the content, so the live screen could never own the full height of the panel
+   -- the top of the remote Chrome, which is its own tab strip and address bar,
+   was permanently hidden underneath a second row of RAG Agents tabs.  Here the
+   screen is the whole point, so when the Browser window is maximised it goes
+   edge to edge and the desktop's own chrome floats above it and gets out of the
+   way.
+
+   Nothing here changes how the screen connects.  VncScreen is mounted exactly as
+   it always was; the only concession is `controls="overlay"`, which floats its
+   toolbar at the *bottom* of the stage so it stops covering the top of the
+   remote browser.  The CDP screenshot view is gone from the UI entirely, since a
+   still image of a browser is not a browser.
    ========================================================================= */
+
+/* ---- app icons ------------------------------------------------------------
+   One set, one language: every glyph is drawn on the same 24px grid with the
+   same stroke weight and the same round caps, so the three tiles read as one
+   family instead of three unrelated imports.  Browser is a globe with its
+   meridians rather than a generic window, because that is the one shape
+   everybody already reads as "the web".
+   ------------------------------------------------------------------------- */
+
+const GLYPH_PROPS = {
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.7,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+} as const;
+
+function BrowserGlyph() {
+  return (
+    <svg {...GLYPH_PROPS}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17" />
+      <path d="M12 3.5c2.7 2.6 2.7 14.4 0 17" />
+      <path d="M12 3.5c-2.7 2.6-2.7 14.4 0 17" />
+    </svg>
+  );
+}
+
+function TerminalGlyph() {
+  return (
+    <svg {...GLYPH_PROPS}>
+      <rect x="2.75" y="4.25" width="18.5" height="15.5" rx="3" />
+      <path d="M6.75 9.75 9.5 12l-2.75 2.25" />
+      <path d="M12.5 15h4.75" />
+    </svg>
+  );
+}
+
+function FilesGlyph() {
+  return (
+    <svg {...GLYPH_PROPS}>
+      <path d="M3.25 7.4a2.1 2.1 0 0 1 2.1-2.1h3.2a2.1 2.1 0 0 1 1.6.8l1 1.2a2.1 2.1 0 0 0 1.6.8h5.6a2.1 2.1 0 0 1 2.1 2.1v7.6a2.1 2.1 0 0 1-2.1 2.1H5.35a2.1 2.1 0 0 1-2.1-2.1z" />
+      <path d="M3.4 11.6h17.2" />
+    </svg>
+  );
+}
 
 type AppId = "browser" | "terminal" | "files";
 
 interface AppDef {
   id: AppId;
   label: string;
-  /** Shown under the icon and in the window title. */
+  /** Shown in the window title, under the icon on the dock. */
   blurb: string;
-  Icon: typeof Globe;
+  Glyph: () => ReactNode;
   render: (running: boolean) => ReactNode;
 }
 
@@ -62,7 +103,7 @@ const APPS: AppDef[] = [
     id: "browser",
     label: "Browser",
     blurb: "Live Chrome",
-    Icon: Globe,
+    Glyph: BrowserGlyph,
     // The live screen *is* the browser app.  No address bar, no tabs, no
     // screenshot: the remote Chrome provides all of that, and a second set of
     // controls above it would only cover the part of it people need to click.
@@ -72,14 +113,14 @@ const APPS: AppDef[] = [
     id: "terminal",
     label: "Terminal",
     blurb: "Remote shell",
-    Icon: Cpu,
+    Glyph: TerminalGlyph,
     render: () => <TerminalPane />,
   },
   {
     id: "files",
     label: "Files",
     blurb: "Workspace",
-    Icon: Folder,
+    Glyph: FilesGlyph,
     render: () => <FilesPane embedded />,
   },
 ];
@@ -94,7 +135,7 @@ interface WinState {
   y: number;
   w: number;
   h: number;
-  /** Set for one animation frame-batch after close, so the window can fade. */
+  /** Set for one beat after close, so the window can fade. */
   closing: boolean;
 }
 
@@ -107,6 +148,8 @@ const INITIAL: Record<AppId, WinState> = {
 const MENUBAR_H = 46;
 const TITLE_H = 42;
 const GAP = 8;
+/** How close to the top/bottom edge the pointer has to get to reveal chrome. */
+const EDGE = 76;
 
 /** The geometry a maximised window occupies, so a drag can be measured from it. */
 const maxedBox = (surface: { w: number; h: number }) => ({
@@ -147,22 +190,23 @@ export function Desktop() {
   const [wins, setWins] = useState<Record<AppId, WinState>>(INITIAL);
   const [active, setActive] = useState<AppId | null>("browser");
   const [surface, setSurface] = useState({ w: 1280, h: 800 });
-  const [hint, setHint] = useState(true);
 
   /**
    * Which windows are currently showing their title bar in "bare" mode.
    *
-   * The Browser window drops its bar out of the layout entirely when it is
-   * maximised or full screen, so the remote Chrome reaches the top edge of the
-   * panel.  The bar then fades back in when the pointer approaches the top edge
-   * and fades out again once it has been left alone, so the window controls stay
-   * reachable without permanently covering the remote browser's own tab strip.
+   * The Browser window drops its bar out of the layout entirely when it fills
+   * the panel, so the remote Chrome reaches the top edge.  The bar fades back in
+   * when the pointer approaches the top edge and fades out again once it has been
+   * left alone, so the window controls stay reachable without permanently
+   * covering the remote browser's own tab strip.
    */
   const [chromeOn, setChromeOn] = useState<Record<AppId, boolean>>({
     browser: false,
     terminal: false,
     files: false,
   });
+  /** Whether the pointer is near the bottom edge, which reveals the dock. */
+  const [dockHot, setDockHot] = useState(false);
   const chromeTimer = useRef<number | null>(null);
 
   useEffect(
@@ -192,27 +236,18 @@ export function Desktop() {
     return () => ro.disconnect();
   }, []);
 
-  // The first hint is enough; a permanent one is clutter.
-  useEffect(() => {
-    const t = setTimeout(() => setHint(false), 7000);
-    return () => clearTimeout(t);
-  }, []);
-
   const patch = useCallback((id: AppId, next: Partial<WinState>) => {
     setWins((s) => ({ ...s, [id]: { ...s[id], ...next } }));
   }, []);
 
   /** Raise a window to the front and pull it out of the dock. */
-  const focusWindow = useCallback(
-    (id: AppId) => {
-      setActive(id);
-      setWins((s) => {
-        const top = Math.max(...Object.values(s).map((w) => w.z)) + 1;
-        return { ...s, [id]: { ...s[id], z: top, minimized: false } };
-      });
-    },
-    []
-  );
+  const focusWindow = useCallback((id: AppId) => {
+    setActive(id);
+    setWins((s) => {
+      const top = Math.max(...Object.values(s).map((w) => w.z)) + 1;
+      return { ...s, [id]: { ...s[id], z: top, minimized: false } };
+    });
+  }, []);
 
   const openApp = useCallback(
     (id: AppId) => {
@@ -220,10 +255,13 @@ export function Desktop() {
       setWins((s) => {
         const top = Math.max(...Object.values(s).map((w) => w.z)) + 1;
         if (s[id].open) return { ...s, [id]: { ...s[id], z: top, minimized: false, closing: false } };
-        // Offset by how many are already open, so two fresh windows do not
-        // land in exactly the same spot.
+        // Offset by how many are already open, so two fresh windows do not land
+        // in exactly the same spot.
         const offset = Object.values(s).filter((v) => v.open).length * 34;
-        return { ...s, [id]: { ...s[id], open: true, minimized: false, closing: false, z: top, ...restoreBox(surface, s[id], offset) } };
+        return {
+          ...s,
+          [id]: { ...s[id], open: true, minimized: false, closing: false, z: top, ...restoreBox(surface, s[id], offset) },
+        };
       });
       setActive(id);
     },
@@ -256,9 +294,9 @@ export function Desktop() {
     (id: AppId) => {
       haptic("light");
       setWins((s) => {
-        // Restoring a window that was never placed (the Browser boots
-        // maximised, so it has no saved geometry) needs a size first --
-        // otherwise it would come back as a 0x0 sliver.
+        // Restoring a window that was never placed (the Browser boots maximised,
+        // so it has no saved geometry) needs a size first -- otherwise it would
+        // come back as a 0x0 sliver.
         const restore = s[id].maximized && s[id].w === 0 ? restoreBox(surface, s[id]) : null;
         return {
           ...s,
@@ -282,14 +320,6 @@ export function Desktop() {
     setActive(id);
   }, []);
 
-  const restoreFromDock = useCallback(
-    (id: AppId) => {
-      haptic("light");
-      focusWindow(id);
-    },
-    [focusWindow]
-  );
-
   /* --- dragging ----------------------------------------------------------- */
   const startDrag = useCallback(
     (e: ReactPointerEvent, id: AppId) => {
@@ -300,8 +330,8 @@ export function Desktop() {
       focusWindow(id);
 
       // Dragging a maximised window un-maximises it.  Measure the grab point
-      // against the maximised frame first, otherwise the window teleports to
-      // the centre on the first pointermove.
+      // against the maximised frame first, otherwise the window teleports to the
+      // centre on the first pointermove.
       const m = maxedBox(surface);
       const grabX = current.maximized ? Math.min(Math.max(0, e.clientX - m.left), m.width) : 0;
       const grabY = current.maximized ? Math.min(Math.max(0, e.clientY - m.top), TITLE_H) : 0;
@@ -309,14 +339,8 @@ export function Desktop() {
         ? { ...current, ...restoreBox(surface, current), maximized: false, fullscreen: false }
         : current;
       if (current.maximized) {
-        base.x = Math.min(
-          Math.max(GAP, startX - grabX),
-          Math.max(GAP, surface.w - base.w - GAP)
-        );
-        base.y = Math.min(
-          Math.max(MENUBAR_H, startY - grabY),
-          Math.max(MENUBAR_H, surface.h - TITLE_H)
-        );
+        base.x = Math.min(Math.max(GAP, startX - grabX), Math.max(GAP, surface.w - base.w - GAP));
+        base.y = Math.min(Math.max(MENUBAR_H, startY - grabY), Math.max(MENUBAR_H, surface.h - TITLE_H));
         patch(id, { maximized: false, fullscreen: false, x: base.x, y: base.y, w: base.w, h: base.h });
       }
 
@@ -325,8 +349,8 @@ export function Desktop() {
           ...s,
           [id]: {
             ...s[id],
-            // Keep the title bar reachable: a window dragged off the top edge
-            // is a window you cannot get back.
+            // Keep the title bar reachable: a window dragged off the top edge is
+            // a window you cannot get back.
             x: Math.min(Math.max(-s[id].w + 120, base.x + ev.clientX - startX), surface.w - 120),
             y: Math.min(Math.max(MENUBAR_H, base.y + ev.clientY - startY), surface.h - TITLE_H),
           },
@@ -388,14 +412,31 @@ export function Desktop() {
       : "cpu";
 
   const anyFullscreen = useMemo(() => Object.values(wins).some((w) => w.fullscreen), [wins]);
-  const dockApps = useMemo(() => APPS.filter((a) => wins[a.id].open), [wins]);
+  const browserMaximized = wins.browser.open && wins.browser.maximized;
+  /**
+   * When the live screen owns the whole surface, every permanent piece of
+   * desktop chrome steps aside.  A menu bar sitting above the remote Chrome is
+   * precisely the "extra bar across the top" this layout exists to avoid, and a
+   * dock along the bottom would cover the bottom of the framebuffer just as
+   * surely.  Both come back on hover.
+   */
+  const chromeHidden = anyFullscreen || browserMaximized;
+  const dockVisible = !chromeHidden || dockHot;
 
   return (
-    <div className="desktop" ref={surfaceRef}>
+    <div
+      className="desktop"
+      ref={surfaceRef}
+      onPointerMove={(e) => {
+        if (!chromeHidden) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        setDockHot(e.clientY - r.top > surface.h - EDGE);
+      }}
+    >
       <div className="desktop__wall" aria-hidden />
 
-      {/* ---- menu bar: the only permanent chrome above the desktop ---- */}
-      <div className={`deskbar${anyFullscreen ? " deskbar--behind" : ""}`}>
+      {/* ---- menu bar ---------------------------------------------------- */}
+      <div className={`deskbar${chromeHidden ? " deskbar--behind" : ""}`}>
         <div className="deskbar__brand">
           <span className="deskbar__mark" aria-hidden />
           <span className="deskbar__name">RAG Agents</span>
@@ -441,48 +482,21 @@ export function Desktop() {
         </button>
       </div>
 
-      {/* ---- app icons ---- */}
-      <div className="deskicons" role="list" aria-label="Applications">
-        {APPS.map((app) => {
-          const w = wins[app.id];
-          const isOpen = w.open;
-          return (
-            <button
-              key={app.id}
-              className={`deskicon${isOpen ? " deskicon--open" : ""}`}
-              onClick={() => (isOpen && !w.minimized ? focusWindow(app.id) : openApp(app.id))}
-              onDoubleClick={() => openApp(app.id)}
-              role="listitem"
-              aria-label={`${app.label} — ${app.blurb}`}
-            >
-              <span className="deskicon__tile">
-                <app.Icon size={26} strokeWidth={1.7} />
-              </span>
-              <span className="deskicon__label">{app.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {hint && !anyFullscreen ? (
-        <div className="deskhint" role="note">
-          Open an app above, or double-click an icon. Drag a title bar to move a window.
-        </div>
-      ) : null}
-
-      {/* ---- windows ---- */}
+      {/* ---- windows ----------------------------------------------------- */}
       {APPS.map((app) => {
         const w = wins[app.id];
         if (!w.open) return null;
         const isActive = active === app.id && !w.minimized;
-        // The Browser gives up its title bar to the screen as soon as it fills
-        // the panel; the other apps keep theirs, because their content is a
-        // document rather than a screen with its own chrome at the top.
+        // The Browser takes the entire surface when maximised.  A window inset by
+        // a margin would letterbox the framebuffer twice -- once in the window
+        // and again in the viewport -- and the top of the remote Chrome is the
+        // part that has to stay reachable.
+        const edge = app.id === "browser" && (w.maximized || w.fullscreen);
         const bare = app.id === "browser" && (w.maximized || w.fullscreen);
         const style: CSSProperties = w.fullscreen
           ? { zIndex: 9000 + w.z }
           : w.maximized
-            ? { zIndex: w.z, ...maxedBox(surface) }
+            ? { zIndex: w.z, ...(edge ? { left: 0, top: 0, width: surface.w, height: surface.h } : maxedBox(surface)) }
             : { zIndex: w.z, left: w.x, top: w.y, width: w.w, height: w.h };
 
         return (
@@ -494,8 +508,8 @@ export function Desktop() {
               isActive ? "dwin--active" : "",
               w.minimized ? "dwin--min" : "",
               w.closing ? "dwin--closing" : "",
-              w.maximized ? "dwin--max" : "",
-              w.fullscreen ? "dwin--full" : "",
+              w.maximized && !edge ? "dwin--max" : "",
+              edge ? "dwin--edge" : "",
               bare ? "dwin--bare" : "",
               bare && chromeOn[app.id] ? "dwin--chrome" : "",
             ]
@@ -508,7 +522,7 @@ export function Desktop() {
             onPointerMove={(e) => {
               if (!bare) return;
               const top = e.currentTarget.getBoundingClientRect().top;
-              revealChrome(app.id, e.clientY - top <= 72);
+              revealChrome(app.id, e.clientY - top <= EDGE);
             }}
             onPointerLeave={() => {
               if (!bare) return;
@@ -518,11 +532,7 @@ export function Desktop() {
               }, 500);
             }}
           >
-            <header
-              className="dwin__bar"
-              onPointerDown={(e) => startDrag(e, app.id)}
-              onDoubleClick={() => toggleMax(app.id)}
-            >
+            <header className="dwin__bar" onPointerDown={(e) => startDrag(e, app.id)} onDoubleClick={() => toggleMax(app.id)}>
               <div className="dwin__lights">
                 <button
                   className="dwin__light dwin__light--close"
@@ -550,7 +560,7 @@ export function Desktop() {
                 </button>
               </div>
               <div className="dwin__title">
-                <app.Icon size={13} />
+                <app.Glyph />
                 <span>{app.label}</span>
                 <em>{app.blurb}</em>
               </div>
@@ -579,22 +589,39 @@ export function Desktop() {
         );
       })}
 
-      {/* ---- dock: restores minimised windows, mirrors real desktops ---- */}
-      <div className={`deskdock${anyFullscreen ? " deskdock--behind" : ""}`}>
-        {dockApps.length === 0 ? <span className="deskdock__empty" /> : null}
-        {dockApps.map((app) => (
-          <button
-            key={app.id}
-            className={`deskdock__item${active === app.id && !wins[app.id].minimized ? " deskdock__item--on" : ""}`}
-            onClick={() => restoreFromDock(app.id)}
-            title={wins[app.id].minimized ? `Restore ${app.label}` : app.label}
-            aria-label={wins[app.id].minimized ? `Restore ${app.label}` : app.label}
-          >
-            <app.Icon size={17} strokeWidth={1.8} />
-            <span>{app.label}</span>
-          </button>
-        ))}
-      </div>
+      {/* ---- dock: the launcher -------------------------------------------
+          Always the primary way in.  Icon tiles rather than a row of words, with
+          the label appearing on hover, a dot for anything running and a ring for
+          the focused window.  Slides out of the way only when the live screen
+          needs the bottom of the panel. */}
+      <nav className={`deskdock${dockVisible ? "" : " deskdock--behind"}`} aria-label="Applications">
+        {APPS.map((app) => {
+          const w = wins[app.id];
+          const isActive = active === app.id && !w.minimized;
+          return (
+            <button
+              key={app.id}
+              className={[
+                "dockitem",
+                w.open ? "dockitem--open" : "",
+                isActive ? "dockitem--active" : "",
+                w.minimized ? "dockitem--minimized" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => (w.open && !w.minimized ? focusWindow(app.id) : openApp(app.id))}
+              title={w.minimized ? `Restore ${app.label}` : app.label}
+              aria-label={`${app.label} — ${app.blurb}`}
+            >
+              <span className="dockitem__tile">
+                <app.Glyph />
+              </span>
+              <span className="dockitem__label">{app.label}</span>
+              <i className="dockitem__dot" aria-hidden />
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

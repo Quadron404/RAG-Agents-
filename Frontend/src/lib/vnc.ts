@@ -60,6 +60,8 @@ export class VncSession {
   private height = 0;
   private keyGuard: ((e: KeyboardEvent) => void) | null = null;
   private inputWatchers: Array<() => void> = [];
+  private scrollGuard: (() => void) | null = null;
+  private refitQueued = false;
   /** The socket URL currently in use, so a tunnel move can be detected. */
   private activeUrl = "";
   private focusOnPointer: ((e: PointerEvent) => void) | null = null;
@@ -107,6 +109,39 @@ export class VncSession {
     // Assigning scaleViewport re-runs noVNC's autoscale against the element's
     // current box, which is what makes window resizing behave.
     this.rfb.scaleViewport = true;
+    if (this.refitQueued) return;
+    this.refitQueued = true;
+    // noVNC applies the new scale through its own render queue, and a
+    // fractional contain-fit can leave the viewport scrolled by a fraction of a
+    // pixel.  Re-pin across two frames so what ends up on screen is the whole
+    // framebuffer rather than the bottom of it.
+    requestAnimationFrame(() => {
+      this.refitQueued = false;
+      this.pinViewport();
+      requestAnimationFrame(() => this.pinViewport());
+    });
+  }
+
+  /** noVNC's scrollable viewport container, which is the RFB target's child. */
+  private viewport(): HTMLElement | null {
+    const el = this.target.firstElementChild;
+    return el instanceof HTMLElement ? el : null;
+  }
+
+  /**
+   * Force the viewport back to its origin.
+   *
+   * The viewport is sized to hold the whole framebuffer, so any scroll offset on
+   * it is by definition hiding part of the remote screen.  This is the belt to
+   * the CSS `overflow: hidden` braces: even if the container is scrollable, the
+   * top-left of the framebuffer stays on screen.
+   */
+  private pinViewport(): void {
+    const vp = this.viewport();
+    if (vp && (vp.scrollTop !== 0 || vp.scrollLeft !== 0)) {
+      vp.scrollTop = 0;
+      vp.scrollLeft = 0;
+    }
   }
 
   private clearRetry(): void {
@@ -123,6 +158,10 @@ export class VncSession {
     }
     for (const off of this.inputWatchers) off();
     this.inputWatchers = [];
+    if (this.scrollGuard) {
+      this.scrollGuard();
+      this.scrollGuard = null;
+    }
     if (this.keyGuard) {
       this.target.removeEventListener("keydown", this.keyGuard, true);
       this.keyGuard = null;
@@ -196,6 +235,17 @@ export class VncSession {
     }
     this.rfb = rfb;
 
+    // noVNC's viewport is scrollable by default (overflow: auto).  Any scroll
+    // offset on it hides part of the framebuffer, and the usual way one appears
+    // is a wheel gesture landing on the screen at the same time as it is being
+    // forwarded to the remote machine.  Snap it back to the origin instead.
+    const vp = this.viewport();
+    if (vp) {
+      const onScroll = () => this.pinViewport();
+      vp.addEventListener("scroll", onScroll, { passive: true });
+      this.scrollGuard = () => vp.removeEventListener("scroll", onScroll);
+    }
+
     rfb.viewOnly = false;
     rfb.clipViewport = false;
     rfb.scaleViewport = true;   // fit the framebuffer to whatever the UI gives us
@@ -213,6 +263,7 @@ export class VncSession {
       this.latencyMs = 0;
       this.setState("connected");
       this.startStats();
+      this.pinViewport();
       // A click is the natural moment to take keyboard input; make the very
       // first keystroke work without an extra tab-stop.
       try {
