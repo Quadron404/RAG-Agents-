@@ -28,6 +28,10 @@ TESTS = (
     # to pass for a feature that can click a user's real browser to be
     # deployable at all.
     "test_computer_control",
+    # The supervisor script.  Before test_bind_mutations, which edits files:
+    # this one reads them, and it has to pass before anything is deployed on a
+    # machine whose only screen depends on supervise.sh starting.
+    "test_supervisor",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",
