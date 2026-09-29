@@ -14,28 +14,52 @@ mkdir -p "$RUN_DIR" "$CHROME_PROFILE" "$WORKSPACE"
 
 log "=== RAG Agents computer booting ==="
 
-# --- 1) the UI, if it has not been built yet ------------------------------
+# --- 1) the UI, if the built bundle is missing or older than the source -----
 # Before the backend starts, because the backend decides what to serve by
 # looking for Frontend/dist/index.html at import time.  Start it first on a
 # fresh clone and the mount is decided from a directory that does not exist
 # yet, so the app keeps serving the old prototype for the whole session.
-if [ ! -f "$REPO_ROOT/Frontend/dist/index.html" ]; then
-  log "building the frontend (first run only)"
-  if (cd "$REPO_ROOT/Frontend" && npm run build) >>"$DESKTOP_LOG_DIR/frontend-build.log" 2>&1; then
+#
+# The bundle is a build artifact and Frontend/.gitignore excludes it, so
+# `git pull` never updates it.  Testing only for its *existence* is what let a
+# pull that deleted the login screen keep serving the login screen: the source
+# was new, the bundle on disk was the one built before that commit, and the
+# build was skipped.  Git sets mtime on every file it writes, so anything under
+# src (or a top-level build config) newer than the built index.html means the
+# bundle is stale and has to be rebuilt.
+FRONTEND_DIR="$REPO_ROOT/Frontend"
+UI_INDEX="$FRONTEND_DIR/dist/index.html"
+needs_build=0
+if [ ! -f "$UI_INDEX" ]; then
+  needs_build=1
+  log "frontend bundle is missing"
+else
+  STALE="$(find "$FRONTEND_DIR/src" -type f -newer "$UI_INDEX" 2>/dev/null | head -n1)"
+  [ -z "$STALE" ] && STALE="$(find "$FRONTEND_DIR" -maxdepth 1 -type f \
+    \( -name '*.json' -o -name '*.html' -o -name '*.ts' \) \
+    -newer "$UI_INDEX" 2>/dev/null | head -n1)"
+  if [ -n "$STALE" ]; then
+    needs_build=1
+    log "frontend bundle is older than the source; rebuilding"
+  fi
+fi
+
+if [ "$needs_build" = 1 ]; then
+  if (cd "$FRONTEND_DIR" && npm run build) >>"$DESKTOP_LOG_DIR/frontend-build.log" 2>&1; then
     log "frontend built"
   else
     # Fatal, not a warning.  With no dist the app falls back to the bundled
     # prototype in backend/app/static, which answers every request perfectly --
-    # it is just a stale page with no login screen, no Computer view and no VNC.
-    # A warning here is how a failed build reached someone as a working app.
+    # it is just a stale page with no Computer view and no VNC.  A warning here
+    # is how a failed build reached someone as a working app.
     log "FATAL: the frontend build failed.  The app would serve the fallback"
-    log "       prototype, which has no login screen and no screen view."
+    log "       prototype, which has no screen view."
     log "       last lines of $DESKTOP_LOG_DIR/frontend-build.log:"
     tail -n 20 "$DESKTOP_LOG_DIR/frontend-build.log" 2>/dev/null | while read -r l; do log "         $l"; done
     exit 1
   fi
 else
-  log "frontend already built"
+  log "frontend already built and up to date"
 fi
 
 # --- 2) the screen stack (Xvfb, Chrome, x11vnc, websockify, tunnel) ---------

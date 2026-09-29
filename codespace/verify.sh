@@ -227,6 +227,25 @@ else
     fi
   fi
 
+  # The one that matters most, and the one that is missing above.  Frontend/dist
+  # is gitignored, so a `git pull` cannot update it, and a bundle that is older
+  # than the source it was built from is served as-is.  Every request above can
+  # pass against a bundle from a completely different commit -- the login screen
+  # that was deleted from the source was still in the bundle, and this file
+  # reported every check green.  Comparing mtimes on disk is the only way to see
+  # it, and this runs on the machine that has both.
+  if [ -f "$REPO_ROOT/Frontend/dist/index.html" ]; then
+    stale_src="$(find "$REPO_ROOT/Frontend/src" -type f \
+      -newer "$REPO_ROOT/Frontend/dist/index.html" 2>/dev/null | head -n1)"
+    if [ -z "$stale_src" ]; then
+      ok "the served bundle is newer than the frontend source (not a stale build)"
+    else
+      bad "the served bundle predates ${stale_src#"$REPO_ROOT/"}; it is a build from an older commit. Run: (cd Frontend && npm run build) && bash codespace/boot.sh"
+    fi
+  else
+    bad "Frontend/dist/index.html does not exist, so the fallback prototype is being served"
+  fi
+
   # This is the acceptance criterion, checked through the public entry point
   # rather than in-process: no cookie, no screen.
   # The screen config must be served to a request that has never authenticated,

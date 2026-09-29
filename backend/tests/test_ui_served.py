@@ -103,13 +103,26 @@ if verify:
         verify.index("the built UI is being served") > verify.index("Reaching the app through the tunnel"),
         "the check is part of the through-the-tunnel section",
     )
+    # Existence and a loadable asset are not freshness.  A bundle built from an
+    # older commit passes both -- that is exactly how a deleted login screen kept
+    # being served with a green verify.  The bundle's mtime has to be compared
+    # against the source, and only the machine running verify can do that.
+    check(
+        "not a stale build" in verify,
+        "verify.sh checks the served bundle is not older than the frontend source",
+    )
+    check(
+        'find "$REPO_ROOT/Frontend/src" -type f' in verify
+        and "-newer \"$REPO_ROOT/Frontend/dist/index.html\"" in verify,
+        "the staleness check compares source mtimes against the built bundle",
+    )
 
 # --- a failed build must be fatal, not a warning -----------------------------
 boot = _read(BOOT)
 check(bool(boot), "codespace/boot.sh was found")
 
 if boot:
-    build_block = re.search(r"if \[ ! -f \"\$REPO_ROOT/Frontend/dist/index\.html\" \]; then(.*?)\nfi\n", boot, re.S)
+    build_block = re.search(r"if \[ \"\$needs_build\" = 1 \]; then(.*?)\nfi\n", boot, re.S)
     check(build_block is not None, "boot.sh's build block was found")
     if build_block:
         body = build_block.group(1)
@@ -122,6 +135,22 @@ if boot:
             "frontend-build.log" in body,
             "the failure prints the build log rather than only naming it",
         )
+
+    # The bundle is gitignored, so a pull cannot update it and testing only for
+    # its existence served a login screen that had been deleted from the source.
+    # Rebuilding when the source is newer is what stops that happening again.
+    check(
+        re.search(r"needs_build=1", boot) is not None,
+        "boot.sh decides to rebuild by more than the bundle's existence",
+    )
+    check(
+        'find "$FRONTEND_DIR/src" -type f -newer "$UI_INDEX"' in boot,
+        "boot.sh rebuilds when a source file is newer than the built bundle",
+    )
+    check(
+        re.search(r"if \[ ! -f \"\$UI_INDEX\" \]; then", boot) is not None,
+        "boot.sh still builds when the bundle is missing entirely",
+    )
 
 # --- and the dependencies to build one have to exist -------------------------
 install = _read(INSTALL)
