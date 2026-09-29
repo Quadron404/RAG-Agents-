@@ -23,9 +23,8 @@ def read_published(path: str) -> tuple[str, str]:
     probe = (
         "from fastapi.testclient import TestClient\n"
         "from app.main import app\n"
-        "import json, app.auth as auth\n"
+        "import json\n"
         "c = TestClient(app)\n"
-        "c.cookies.set('rag_session', auth._make_cookie_value())\n"
         "print(json.dumps(c.get('/screen/config').json()))\n"
     )
     run = subprocess.run(
@@ -33,7 +32,7 @@ def read_published(path: str) -> tuple[str, str]:
         capture_output=True,
         text=True,
         cwd=BACKEND_DIR,
-        env={**os.environ, "PUBLIC_URL_FILE": path, "RAG_AUTH_TOKEN": "test-passphrase"},
+        env={**os.environ, "PUBLIC_URL_FILE": path},
     )
     if run.returncode != 0:
         return "", run.stderr.strip().splitlines()[-1] if run.stderr.strip() else "no output"

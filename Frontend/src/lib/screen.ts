@@ -42,7 +42,6 @@ export interface ScreenConfig {
   publicOrigin?: string;
   /** How long ago that URL was published; large means the tunnel has moved on. */
   publicUrlAgeSeconds?: number;
-  authRequired?: boolean;
 }
 
 const FALLBACK: ScreenConfig = {
@@ -87,7 +86,6 @@ export function loadScreenConfig(force = false): Promise<ScreenConfig> {
         wsProtocols: cfg?.wsProtocols?.length ? cfg.wsProtocols : FALLBACK.wsProtocols,
         publicOrigin: cfg?.publicOrigin,
         publicUrlAgeSeconds: cfg?.publicUrlAgeSeconds,
-        authRequired: cfg?.authRequired,
       };
       return cached;
     })

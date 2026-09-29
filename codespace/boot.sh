@@ -54,14 +54,11 @@ fi
 # --- 3) the RAG Agents backend --------------------------------------------
 # Serves the built UI and proxies /websockify to the local websockify, so the
 # whole product is one origin.  Same host for the page and the WebSocket is what
-# lets the session cookie ride along with the upgrade without any extra work.
+# keeps it one origin with no CORS or separate-tunnel handling.
 if [ -f "$RUN_DIR/backend.pid" ] && kill -0 "$(cat "$RUN_DIR/backend.pid" 2>/dev/null)" 2>/dev/null; then
-  # Restart rather than leave it alone.  RAG_AUTH_TOKEN is read from this
-  # process's environment when it starts, so "set the token in backend/.env and
-  # re-run boot.sh" has to actually produce a new process -- keeping the old one
-  # meant the documented fix silently did nothing and the app kept refusing
-  # every route.  The backend is stateless and session cookies are self-contained
-  # HMACs, so a restart costs one dropped request and invalidates nothing.
+  # Restart rather than leave it alone, so "edit backend/.env and re-run boot.sh"
+  # actually produces a process that has read the new file.  The backend is
+  # stateless, so a restart costs one dropped request.
   OLD_PID="$(cat "$RUN_DIR/backend.pid" 2>/dev/null)"
   log "backend already running (pid $OLD_PID); restarting to pick up current configuration"
   kill "$OLD_PID" 2>/dev/null
@@ -101,15 +98,14 @@ else
     cd "$REPO_ROOT/backend" || exit 1
     # backend/.env is deliberately NOT sourced here.
     #
-    # It used to be: `set -a; . ./.env; set +a`, which made *bash* the authority
-    # on what RAG_AUTH_TOKEN was.  Bash and config.py disagreed about quotes,
-    # unquoted spaces, `$` expansion, and -- fatally -- which of several
-    # RAG_AUTH_TOKEN lines won, because bash takes the last and Python took the
-    # first.  So the login endpoint compared against a value that appeared
-    # nowhere in the file the operator was reading, and the only symptom was
-    # "incorrect passphrase" for a passphrase that was correct on screen.
+    # It used to be: `set -a; . ./.env; set +a`, which made *bash* a second
+    # parser of the same file.  Bash and config.py disagreed about quotes,
+    # unquoted spaces, `$` expansion, and which of several duplicate lines won,
+    # because bash takes the last and Python takes the first -- so the running
+    # server could use a value that appeared nowhere in the file the operator was
+    # reading.
     #
-    # The backend loads the file itself now, once, in config._load_dotenv.
+    # The backend loads the file itself, once, in config._load_dotenv.
     # Codespaces secrets still reach the process the normal way: `exec` inherits
     # this shell's environment, and the real environment still wins over the
     # file.  Only the second, competing parser is gone.
@@ -150,19 +146,17 @@ log " noVNC     $ws_state   127.0.0.1:$WEBSOCKIFY_PORT  (loopback only)"
 log " backend   $api_state   :$BACKEND_PORT"
 
 if [ -s "$PUBLIC_URL_FILE" ]; then
-  log " public    $(cat "$PUBLIC_URL_FILE")  (passphrase required)"
+  log " public    $(cat "$PUBLIC_URL_FILE")  (no sign-in)"
   log " screen    $(cat "$PUBLIC_URL_FILE")/websockify  (via the app, not exposed directly)"
 else
   log " public    (tunnel not up yet; check $DESKTOP_LOG_DIR/cloudflared.log)"
   log "            until then the viewer falls back to the in-app /ws/screen relay)"
 fi
 
-if [ -z "${RAG_AUTH_TOKEN:-}" ] && [ -z "$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" 2>/dev/null | cut -d= -f2-)" ]; then
+if [ -s "$PUBLIC_URL_FILE" ]; then
   log ""
-  log " WARNING: RAG_AUTH_TOKEN is not set.  The app will refuse every route"
-  log "          until it is, which is deliberate -- a public tunnel in front of"
-  log "          a signed-in browser must never open by default.  Set it in"
-  log "          backend/.env or as a Codespaces secret, then restart the backend."
+  log " NOTE: this URL has no passphrase. Anyone who has it has the app, the"
+  log "       files and the screen. Restart the tunnel to invalidate it."
 fi
 
 log "======================================"

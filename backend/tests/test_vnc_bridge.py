@@ -19,13 +19,8 @@ import threading
 
 from fastapi.testclient import TestClient
 
-# A session is required before the relay will speak, so the passphrase has to be
-# in the environment before the app is imported.
-PASS = "bridge-test-passphrase"
-os.environ["RAG_AUTH_TOKEN"] = PASS
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="rag-bridge-test-"))
 
-import app.auth as auth  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -82,26 +77,7 @@ main_module._screen_endpoint = lambda: ("127.0.0.1", PORT)  # type: ignore[assig
 client = TestClient(app)
 failures: list[str] = []
 
-# --- the relay must refuse to carry bytes without a session ------------------
-# This is the fallback path, so it is easy to forget it is gated.  If this ever
-# starts passing a session through, the screen behind the tunnel is one missing
-# check away from being public.
-anon = TestClient(app)
-refused = False
-try:
-    with anon.websocket_connect("/ws/screen") as ws:
-        ws.receive_bytes()
-except Exception:
-    refused = True
-if not refused:
-    failures.append("/ws/screen served a frame to an unauthenticated client")
 
-# --- and must still work with one -------------------------------------------
-# TestClient keeps cookies between requests, so logging in here is what lets the
-# WebSocket upgrade below carry the session.
-login = client.post("/auth/login", json={"passphrase": PASS})
-if login.status_code != 200:
-    failures.append(f"login failed with {login.status_code}, so the relay could not be tested")
 
 with client.websocket_connect("/ws/screen") as ws:
     got = ws.receive_bytes()

@@ -152,6 +152,5 @@ done
 [ -d "$NOVNC_WEB" ] && log "  ok  novnc web root ($NOVNC_WEB)" || log "  MISSING  novnc web root ($NOVNC_WEB)"
 
 log "done. Next:"
-log "  1. set RAG_AUTH_TOKEN (a Codespaces secret, or backend/.env) -- the app"
-log "     refuses every route without it, on purpose"
+log "  1. set your provider keys (Codespaces secrets, or backend/.env)"
 log "  2. run codespace/boot.sh"

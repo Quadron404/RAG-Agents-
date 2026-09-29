@@ -10,27 +10,6 @@ import subprocess
 import sys
 
 TESTS = (
-    "test_auth",
-    # The UI half of the same contract: a missing passphrase must be refused by
-    # the server *and* surfaced by the gate, and the verifier must not skip the
-    # check that proves it.  Without this the outage reached a user as an
-    # all-green run.
-    "test_auth_gate",
-    # Where the passphrase comes from, and that there is only one answer.  First
-    # because test_auth and test_auth_gate both set RAG_AUTH_TOKEN in their own
-    # process and would pass regardless, and a login screen that says "incorrect
-    # passphrase" for a value that is correct in the file is exactly the outage
-    # that needs this to exist.
-    "test_auth_source",
-    # The same thing against a real uvicorn process started the way boot.sh
-    # starts it, over real HTTP with a real cookie jar.  The reported failure was
-    # about which parser won in a real process, so the check has to be a real
-    # process.  Slow, so it runs after the in-process auth checks.
-    "test_auth_live",
-    # The local development bypass, with the tunnel as the thing being held shut.
-    # Placed next to the other auth checks because its whole job is to prove the
-    # passphrase gate still holds for everything that is not a local browser.
-    "test_dev_autologin",
     "test_ui_served",
     "test_screen_url",
     "test_screen_isolation",

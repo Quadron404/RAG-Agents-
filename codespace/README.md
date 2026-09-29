@@ -26,29 +26,24 @@ HTTP on loopback, through `backend/vm_agent/daemon.py`.
 
 ## The one rule
 
-**Only the app is published, and the app decides who gets in.**
+**Only the app is published. Nothing else has an address.**
 
 The Quick Tunnel points at port 8000 and nothing else. 5900 and 6080 bind
 `127.0.0.1` and are never given a public port, so the framebuffer has no address
-of its own — the only way in is `/websockify`, and the app refuses that without a
-session.
+of its own — `/websockify` on the app is the only way to reach it.
 
-This matters more than usual here, because a quick tunnel's hostname is **not a
-secret**. It appears in DNS, in proxy logs and in browser history. So it is never
-treated as the credential. The passphrase (`RAG_AUTH_TOKEN`) is; see below.
+There is no passphrase on top of that. The app used to sit behind one
+(`RAG_AUTH_TOKEN` plus a login screen); it was removed at the owner's request,
+and every route now serves whoever asks. That makes a quick tunnel's hostname
+the credential, even though the hostname is **not** a secret in any technical
+sense: it appears in DNS, in proxy logs and in browser history. Treat it as
+password material, and restart the tunnel to revoke it.
 
 ## First run
 
-1. **Add one Codespaces secret** (Settings → Codespaces → *your codespace* →
-   Codespaces secrets):
-
-   | Name | Value |
-   | --- | --- |
-   | `RAG_AUTH_TOKEN` | a long random passphrase, e.g. `openssl rand -base64 24` |
-
-   That is the whole setup. There is no Cloudflare account, no domain, no tunnel
-   to create and no access policy to write, because a quick tunnel needs none of
-   them.
+1. **Nothing to configure.** No Cloudflare account, no domain, no tunnel to
+   create, no access policy to write, and no passphrase to set — a quick tunnel
+   needs none of them, and the app no longer asks for one.
 
 2. Open the Codespace. The devcontainer installs the stack and starts
    everything; the log ends with a status block like:
@@ -59,17 +54,13 @@ treated as the credential. The passphrase (`RAG_AUTH_TOKEN`) is; see below.
    [computer] RFB       up   127.0.0.1:5900  (loopback only)
    [computer] noVNC     up   127.0.0.1:6080  (loopback only)
    [computer] backend   up   :8000
-   [computer] public    https://witty-pandas-repeat-7x9k.trycloudflare.com  (passphrase required)
+   [computer] public    https://witty-pandas-repeat-7x9k.trycloudflare.com  (no sign-in)
    [computer] screen    https://witty-pandas-repeat-7x9k.trycloudflare.com/websockify  (via the app, not exposed directly)
    ```
 
-   Open that URL and you get the passphrase prompt. Behind it is a live,
-   signed-in browser — so treat the passphrase like the screen it unlocks.
-
-3. **If `RAG_AUTH_TOKEN` is not set, the app refuses every route and every
-   WebSocket.** That is deliberate. A public tunnel in front of someone's signed-in
-   browser must not come up open because a secret was forgotten, so a missing
-   passphrase stops the deployment instead of disabling the only lock there is.
+   Open that URL and you are straight into a live, signed-in browser. So treat
+   the URL like the passphrase it replaced: it is the screen's only key now, and
+   restarting the tunnel is how you take that key back.
 
 ## The hostname changes; the app follows
 
@@ -123,8 +114,8 @@ run when something looks wrong. It starts whatever is missing, then asserts the
 whole path end to end: Chrome is running with its normal UI (explicitly *not*
 kiosk, which would hide the tab strip and address bar), `5900` and `6080` are
 bound to loopback and nothing else, the tunnel really is a `trycloudflare`
-origin, `/screen/config` is refused over the tunnel without a cookie, the
-passphrase is accepted, and a real RFB handshake returns real framebuffer pixels through
+origin, `/screen/config` is served over the tunnel to a request with no cookie,
+and a real RFB handshake returns real framebuffer pixels through
 `/websockify`. It finishes by printing the exact URL to open.
 
 It reports `SKIP` separately from `PASS`, because "could not check" is not the
@@ -188,7 +179,7 @@ usually faster than reading logs by hand.
 
 | Symptom | Likely cause |
 | --- | --- |
-| Login page, and the passphrase is rejected | `RAG_AUTH_TOKEN` differs between the shell that started the backend and the one you are testing from, or the secret is missing and every route is refusing. Check `backend.log` and `boot.sh`'s warning. |
+| The app answers but every route is refused | The app no longer has a passphrase, so this means something upstream is returning 401 — a stale `uvicorn` process from before the removal, or a proxy in front. Check `backend.log` and restart with `codespace/boot.sh`. |
 | `mode: "bridge"` when you expected a tunnel | No URL in `$PUBLIC_URL_FILE`. Check `cloudflared.log`; the tunnel takes a few seconds to be assigned a hostname. |
 | Screen stuck on "connecting" | The tunnel is up but the origin is not. Check `listening 6080`. |
 | 502 from Cloudflare | The backend on 8000 is not running. Check `backend.log`. |

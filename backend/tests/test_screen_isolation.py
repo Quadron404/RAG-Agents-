@@ -238,12 +238,14 @@ if (CODES / "cloudflared" / "config.yml.example").exists():
 if (CODES / "cloudflared").is_dir() and not any((CODES / "cloudflared").iterdir()):
     (CODES / "cloudflared").rmdir()
 
-# --- 6. the app's own passphrase must be part of the story -------------------
-# The tunnel URL is public by design.  If the passphrase were optional, the
-# design would have no lock on it at all.
-for name in ("env.sh", "boot.sh", "verify.sh"):
-    if "RAG_AUTH_TOKEN" not in read(name):
-        failures.append(f"{name} does not mention RAG_AUTH_TOKEN; the only lock on the screen is missing")
+# --- 6. the screen is reachable only through the app ------------------------
+# The passphrase gate was removed at the owner's request, so the tunnel URL is now
+# the only door to the screen.  What still has to hold is the loopback part: the
+# tunnel is the single route, and 5900/6080/9000 are never published by anything
+# else.  That is checked in 1-5 above and in 7 below.
+#
+# (This check used to require env.sh, boot.sh and verify.sh to mention
+# RAG_AUTH_TOKEN.  There is no passphrase to mention now.)
 
 # --- 7. devcontainer keeps the forwarded ports private ----------------------
 dc_text = (REPO / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
@@ -268,10 +270,10 @@ for port, attrs in (dc.get("portsAttributes") or {}).items():
     if attrs.get("onAutoForward") not in ("private", "ignore"):
         failures.append(f"port {port} auto-forwards as {attrs.get('onAutoForward')!r}, not private")
 
-# The passphrase must arrive as a secret, never baked into the image definition.
+# No secret may be baked into the image definition.
 for key, value in (dc.get("remoteEnv") or {}).items():
-    if key == "RAG_AUTH_TOKEN":
-        failures.append("RAG_AUTH_TOKEN is set in remoteEnv; it must be a Codespaces secret")
+    if key in ("RAG_AUTH_TOKEN", "RAG_DEV_AUTO_LOGIN"):
+        failures.append(f"{key} is set in remoteEnv; provider keys must be Codespaces secrets")
 
 if failures:
     print("FAIL:")

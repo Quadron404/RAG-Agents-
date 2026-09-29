@@ -25,8 +25,6 @@ import tempfile
 import threading
 import time
 
-PASS = "websockify-proxy-test-passphrase"
-os.environ["RAG_AUTH_TOKEN"] = PASS
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="rag-wsproxy-test-"))
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -111,21 +109,9 @@ def main() -> int:
     main_module.computer.settings.screen_ws_port = port
 
     try:
-        # --- the gate comes first -----------------------------------------
-        anon = TestClient(app)
-        refused = False
-        try:
-            with anon.websocket_connect("/websockify") as ws:
-                ws.receive_bytes()
-        except Exception:
-            refused = True
-        check(refused, "unauthenticated /websockify is refused")
-
-        # --- then a real session ------------------------------------------
+        # The relay itself: /websockify is no longer behind a session gate, so
+        # this is now simply "does the byte path work".
         user = TestClient(app)
-        login = user.post("/auth/login", json={"passphrase": PASS})
-        check(login.status_code == 200, "login succeeds")
-
         echoed = None
         protocol = None
         try:

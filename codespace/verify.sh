@@ -10,10 +10,10 @@
 #
 # The two things this is really proving:
 #
-#   * the tunnel URL reaches the app, and the app will not serve the screen
-#     without the passphrase -- through the tunnel, not just locally;
-#   * 5900 and 6080 are not reachable from the internet, so the only way in is
-#     the app, which is the one place a session is checked.
+#   * the tunnel URL reaches the app, and the app serves the whole thing --
+#     through the tunnel, not just locally;
+#   * 5900 and 6080 are not reachable from the internet, so the app on the
+#     tunnel is the only way in.
 #
 # Exit code 0 means every required check passed. SKIP is reported separately from
 # PASS, because "could not check" is not the same as "fine".
@@ -29,9 +29,8 @@ ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); }
 skip() { printf '  \033[33mSKIP\033[0m  %s\n' "$1"; SKIP=$((SKIP+1)); }
 # A warning is neither: the deployment works, but something about it is a trap.
-# A backend/.env with two RAG_AUTH_TOKEN lines is exactly that -- the server uses
-# the first, which is why "the passphrase in the file is rejected" has to be
-# reported here rather than discovered at the login screen.
+# A provider key left in backend/.env instead of a Codespaces secret is exactly
+# that -- it works, and it is committed to by anyone who runs the repo.
 warn() { printf '  \033[35mWARN\033[0m  %s\n' "$1"; WARN=$((WARN+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
@@ -156,40 +155,6 @@ fi
 PUBLIC_URL=""
 [ -s "$PUBLIC_URL_FILE" ] && PUBLIC_URL="$(cat "$PUBLIC_URL_FILE")"
 
-# Resolve the passphrase the same way the backend does, so the login checks
-# below actually run.  They used to test `[ -n "${RAG_AUTH_TOKEN:-}" ]` -- the
-# *shell* variable -- and skip the entire section when it was unset, which is the
-# normal case: the token lives in backend/.env or as a Codespaces secret and is
-# never exported into the shell that runs this script.  So the one check that
-# would have caught "the server has no passphrase" was itself the thing being
-# skipped, and the run reported all-clear.
-#
-# Note this is a fallback for the check only.  It is read here, in the
-# verifier's own process, and is never passed to the app: the app gets the token
-# through its own environment and hands out a cookie instead.
-#
-# First line, not last.  config._load_dotenv is the only parser the backend has
-# (boot.sh no longer sources this file as a shell script, which is what used to
-# make *bash* the authority and put a last-wins value in the running server that
-# did not match the first line this script reads).  If this file has more than
-# one RAG_AUTH_TOKEN line, say so rather than quietly testing the first one.
-AUTH_TOKEN="${RAG_AUTH_TOKEN:-}"
-AUTH_ENV_VAR_SET=0
-[ -n "$AUTH_TOKEN" ] && AUTH_ENV_VAR_SET=1
-AUTH_DUP_LINES=0
-if [ -f "$REPO_ROOT/backend/.env" ]; then
-  AUTH_DUP_LINES="$(grep -c '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" || true)"
-fi
-if [ -z "$AUTH_TOKEN" ] && [ -f "$REPO_ROOT/backend/.env" ]; then
-  AUTH_TOKEN="$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" | head -n1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
-fi
-if [ "$AUTH_DUP_LINES" -gt 1 ] 2>/dev/null; then
-  warn "backend/.env has $AUTH_DUP_LINES RAG_AUTH_TOKEN lines; the backend uses the first. Remove the others so the file says what the server does."
-fi
-if [ "$AUTH_ENV_VAR_SET" -eq 1 ] && [ -f "$REPO_ROOT/backend/.env" ]; then
-  warn "RAG_AUTH_TOKEN is set in this shell's environment, so the backend uses that, not backend/.env"
-fi
-
 if [ -n "$PUBLIC_URL" ]; then
   ok "the tunnel published $(cat "$PUBLIC_URL_FILE")"
 else
@@ -202,8 +167,9 @@ else
   bad "the published URL is not a trycloudflare origin: ${PUBLIC_URL:-<empty>}"
 fi
 
-# The public URL is by design not a secret. What matters is that a request
-# through it does not get the screen without a passphrase.
+# The public URL is not a secret.  What matters is that a request through it
+# reaches the whole app, so every check below is a plain unauthenticated
+# request -- there is no session to acquire.
 # ---------------------------------------------------------------------------
 head_ "4. Reaching the app through the tunnel"
 # ---------------------------------------------------------------------------
@@ -227,10 +193,10 @@ else
     printf '        %s\n' "try again in a minute: quick tunnels take a moment to route"
   fi
 
-  # The login page itself is public, or nobody could ever log in.
+  # The app itself, served with no session of any kind.
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_URL/" 2>/dev/null)"
   if [ "$code" = "200" ]; then
-    ok "the login page is served without a session (GET / -> 200)"
+    ok "the app is served with no sign-in step (GET / -> 200)"
   else
     bad "GET / returned ${code:-no response}, expected 200"
   fi
@@ -238,9 +204,9 @@ else
   # "GET / returned 200" is not the same as "the app is being served".  When
   # Frontend/dist is missing the app deliberately falls back to the bundled
   # prototype in backend/app/static, which also answers 200 -- a stale page with
-  # no login screen, no Computer view and no VNC.  That is precisely how a failed
-  # frontend build reached a user as a green verification run, so the check has
-  # to be about *which* page came back, not whether one did.
+  # no Computer view and no VNC.  That is precisely how a failed frontend build
+  # reached a user as a green verification run, so the check has to be about
+  # *which* page came back, not whether one did.
   ui="$(curl -fsS --max-time 10 "$PUBLIC_URL/" 2>/dev/null || true)"
   if printf '%s' "$ui" | grep -q '/assets/index-'; then
     ok "the built UI is being served, not the fallback prototype"
@@ -263,130 +229,76 @@ else
 
   # This is the acceptance criterion, checked through the public entry point
   # rather than in-process: no cookie, no screen.
+  # The screen config must be served to a request that has never authenticated,
+  # rather than 401ing.  This used to assert the opposite; the check stays
+  # because "does a cookie-less request get the real config" is the thing worth
+  # re-checking after any change to the app's routing.
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_URL/screen/config" 2>/dev/null)"
-  if [ "$code" = "401" ]; then
-    ok "the screen config is refused without a session (GET /screen/config -> 401)"
+  if [ "$code" = "200" ]; then
+    ok "the screen config is served with no session (GET /screen/config -> 200)"
   else
-    bad "GET /screen/config returned ${code:-no response} without a session, expected 401"
-  fi
-
-  # The app must know a passphrase is configured, or it is refusing every route
-  # for a reason nobody will discover from the UI.  Asked of the server rather
-  # than of the shell, because "did the operator export the right variable" is
-  # not the question -- "is the deployment actually usable" is.
-  status_body="$(curl -fsS --max-time 10 "$PUBLIC_URL/auth/status" 2>/dev/null || true)"
-  if printf '%s' "$status_body" | grep -q '"auth_required":true'; then
-    ok "the server reports that a passphrase is required"
-  else
-    bad "the server reports no passphrase is configured, so it refuses every route; set RAG_AUTH_TOKEN and restart the backend"
-  fi
-
-  if [ -n "$AUTH_TOKEN" ]; then
-    ok "a passphrase was found for the login check"
-  else
-    skip "no passphrase available to the verifier (server may use a Codespaces secret)"
+    bad "GET /screen/config returned ${code:-no response}, expected 200"
   fi
 fi
 
 # ---------------------------------------------------------------------------
-head_ "5. Logging in through the tunnel"
+head_ "5. The screen config, through the tunnel"
 # ---------------------------------------------------------------------------
-COOKIE=""
 if [ -z "$PUBLIC_URL" ]; then
-  skip "cannot log in without a tunnel URL"
-elif [ -z "$AUTH_TOKEN" ]; then
-  # A tunnel with no passphrase to test against is a broken deployment, and it
-  # used to be reported as a skip -- which is how "the whole app 401s" reached a
-  # user with an all-green verification behind it.
-  bad "the tunnel is public but no passphrase could be read, so login is unverifiable; set RAG_AUTH_TOKEN in backend/.env or as a Codespaces secret"
+  skip "cannot read the screen config without a tunnel URL"
 else
-  JAR="$(mktemp)"
-  if curl -fsS --max-time 10 -c "$JAR" -X POST "$PUBLIC_URL/auth/login" \
-       -H 'Content-Type: application/json' \
-    --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
-       >/dev/null 2>&1; then
-    ok "the passphrase was accepted"
+  body="$(curl -fsS --max-time 10 "$PUBLIC_URL/screen/config" 2>/dev/null || true)"
+
+  if printf '%s' "$body" | grep -q '"mode"'; then
+    ok "the screen config is served"
   else
-    bad "the passphrase was rejected over the tunnel"
+    bad "the screen config was not served: ${body:0:200}"
   fi
 
-  if grep -q rag_session "$JAR" 2>/dev/null; then
-    COOKIE="$JAR"
-    ok "a session cookie was issued"
-  else
-    bad "no session cookie was issued; check RAG_AUTH_TOKEN matches the backend's"
-  fi
-
-  if [ -n "$COOKIE" ]; then
-    body="$(curl -fsS --max-time 10 -b "$COOKIE" "$PUBLIC_URL/screen/config" 2>/dev/null)"
-    if printf '%s' "$body" | grep -q '"mode"'; then
-      ok "the screen config is served with a session"
-    else
-      bad "the screen config was not served with a session"
-    fi
-
-    mode="$(printf '%s' "$body" | python3 -c 'import json,sys
+  mode="$(printf '%s' "$body" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("mode",""))
 except Exception: print("")' 2>/dev/null)"
-    ws="$(printf '%s' "$body" | python3 -c 'import json,sys
+  ws="$(printf '%s' "$body" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("wsUrl",""))
 except Exception: print("")' 2>/dev/null)"
 
-    if [ "$mode" = "tunnel" ]; then
-      ok "/screen/config reports mode=tunnel (it found the live tunnel URL)"
-    else
-      bad "/screen/config reported mode=${mode:-unknown}, expected tunnel"
-    fi
-
-    if [ "$ws" = "wss://${PUBLIC_URL#https://}/websockify" ]; then
-      ok "the advertised socket is ${ws}"
-    else
-      bad "the advertised socket is '${ws}', expected wss://${PUBLIC_URL#https://}/websockify"
-    fi
+  if [ "$mode" = "tunnel" ]; then
+    ok "/screen/config reports mode=tunnel (it found the live tunnel URL)"
+  else
+    bad "/screen/config reported mode=${mode:-unknown}, expected tunnel"
   fi
-  [ -n "$COOKIE" ] && rm -f "$COOKIE"
+
+  if [ "$ws" = "wss://${PUBLIC_URL#https://}/websockify" ]; then
+    ok "the advertised socket is ${ws}"
+  else
+    bad "the advertised socket is '${ws}', expected wss://${PUBLIC_URL#https://}/websockify"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 head_ "6. The live screen, over the real WebSocket"
 # ---------------------------------------------------------------------------
 # The strongest automated proof short of a human looking at it: open the screen
-# the way noVNC does, through the tunnel, with a session, and read the RFB
-# handshake off the far end.  Bytes arriving means the tunnel, the app's auth,
-# the proxy, websockify and x11vnc are all working as one path.
-if [ -z "$COOKIE" ] || [ -z "$PUBLIC_URL" ]; then
-  skip "no session, so the screen cannot be opened"
+# the way noVNC does, through the tunnel, and read the RFB handshake off the far
+# end.  Bytes arriving means the tunnel, the proxy, websockify and x11vnc are
+# all working as one path.
+if [ -z "$PUBLIC_URL" ]; then
+  skip "no tunnel URL, so the screen cannot be opened"
 else
-  jar2="$(mktemp)"
-  curl -fsS --max-time 10 -c "$jar2" -X POST "$PUBLIC_URL/auth/login" \
-    -H 'Content-Type: application/json' \
-    --data "$(printf '{"passphrase":%s}' "$(printf '%s' "$AUTH_TOKEN" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
-    >/dev/null 2>&1
-
-  DESKTOP_SIZE="$DESKTOP_SIZE" PUBLIC_URL="$PUBLIC_URL" COOKIE_JAR="$jar2" python3 - <<'PY'
+  DESKTOP_SIZE="$DESKTOP_SIZE" PUBLIC_URL="$PUBLIC_URL" python3 - <<'PY'
 import asyncio, os, struct, sys
 
 url = os.environ["PUBLIC_URL"].replace("https://", "wss://", 1) + "/websockify"
-jar = os.environ["COOKIE_JAR"]
-cookie = ""
-for line in open(jar):
-    if "rag_session" in line:
-        cookie = line.split()[-1]
-        break
-if not cookie:
-    print("  \033[31mFAIL\033[0m  no session cookie to open the screen with")
-    sys.exit(1)
 
 def ok(m):   print(f"  \033[32mPASS\033[0m  {m}")
 def bad(m):  print(f"  \033[31mFAIL\033[0m  {m}")
 
 async def go():
     import websockets
-    # Exactly how noVNC opens it: the binary subprotocol, the session cookie the
-    # browser already holds, and the same origin the page came from.
+    # Exactly how noVNC opens it: the binary subprotocol, the same origin the page
+    # came from, and no session cookie.
     async with websockets.connect(
-        url, subprotocols=["binary"], additional_headers={"Cookie": f"rag_session={cookie}"},
-        max_size=None, open_timeout=30,
+        url, subprotocols=["binary"], max_size=None, open_timeout=30,
     ) as ws:
         ok(f"WebSocket opened through the tunnel ({ws.subprotocol!r} subprotocol)")
 
@@ -493,18 +405,11 @@ head_ "The URL to open"
 # ---------------------------------------------------------------------------
 if [ -n "$PUBLIC_URL" ]; then
   printf '  \033[1m%s\033[0m\n\n' "$PUBLIC_URL"
-  if [ -n "$AUTH_TOKEN" ]; then
-    printf '  Sign in with the passphrase from RAG_AUTH_TOKEN.\n'
-  else
-    printf '  \033[31mThere is no passphrase set, so this URL will show the login\n'
-    printf '  screen to nobody and refuse every request.\033[0m Set one with:\n\n'
-    printf "    printf 'RAG_AUTH_TOKEN=%%s\\\\n' 'your-passphrase' >> backend/.env\n"
-    printf '    bash codespace/boot.sh\n\n'
-  fi
   printf '  The Computer view then connects to %s/websockify,\n' "$PUBLIC_URL"
   printf '  which the app proxies to websockify on 127.0.0.1:%s.\n\n' "$WEBSOCKIFY_PORT"
-  printf '  This hostname changes every time the tunnel restarts. It is not a\n'
-  printf '  secret, and it is not what protects the screen -- the passphrase is.\n'
+  printf '  This hostname changes every time the tunnel restarts. There is no\n'
+  printf '  passphrase: anyone who has this URL has the app and the screen.\n'
+  printf '  Treat it as a secret in practice, and restart the tunnel to revoke it.\n'
   printf '  Get the current one any time with: cat %s\n\n' "$PUBLIC_URL_FILE"
 else
   printf '  no tunnel URL, so there is nothing to open yet.\n\n'

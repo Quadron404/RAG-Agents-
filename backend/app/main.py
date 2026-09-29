@@ -14,7 +14,6 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth
 from .agents.commander import Commander
 from .computer.runner import ComputerRunner
 from .config import Settings, load_settings
@@ -54,29 +53,6 @@ async def _attach_computer() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Which passphrase this process loaded, from where, and its fingerprint --
-    # never the value.  A wrong passphrase, a passphrase that was never loaded
-    # and a passphrase the server loaded from somewhere other than the file the
-    # operator is reading all produce the same "incorrect passphrase" on the
-    # login screen, and this line is what separates them without the operator
-    # having to guess.  It goes to the log, which only the operator can read;
-    # it is deliberately not on any route.
-    _info = auth.describe()
-    print(
-        "[auth] RAG_AUTH_TOKEN "
-        f"loaded={_info.get('loaded')} source={_info.get('source')} "
-        f"fingerprint={_info.get('fingerprint') or '(none)'}"
-        + (f" duplicate_lines_in_file={_info['duplicate_lines_in_file']}" if _info.get("duplicate_lines_in_file") else "")
-        + (" [environment shadows backend/.env]" if _info.get("shadowed_file_value") else ""),
-        flush=True,
-    )
-    if not _info.get("loaded"):
-        print(
-            "[auth] WARNING: no passphrase is configured, so every route except "
-            "/health and /auth/* is refused.  Set RAG_AUTH_TOKEN in backend/.env "
-            "or as a Codespaces secret, then re-run codespace/boot.sh.",
-            flush=True,
-        )
     await _attach_computer()
     yield
 
@@ -91,148 +67,13 @@ app = FastAPI(title="RAG Agents Backend", lifespan=lifespan)
 # process, so it does not need an exception here either.
 
 
-# --- who is allowed in ------------------------------------------------------
-# The Quick Tunnel puts this app on the open internet, and the Computer view is
-# a live keyboard-driven signed-in browser.  A trycloudflare.com URL is not a
-# secret, so every route that could touch the machine, the conversations or the
-# screen requires a session.  /health, /auth/* and the static UI stay open: the
-# first two are needed to log in, and the third is the login page itself.
-# Paths that must work before anybody has logged in: the health probe, the login
-# endpoints themselves, and the static assets that make up the login page.  The
-# catch-all UI at "/" is public for the same reason -- it *is* the login page.
-#
-# Deliberately absent: /websockify and /ws/screen.  The screen is the thing worth
-# protecting, and /ws/screen has an explicit check in its own handler because HTTP
-# middleware does not run for WebSocket upgrades.
-_PUBLIC_EXACT = frozenset({"/health", "/auth/login", "/auth/status", "/auth/logout"})
-_PUBLIC_PREFIXES = ("/assets/", "/favicon")
-
-
-def _is_public(path: str) -> bool:
-    if path in _PUBLIC_EXACT:
-        return True
-    return any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
-
-
-def _session_ok(request: Request) -> bool:
-    if not auth.enabled():
-        # No passphrase configured.  Refuse to serve rather than serve openly:
-        # a missing secret should stop the deployment, not silently disable the
-        # only thing protecting a signed-in browser.
-        return False
-    return auth.check_cookie(request.cookies.get("rag_session"))
-
-
-def _add_dev_session(request: Request, response, dev: bool) -> None:
-    """Give a development request the same cookie a passphrase login would.
-
-    Deliberately the identical cookie from the identical helper, so every
-    downstream check -- including the WebSocket ones, which cannot go through HTTP
-    middleware at all -- is satisfied by existing code and nothing gains a
-    development-only path of its own.
-
-    auth.enabled() is required, not incidental: with no passphrase configured
-    there is no key to sign with, and a deployment missing its secret is
-    supposed to fail closed rather than be handed a session.
-    """
-    if not dev or not auth.enabled() or _session_ok(request) or response.status_code >= 400:
-        return
-    response.headers.append(
-        "Set-Cookie", auth.session_cookie(auth._request_is_secure(request))
-    )
-
-
-@app.middleware("http")
-async def require_session(request: Request, call_next):
-    """Refuse unauthenticated HTTP requests to anything but the login page.
-
-    A Quick Tunnel is a public URL.  Without this, /threads, /file and the
-    agent tools would all be open to anyone who learned the link, so the
-    check has to live in front of the routes rather than inside each handler --
-    a new route added later would otherwise be public by default.
-    """
-    path = request.url.path
-    dev = auth.dev_session_allowed(request)
-    if _is_public(path):
-        response = await call_next(request)
-        _add_dev_session(request, response, dev)
-        return response
-    # Fail closed: no passphrase configured means nobody can be authenticated,
-    # so the route is refused rather than served.  An unconfigured secret must
-    # stop the deployment, not quietly disable the only thing standing between a
-    # public tunnel and a signed-in browser.
-    if auth.enabled() and _session_ok(request):
-        return await call_next(request)
-    # Development only: a browser on this machine, with the bypass explicitly
-    # enabled, gets a real session instead of the passphrase screen.  It is the
-    # ordinary rag_session cookie from the ordinary session_cookie(), so
-    # /threads, /ai/*, /screen/* and the /websockify and /ws/screen handlers are
-    # satisfied by their existing checks with no special cases anywhere -- the
-    # screen is not weakened here, it is reached the same way it always is.
-    # The tunnel cannot get in: see auth.is_local_request.
-    #
-    # auth.enabled() is part of the condition, not just of the cookie: a
-    # deployment with no passphrase is supposed to fail closed, and letting the
-    # bypass forward the request would serve it instead.
-    if dev and auth.enabled():
-        response = await call_next(request)
-        _add_dev_session(request, response, dev)
-        return response
-    # The SPA is served from "/", so an unauthenticated visitor is sent to the
-    # app itself and the frontend shows the login screen.  Anything else gets a
-    # plain 401, which is what a fetch() expects.
-    #
-    # This list is a *denylist*, which means a route added later is public until
-    # somebody remembers to add it here.  Computer control is the reason that is
-    # no longer acceptable: /ai/computer/start is a route that moves a real
-    # pointer on a real signed-in browser, and an unlisted prefix would put it on
-    # the open internet behind a Quick Tunnel.  Anything under /ai belongs in
-    # this list, and new API routes should be added to it in the same commit that
-    # creates them.
-    if path == "/" or not path.startswith(("/threads", "/sysinfo", "/file", "/cdp", "/computer", "/ai", "/screen", "/auth")):
-        return await call_next(request)
-    return JSONResponse(
-        {"ok": False, "error": "authentication required", "auth_required": True},
-        status_code=401,
-    )
-
-
-@app.get("/auth/status")
-async def auth_status(request: Request):
-    """Whether a passphrase is required, and whether this caller has one."""
-    return {
-        "auth_required": auth.enabled(),
-        "authenticated": _session_ok(request),
-    }
-
-
-class LoginBody(BaseModel):
-    passphrase: str = ""
-
-
-@app.post("/auth/login")
-async def auth_login(body: LoginBody, request: Request):
-    if not auth.enabled():
-        return JSONResponse(
-            {"ok": False, "error": "no passphrase is configured on the server"},
-            status_code=503,
-        )
-    if not auth.check_passphrase(body.passphrase):
-        # Deliberately vague: a message that distinguishes "wrong passphrase"
-        # from "no such user" helps someone guessing.
-        return JSONResponse({"ok": False, "error": "incorrect passphrase"}, status_code=401)
-    return JSONResponse(
-        {"ok": True},
-        headers={"Set-Cookie": auth.session_cookie(auth._request_is_secure(request))},
-    )
-
-
-@app.post("/auth/logout")
-async def auth_logout(request: Request):
-    return JSONResponse(
-        {"ok": True},
-        headers={"Set-Cookie": auth.cleared_cookie(auth._request_is_secure(request))},
-    )
+# NOTE: the passphrase gate, its session cookie, the login screen and
+# /auth/login|/status|logout were removed from this file at the owner's request.
+# The app is now served to anyone who can reach it, and the Quick Tunnel is a
+# public URL, so /file, /ai/*, /websockify and the Computer view (a live
+# keyboard-driven Chrome) are reachable by whoever finds the link.  There is no
+# authentication left to restore from here: the commit before the removal is in
+# git history if it is ever wanted back.
 
 
 class NewThreadBody(BaseModel):
@@ -537,7 +378,6 @@ async def screen_config(request: Request):
         # Lets the UI say the tunnel moved, or that it has been gone a while.
         "publicOrigin": origin,
         "publicUrlAgeSeconds": round(age, 1),
-        "authRequired": auth.enabled(),
     }
 
 
@@ -604,12 +444,6 @@ async def ws_websockify(websocket: WebSocket):
     process, so the RFB stream and 5900 stay on loopback and the tunnel is the
     only door.
     """
-    if not _session_ok(websocket):
-        # 1008 = policy violation.  Denying before accept() means the client
-        # gets a clean rejection rather than a screen that connects and then
-        # hangs, which is indistinguishable from a broken tunnel.
-        await websocket.close(code=1008)
-        return
     target = websockify_proxy.loopback_websockify_url(computer.websockify_port)
     await websockify_proxy.proxy_websockify(websocket, target)
 
@@ -622,9 +456,6 @@ async def ws_screen(websocket: WebSocket):
     development.  The socket carries raw RFB, so status and control stay on the
     HTTP routes above and the client never has to demultiplex two protocols.
     """
-    if not _session_ok(websocket):
-        await websocket.close(code=1008)
-        return
     target = _screen_endpoint()
     if target is None:
         await websocket.close(code=1008)
@@ -639,11 +470,8 @@ async def ws_screen(websocket: WebSocket):
 @app.websocket("/ws/{user_id}")
 async def ws_endpoint(websocket: WebSocket, user_id: str):
     # The app session is a control channel: it starts the computer, runs the
-    # agents and reads their conversations.  On a public tunnel it needs the
-    # same session cookie as everything else.
-    if not _session_ok(websocket):
-        await websocket.close(code=1008)
-        return
+    # agents and reads their conversations.  It used to require the same session
+    # cookie as everything else; there is no auth left on this socket.
     await websocket.accept()
     await websocket.send_json({"type": "connected", "user_id": user_id})
     active_thread = None

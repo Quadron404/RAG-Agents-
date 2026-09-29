@@ -36,16 +36,13 @@ passes through the model.
 
 ### In a Codespace (the real setup)
 
-Add one [Codespaces secret](https://github.com/settings/codespaces):
+There is nothing to configure. A quick tunnel needs no Cloudflare account, no
+domain and no access policy, and the app has no passphrase in front of it — so
+open the Codespace, run `codespace/boot.sh`, and take the
+`https://<random>.trycloudflare.com` URL from the log.
 
-| Secret | Value |
-| --- | --- |
-| `RAG_AUTH_TOKEN` | a long random passphrase, e.g. `openssl rand -base64 24` |
-
-That is the whole setup — no Cloudflare account, no domain, no tunnel to create
-and no access policy to write, because a quick tunnel needs none of them. Open the
-Codespace, take the `https://<random>.trycloudflare.com` URL from the log, and
-enter the passphrase.
+**That URL is the credential.** Anyone who has it has the app, the files and the
+screen. Don't post it, and restart the tunnel to revoke it.
 
 Full walkthrough, architecture notes and troubleshooting in
 [`codespace/README.md`](codespace/README.md).
@@ -57,7 +54,7 @@ Full walkthrough, architecture notes and troubleshooting in
 cd backend
 python -m venv .venv && .venv\Scripts\activate     # or: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env                                # add provider keys + RAG_AUTH_TOKEN
+cp .env.example .env                                # add provider keys
 python -m uvicorn app.main:app --reload --port 8000
 
 # frontend (second terminal)
@@ -70,9 +67,9 @@ With no tunnel running, `/screen/config` returns `mode: "bridge"` and the viewer
 talks to the backend's own relay at `/ws/screen`. That is the development path
 and needs no Cloudflare. The badge in the Computer view shows which route is live.
 
-`RAG_AUTH_TOKEN` is not optional: with no passphrase the app refuses every route
-and every WebSocket, so a forgotten secret stops the deployment rather than
-publishing a signed-in browser.
+There is no passphrase and no login step. The app serves every route, local and
+public, to whoever asks — so the only thing keeping a tunneled deployment
+private is the obscurity of the URL and the loopback binds behind it.
 
 Checks:
 
@@ -145,8 +142,8 @@ round-trips bytes in both directions, the RFB handshake in the live verifier is
 byte-correct against a canned x11vnc, and the isolation checks pass.
 
 Not yet verified: anything that needs the real machine — Chrome rendering,
-profile persistence across a Codespace rebuild, an end-to-end login through a
-live Quick Tunnel, and latency. Those need the Codespace and a `RAG_AUTH_TOKEN`.
+profile persistence across a Codespace rebuild, and latency. Those need the
+Codespace.
 
 `bash codespace/verify.sh`, run inside the Codespace, is what closes that gap.
 It asserts the whole path on the real machine and prints the URL to open, so

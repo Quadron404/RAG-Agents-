@@ -15,8 +15,10 @@
 # it (PUBLIC_URL_FILE) and the frontend re-reads it via /screen/config.  That is
 # the whole mechanism by which "the tunnel moved" becomes a non-event.
 #
-# The URL is deliberately not treated as a secret.  It is public by design; the
-# passphrase (RAG_AUTH_TOKEN) is what decides who gets in.
+# There is no passphrase in front of the app, so this URL is the credential:
+# anyone who has it has the app and the screen.  It is written to a world-
+# readable-ish file because the app and verify.sh both need to read it, not
+# because it is safe to share.  Restarting the tunnel is how you revoke it.
 set -uo pipefail
 
 CODESPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

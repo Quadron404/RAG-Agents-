@@ -57,11 +57,12 @@ export DESKTOP_LOG_DIR="${DESKTOP_LOG_DIR:-/tmp}"
 # prints a random https://<something>.trycloudflare.com origin on startup, which
 # changes on every restart, so nothing can be hardcoded anywhere.
 #
-# What protects the screen is therefore NOT the URL -- a trycloudflare hostname
-# turns up in DNS and proxy logs, and anyone who sees it can call the same
-# origin.  What protects it is the app's own session: RAG_AUTH_TOKEN mints a
-# cookie, and the app refuses /websockify without one.  The tunnel is only a
-# pipe; the passphrase is the lock.
+# What protects the screen is therefore NOT the URL as such -- a trycloudflare
+# hostname turns up in DNS and proxy logs, and anyone who sees it can call the
+# same origin.  The app used to add a passphrase (RAG_AUTH_TOKEN) on top; that
+# was removed at the owner's request, so the URL is now the credential and the
+# only way to revoke access is to restart the tunnel for a new one.  The
+# remaining boundary is the loopback bind below: only the app is ever published.
 export CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-cloudflared}"
 # Only the app is published.  5900 and 6080 stay on loopback forever.
 export TUNNEL_ORIGIN="http://127.0.0.1:$BACKEND_PORT"
