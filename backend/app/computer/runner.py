@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ..config import Settings
-from ..providers.base import LLMMessage
+from ..providers.base import LLMMessage, TextDelta
 from ..providers.router import ProviderUnavailable, Router
 from .commands import Bounds, Command, parse_command
 from .controller import ComputerError, RemoteComputer
@@ -173,9 +173,30 @@ class ComputerRunner:
         return messages
 
     async def _ask(self, messages: List[LLMMessage]) -> str:
+        """One model call, returning the reply as text.
+
+        Goes through Provider.stream(), which is the only method every provider
+        actually implements.  This used to call a non-existent ``provider.chat()``
+        and raise AttributeError on the first turn of every run, so the loop
+        never once reached a command: the test double had grown its own ``chat``
+        that no real provider has, and the suite passed against an interface that
+        did not exist outside the tests.  Streaming is also what the OpenRouter
+        endpoint is already used for, so this changes no wire behaviour.
+
+        Tool calls are ignored on purpose.  Computer control speaks the JSON text
+        protocol only, and a model that also emitted a tool call would have
+        nothing to execute it with.
+        """
         provider, model = self.router.resolve("computer")
-        reply = await asyncio.wait_for(provider.chat(messages, model=model), timeout=120.0)
-        return reply.content if hasattr(reply, "content") else str(reply)
+        parts: List[str] = []
+
+        async def drain() -> None:
+            async for event in provider.stream(messages, [], model):
+                if isinstance(event, TextDelta):
+                    parts.append(event.content)
+
+        await asyncio.wait_for(drain(), timeout=120.0)
+        return "".join(parts)
 
     async def _execute(self, run: ComputerRun) -> None:
         run.status = STATUS_OBSERVING

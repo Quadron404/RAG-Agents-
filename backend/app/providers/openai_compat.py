@@ -6,6 +6,7 @@ from typing import AsyncIterator, List
 import httpx
 
 from .base import (
+    Done,
     LLMEvent,
     LLMMessage,
     Provider,

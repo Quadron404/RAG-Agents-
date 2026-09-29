@@ -29,7 +29,7 @@ from app.computer.commands import (  # noqa: E402
     parse_command,
 )
 from app.computer.prompt import COMPUTER_CONTROL_PROMPT  # noqa: E402
-from app.providers.base import LLMMessage  # noqa: E402
+from app.providers.base import Done, LLMMessage, TextDelta  # noqa: E402
 
 SCREEN = Bounds(width=1280, height=800)
 
@@ -259,22 +259,26 @@ class TestUserMessageImages(unittest.TestCase):
 
 
 class FakeProvider:
-    """Replays a scripted list of replies and records what it was asked."""
+    """Replays a scripted list of replies and records what it was asked.
+
+    Implements ``stream()``, not a ``chat()`` of its own inventing.  The double
+    used to expose ``chat()`` while every real provider only ever had
+    ``stream()``, so the whole suite passed green against a call the production
+    path could not make and the loop died on its first turn.  A double that
+    only implements the real interface cannot hide a missing method again.
+    """
 
     def __init__(self, replies: List[str]) -> None:
         self.replies = list(replies)
         self.calls: List[List[LLMMessage]] = []
         self.models: List[str] = []
 
-    async def chat(self, messages, model=None):
+    async def stream(self, messages, tools, model):
         self.calls.append(list(messages))
         self.models.append(model)
         reply = self.replies.pop(0) if self.replies else '{"type":"done","message":"end"}'
-
-        class _R:
-            content = reply
-
-        return _R()
+        yield TextDelta(reply)
+        yield Done()
 
 
 class FakeComputer:
@@ -559,6 +563,306 @@ class TestProviderIsolation(unittest.TestCase):
         # No coordinates, no raw model output, no image data in the public view.
         self.assertNotIn("events", public)
         self.assertNotIn("raw_reply", blob)
+
+
+class TestProviderSurfaceIsReal(unittest.TestCase):
+    """The loop may only call methods the real providers actually have.
+
+    The loop once called ``provider.chat()``.  No provider implemented it --
+    ``Provider`` defines ``stream()`` and nothing else -- so every run raised
+    AttributeError on its first turn and never issued a command.  The whole
+    suite passed anyway, because the test double had grown its own ``chat()``.
+    These assert the seam from both sides: the real provider classes, and the
+    loop running against one of them.
+    """
+
+    def test_every_provider_implements_the_method_the_loop_calls(self):
+        from app.providers.anthropic import AnthropicProvider
+        from app.providers.base import Provider
+        from app.providers.gemini import GeminiProvider
+        from app.providers.mock import MockProvider
+        from app.providers.openai_compat import OpenAICompatProvider
+
+        for cls in (
+            Provider,
+            OpenAICompatProvider,
+            MockProvider,
+            AnthropicProvider,
+            GeminiProvider,
+        ):
+            self.assertTrue(
+                callable(getattr(cls, "stream", None)),
+                f"{cls.__name__} must implement stream()",
+            )
+            # Nothing may reintroduce a chat() the loop does not call.
+            self.assertFalse(
+                hasattr(cls, "chat"),
+                f"{cls.__name__} grew a chat() that the loop does not call",
+            )
+
+    def test_no_provider_references_a_name_it_never_imports(self):
+        """A missing import is a NameError only on the path that reaches it.
+
+        All three wire providers ended their stream with ``yield Done()`` while
+        none of them imported ``Done``, so a run blew up on the last line of the
+        response -- after the reply the caller actually wanted had already been
+        produced.  The real-provider test below caught it for OpenRouter; this
+        keeps the other two honest without needing live vendor credentials.
+        """
+        import ast
+        import builtins
+        from pathlib import Path
+
+        import app.providers as pkg
+
+        known = set(dir(builtins)) | {"annotations"}
+        offenders = []
+        for path in sorted(Path(pkg.__file__).parent.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            imported = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        imported.add(alias.asname or alias.name)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imported.add((alias.asname or alias.name).split(".")[0])
+            bound = {
+                n.name
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
+            bound |= {
+                n.id
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+            }
+            bound |= {
+                a.arg
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                for a in n.args.args + n.args.kwonlyargs
+            }
+            unresolved = sorted(
+                n.id
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Name)
+                and isinstance(n.ctx, ast.Load)
+                and n.id not in imported
+                and n.id not in bound
+                and n.id not in known
+            )
+            if unresolved:
+                offenders.append(f"{path.name}: {unresolved}")
+        self.assertEqual(offenders, [], "names used but never imported or defined")
+
+    def test_every_provider_ends_its_stream_with_a_resolvable_done(self):
+        """`Done` terminates the stream, so a provider that cannot name it is broken."""
+        import importlib
+        import inspect
+
+        from app.providers.anthropic import AnthropicProvider
+        from app.providers.gemini import GeminiProvider
+        from app.providers.mock import MockProvider
+        from app.providers.openai_compat import OpenAICompatProvider
+
+        for cls in (
+            OpenAICompatProvider,
+            MockProvider,
+            AnthropicProvider,
+            GeminiProvider,
+        ):
+            self.assertIn("Done(", inspect.getsource(cls.stream), f"{cls.__name__}.stream never yields Done()")
+            module = importlib.import_module(cls.__module__)
+            self.assertTrue(
+                hasattr(module, "Done"),
+                f"{cls.__module__} yields Done() but never imports it",
+            )
+
+
+    def test_ask_works_against_a_real_openai_compatible_provider(self):
+        """Drive _ask through a real provider, with only the HTTP layer faked."""
+        from app.computer.runner import ComputerRunner
+        from app.config import load_settings
+        from app.providers.openai_compat import OpenAICompatProvider
+        from app.providers.router import Router
+
+        reply = '{"type":"navigate","url":"https://example.com"}'
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                yield 'data: {"choices":[{"delta":{"content":"{\\"type\\":\\"navigate\\","}}]}'
+                yield 'data: {"choices":[{"delta":{"content":"\\"url\\":\\"https://example.com\\"}"}}]}'
+                yield "data: [DONE]"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def __init__(self, *a, **kw):
+                pass
+
+            def stream(self, *a, **kw):
+                return _Resp()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        import app.providers.openai_compat as mod
+
+        original = mod.httpx.AsyncClient
+        mod.httpx.AsyncClient = _Client
+        try:
+            settings = load_settings()
+            settings.openrouter_api_key = "sk-or-test"
+            settings.computer_provider = "openrouter"
+            settings.computer_model = "some/vision-model"
+            router = Router(
+                {
+                    "openrouter": OpenAICompatProvider(
+                        "openrouter", "sk-or-test", "https://openrouter.test/api/v1"
+                    )
+                },
+                settings,
+            )
+            runner = ComputerRunner(settings, router, db=None, manager=object())
+            text = asyncio.run(runner._ask([LLMMessage(role="user", content="go")]))
+        finally:
+            mod.httpx.AsyncClient = original
+
+        # The two streamed deltas are concatenated, so the JSON survives the split.
+        self.assertEqual(text, reply)
+        # And it is real: the strict parser accepts what came back.
+        command, error = parse_command(text, bounds=None, first_turn=True)
+        self.assertIsNotNone(command, f"the streamed reply did not parse: {error}")
+        self.assertEqual(command.url, "https://example.com")
+
+
+    def test_a_whole_run_works_against_a_real_provider(self):
+        """navigate -> click -> done, through the real loop and real provider.
+
+        Only the HTTP transport and the remote computer are faked.  This is the
+        shape the run has in production, and it is the check that was impossible
+        to write before: with the test double supplying its own ``chat()`` the
+        loop's only call to the model was never exercised against a provider
+        that ships in this repository.
+        """
+        import json as _json
+
+        import app.providers.openai_compat as mod
+        from app.computer.runner import ComputerRunner
+        from app.config import load_settings
+        from app.providers.openai_compat import OpenAICompatProvider
+        from app.providers.router import Router
+
+        replies = [
+            '{"type":"navigate","url":"https://x.com/compose/post"}',
+            '{"type":"click","x":512.0,"y":300.0,"reason":"the Post button"}',
+            '{"type":"done","message":"reached the compose box"}',
+        ]
+        turn = {"i": 0}
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                reply = replies[min(turn["i"], len(replies) - 1)]
+                turn["i"] += 1
+                mid = len(reply) // 2
+                # Split mid-token, the way a real stream arrives, so the loop
+                # has to join the halves back together.
+                for piece in (reply[:mid], reply[mid:]):
+                    yield "data: " + _json.dumps(
+                        {"choices": [{"delta": {"content": piece}}]}
+                    )
+                yield "data: [DONE]"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def __init__(self, *a, **kw):
+                pass
+
+            def stream(self, *a, **kw):
+                return _Resp()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Computer(FakeComputer):
+            async def screenshot(self):
+                self.screens += 1
+                # The real contract is (image, width, height), not a dict.
+                return "data:image/png;base64,QQ==", 1280, 800
+
+        async def drive():
+            original = mod.httpx.AsyncClient
+            mod.httpx.AsyncClient = _Client
+            try:
+                settings = load_settings()
+                settings.openrouter_api_key = "sk-or-test"
+                settings.computer_provider = "openrouter"
+                settings.computer_model = "some/vision-model"
+                settings.computer_max_steps = 5
+                router = Router(
+                    {
+                        "openrouter": OpenAICompatProvider(
+                            "openrouter", "sk-or-test", "https://openrouter.test/api/v1"
+                        )
+                    },
+                    settings,
+                )
+                runner = ComputerRunner(settings, router, db=None, manager=object())
+                fake = _Computer()
+                runner.computer = fake
+                run = await runner.start("open x and click Post")
+                handle = runner._tasks[run.task_id]
+                for _ in range(300):
+                    if handle.done():
+                        break
+                    await asyncio.sleep(0.01)
+                if not handle.done():
+                    handle.cancel()
+                return run, fake
+            finally:
+                mod.httpx.AsyncClient = original
+
+        run, fake = asyncio.run(drive())
+
+        self.assertEqual(run.status, "done", f"run failed: {run.message}")
+        self.assertEqual(
+            [a[0] for a in fake.actions], ["navigate", "click"], fake.actions
+        )
+        self.assertEqual(fake.actions[1], ("click", 512.0, 300.0))
+        # A screenshot is captured after each action, and never on turn one.
+        self.assertEqual(fake.screens, 2)
+        # Every step is recorded, so the run is auditable after the fact.
+        self.assertEqual([e.command.get("type") for e in run.events],
+                         ["navigate", "click", "done"])
+        # And the failure mode that started all this -- an empty event log --
+        # cannot come back.
+        self.assertTrue(run.events)
 
 
 async def _finish(runner, task: str):

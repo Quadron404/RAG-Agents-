@@ -6,12 +6,14 @@ from typing import AsyncIterator, List
 import httpx
 
 from .base import (
+    Done,
     LLMEvent,
     LLMMessage,
     Provider,
     TextDelta,
     ToolCall,
     ToolCallEvent,
+    ToolSchema,
     image_mime,
     tool_schema_openai,
     truncate,
