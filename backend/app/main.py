@@ -123,6 +123,25 @@ def _session_ok(request: Request) -> bool:
     return auth.check_cookie(request.cookies.get("rag_session"))
 
 
+def _add_dev_session(request: Request, response, dev: bool) -> None:
+    """Give a development request the same cookie a passphrase login would.
+
+    Deliberately the identical cookie from the identical helper, so every
+    downstream check -- including the WebSocket ones, which cannot go through HTTP
+    middleware at all -- is satisfied by existing code and nothing gains a
+    development-only path of its own.
+
+    auth.enabled() is required, not incidental: with no passphrase configured
+    there is no key to sign with, and a deployment missing its secret is
+    supposed to fail closed rather than be handed a session.
+    """
+    if not dev or not auth.enabled() or _session_ok(request) or response.status_code >= 400:
+        return
+    response.headers.append(
+        "Set-Cookie", auth.session_cookie(auth._request_is_secure(request))
+    )
+
+
 @app.middleware("http")
 async def require_session(request: Request, call_next):
     """Refuse unauthenticated HTTP requests to anything but the login page.
@@ -133,14 +152,32 @@ async def require_session(request: Request, call_next):
     a new route added later would otherwise be public by default.
     """
     path = request.url.path
+    dev = auth.dev_session_allowed(request)
     if _is_public(path):
-        return await call_next(request)
+        response = await call_next(request)
+        _add_dev_session(request, response, dev)
+        return response
     # Fail closed: no passphrase configured means nobody can be authenticated,
     # so the route is refused rather than served.  An unconfigured secret must
     # stop the deployment, not quietly disable the only thing standing between a
     # public tunnel and a signed-in browser.
     if auth.enabled() and _session_ok(request):
         return await call_next(request)
+    # Development only: a browser on this machine, with the bypass explicitly
+    # enabled, gets a real session instead of the passphrase screen.  It is the
+    # ordinary rag_session cookie from the ordinary session_cookie(), so
+    # /threads, /ai/*, /screen/* and the /websockify and /ws/screen handlers are
+    # satisfied by their existing checks with no special cases anywhere -- the
+    # screen is not weakened here, it is reached the same way it always is.
+    # The tunnel cannot get in: see auth.is_local_request.
+    #
+    # auth.enabled() is part of the condition, not just of the cookie: a
+    # deployment with no passphrase is supposed to fail closed, and letting the
+    # bypass forward the request would serve it instead.
+    if dev and auth.enabled():
+        response = await call_next(request)
+        _add_dev_session(request, response, dev)
+        return response
     # The SPA is served from "/", so an unauthenticated visitor is sent to the
     # app itself and the frontend shows the login screen.  Anything else gets a
     # plain 401, which is what a fetch() expects.

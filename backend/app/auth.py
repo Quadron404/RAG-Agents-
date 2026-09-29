@@ -72,6 +72,61 @@ def describe() -> dict:
     return _config.describe("RAG_AUTH_TOKEN")
 
 
+# --- development-only: skip the passphrase when the browser is on this machine -
+#
+# Opt-in, default off, and scoped to a request that can only have come from
+# loopback.  It is here so the UI can be worked on without a passphrase screen in
+# the way; it is not, and must not become, a way to reach the public tunnel.
+#
+# The locality test is on the Host header and NOT on request.client.host, and
+# that is the whole subtlety.  cloudflared runs on this machine and dials
+# 127.0.0.1:$BACKEND_PORT (codespace/env.sh, TUNNEL_ORIGIN), so *every public
+# request arrives from loopback too*.  A client.host check would hand the public
+# trycloudflare.com URL a valid session for free and silently delete the only
+# thing protecting a signed-in browser.  Host is the discriminator that actually
+# holds: cloudflared sets Host to the tunnel hostname, and the app is bound to
+# 127.0.0.1, so a request whose Host is localhost can only have come from a
+# process on this machine.
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def dev_auto_login_enabled() -> bool:
+    """True when the developer asked for the local bypass. Off unless set."""
+    return (os.environ.get("RAG_DEV_AUTO_LOGIN") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def is_local_request(request) -> bool:
+    """True when this request was addressed to this machine by name.
+
+    Reads the raw Host header.  X-Forwarded-Host is deliberately ignored: it is
+    set by whatever is in front, which is exactly the untrusted party.
+    """
+    host = (request.headers.get("host") or "").strip().lower()
+    if not host:
+        return False
+    # Strip the port, and unwrap the brackets IPv6 literals arrive in.
+    if host.startswith("["):
+        host = host.split("]", 1)[0] + "]"
+    else:
+        host = host.rsplit(":", 1)[0] if ":" in host else host
+    return host in _LOCAL_HOSTS
+
+
+def dev_session_allowed(request) -> bool:
+    """Whether to hand this request a session without asking for a passphrase.
+
+    Requires *both* the opt-in flag and a loopback Host.  Either alone is not
+    enough: the flag alone would open the public tunnel, and the Host alone would
+    open a deployment nobody had opted in.
+    """
+    return dev_auto_login_enabled() and is_local_request(request)
+
+
 def enabled() -> bool:
     """True when a passphrase is configured and sessions must be checked."""
     return _token() is not None

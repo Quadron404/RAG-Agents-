@@ -27,6 +27,10 @@ TESTS = (
     # about which parser won in a real process, so the check has to be a real
     # process.  Slow, so it runs after the in-process auth checks.
     "test_auth_live",
+    # The local development bypass, with the tunnel as the thing being held shut.
+    # Placed next to the other auth checks because its whole job is to prove the
+    # passphrase gate still holds for everything that is not a local browser.
+    "test_dev_autologin",
     "test_ui_served",
     "test_screen_url",
     "test_screen_isolation",
