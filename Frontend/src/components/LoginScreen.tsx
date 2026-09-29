@@ -150,6 +150,13 @@ function NoPassphraseScreen() {
         <pre className="login__code">
           {`printf 'RAG_AUTH_TOKEN=%s\\n' 'your-passphrase' >> backend/.env\nbash codespace/boot.sh`}
         </pre>
+        <p className="login__sub">
+          Rejected rather than accepted? The server logs which value it loaded and
+          where from, without ever printing the passphrase:
+        </p>
+        <pre className="login__code">
+          {`cd backend && .venv/bin/python -m app.authdiag --check 'the-passphrase-you-typed'`}
+        </pre>
         <button className="btn" onClick={() => void retry()} disabled={retrying}>
           {retrying ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
           Check again

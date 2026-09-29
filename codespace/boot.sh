@@ -99,9 +99,20 @@ else
   # same machine; loopback is the whole route.
   (
     cd "$REPO_ROOT/backend" || exit 1
-    set -a
-    [ -f .env ] && . ./.env
-    set +a
+    # backend/.env is deliberately NOT sourced here.
+    #
+    # It used to be: `set -a; . ./.env; set +a`, which made *bash* the authority
+    # on what RAG_AUTH_TOKEN was.  Bash and config.py disagreed about quotes,
+    # unquoted spaces, `$` expansion, and -- fatally -- which of several
+    # RAG_AUTH_TOKEN lines won, because bash takes the last and Python took the
+    # first.  So the login endpoint compared against a value that appeared
+    # nowhere in the file the operator was reading, and the only symptom was
+    # "incorrect passphrase" for a passphrase that was correct on screen.
+    #
+    # The backend loads the file itself now, once, in config._load_dotenv.
+    # Codespaces secrets still reach the process the normal way: `exec` inherits
+    # this shell's environment, and the real environment still wins over the
+    # file.  Only the second, competing parser is gone.
     exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
   ) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
   echo $! > "$RUN_DIR/backend.pid"

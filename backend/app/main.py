@@ -54,6 +54,29 @@ async def _attach_computer() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Which passphrase this process loaded, from where, and its fingerprint --
+    # never the value.  A wrong passphrase, a passphrase that was never loaded
+    # and a passphrase the server loaded from somewhere other than the file the
+    # operator is reading all produce the same "incorrect passphrase" on the
+    # login screen, and this line is what separates them without the operator
+    # having to guess.  It goes to the log, which only the operator can read;
+    # it is deliberately not on any route.
+    _info = auth.describe()
+    print(
+        "[auth] RAG_AUTH_TOKEN "
+        f"loaded={_info.get('loaded')} source={_info.get('source')} "
+        f"fingerprint={_info.get('fingerprint') or '(none)'}"
+        + (f" duplicate_lines_in_file={_info['duplicate_lines_in_file']}" if _info.get("duplicate_lines_in_file") else "")
+        + (" [environment shadows backend/.env]" if _info.get("shadowed_file_value") else ""),
+        flush=True,
+    )
+    if not _info.get("loaded"):
+        print(
+            "[auth] WARNING: no passphrase is configured, so every route except "
+            "/health and /auth/* is refused.  Set RAG_AUTH_TOKEN in backend/.env "
+            "or as a Codespaces secret, then re-run codespace/boot.sh.",
+            flush=True,
+        )
     await _attach_computer()
     yield
 

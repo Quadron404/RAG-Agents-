@@ -22,12 +22,17 @@ set -uo pipefail
 CODESPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$CODESPACE_DIR/env.sh"
 
-PASS=0; FAIL=0; SKIP=0
+PASS=0; FAIL=0; SKIP=0; WARN=0
 FAILED_CHECKS=()
 
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); }
 skip() { printf '  \033[33mSKIP\033[0m  %s\n' "$1"; SKIP=$((SKIP+1)); }
+# A warning is neither: the deployment works, but something about it is a trap.
+# A backend/.env with two RAG_AUTH_TOKEN lines is exactly that -- the server uses
+# the first, which is why "the passphrase in the file is rejected" has to be
+# reported here rather than discovered at the login screen.
+warn() { printf '  \033[35mWARN\033[0m  %s\n' "$1"; WARN=$((WARN+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 # Check that a port is bound to loopback and nothing else.  0.0.0.0 or :: here
@@ -162,13 +167,27 @@ PUBLIC_URL=""
 # Note this is a fallback for the check only.  It is read here, in the
 # verifier's own process, and is never passed to the app: the app gets the token
 # through its own environment and hands out a cookie instead.
+#
+# First line, not last.  config._load_dotenv is the only parser the backend has
+# (boot.sh no longer sources this file as a shell script, which is what used to
+# make *bash* the authority and put a last-wins value in the running server that
+# did not match the first line this script reads).  If this file has more than
+# one RAG_AUTH_TOKEN line, say so rather than quietly testing the first one.
 AUTH_TOKEN="${RAG_AUTH_TOKEN:-}"
+AUTH_ENV_VAR_SET=0
+[ -n "$AUTH_TOKEN" ] && AUTH_ENV_VAR_SET=1
+AUTH_DUP_LINES=0
+if [ -f "$REPO_ROOT/backend/.env" ]; then
+  AUTH_DUP_LINES="$(grep -c '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" || true)"
+fi
 if [ -z "$AUTH_TOKEN" ] && [ -f "$REPO_ROOT/backend/.env" ]; then
-  # head, not tail: config.py populates the environment with
-  # `if key not in os.environ`, so the *first* RAG_AUTH_TOKEN in the file is the
-  # one the app actually uses.  Reading the last one here would make the
-  # verifier test a different passphrase than the server is running.
   AUTH_TOKEN="$(grep -s '^RAG_AUTH_TOKEN=' "$REPO_ROOT/backend/.env" | head -n1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
+fi
+if [ "$AUTH_DUP_LINES" -gt 1 ] 2>/dev/null; then
+  warn "backend/.env has $AUTH_DUP_LINES RAG_AUTH_TOKEN lines; the backend uses the first. Remove the others so the file says what the server does."
+fi
+if [ "$AUTH_ENV_VAR_SET" -eq 1 ] && [ -f "$REPO_ROOT/backend/.env" ]; then
+  warn "RAG_AUTH_TOKEN is set in this shell's environment, so the backend uses that, not backend/.env"
 fi
 
 if [ -n "$PUBLIC_URL" ]; then
@@ -493,6 +512,9 @@ fi
 
 # ---------------------------------------------------------------------------
 printf '\033[1mResult: %d passed, %d failed, %d skipped\033[0m\n' "$PASS" "$FAIL" "$SKIP"
+if [ "$WARN" -gt 0 ]; then
+  printf '\033[1m%d warning(s) above -- the deployment works, but read them before trusting a login.\033[0m\n' "$WARN"
+fi
 if [ "$FAIL" -gt 0 ]; then
   printf '\nFailures:\n'
   for c in "${FAILED_CHECKS[@]}"; do printf '  - %s\n' "$c"; done

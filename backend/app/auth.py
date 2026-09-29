@@ -33,6 +33,14 @@ import secrets
 import time
 from typing import Optional
 
+# Imported for the side effect of loading backend/.env into os.environ.  This
+# module reads the token straight from the environment, so if it were imported
+# before config, every call below would see an empty environment and report "no
+# passphrase configured" for a deployment that has one.  Importing it here makes
+# the load order irrelevant instead of depending on how main.py happens to sort
+# its imports.  config does not import auth, so this cannot cycle.
+from . import config as _config  # noqa: F401
+
 # The cookie's value never leaves the server: it is a random session id paired
 # with an HMAC of the expiry, so a stolen cookie cannot be replayed indefinitely
 # and cannot be forged without the signing key.
@@ -41,8 +49,27 @@ _SESSION_TTL = 60 * 60 * 12  # 12 hours: a working day, not a standing grant.
 
 
 def _token() -> Optional[str]:
+    """The one passphrase this deployment compares against.
+
+    Read live from the environment on every call rather than cached at import,
+    because config._load_dotenv populates the environment at import time and
+    tests set the variable directly.  There is exactly one parser for
+    backend/.env (config._load_dotenv), so this cannot disagree with
+    Settings.auth_token about what the file says.
+    """
     value = (os.environ.get("RAG_AUTH_TOKEN") or "").strip()
     return value or None
+
+
+def describe() -> dict:
+    """A safe description of the configured passphrase. Never the value itself.
+
+    See config.describe: loaded (bool), source, a short SHA-256 fingerprint, and
+    whether the environment is shadowing a different value in backend/.env.  A
+    wrong passphrase and a passphrase that was never loaded are both reported by
+    the login screen as "incorrect passphrase"; this is what tells them apart.
+    """
+    return _config.describe("RAG_AUTH_TOKEN")
 
 
 def enabled() -> bool:
