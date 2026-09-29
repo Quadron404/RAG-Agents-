@@ -58,6 +58,30 @@ class Settings:
     browser_provider: str = field(default_factory=lambda: _get("BROWSER_PROVIDER", "mock"))
     browser_model: str = field(default_factory=lambda: _get("BROWSER_MODEL", "gemini-2.5-pro"))
 
+    # --- Computer control (the AI driving the real remote browser) ----------
+    # A role of its own, separate from commander/worker/browser, because it has
+    # its own provider, its own model and its own prompt: the computer-control
+    # model is looking at screenshots of a screen, not at text.
+    computer_provider: str = field(default_factory=lambda: _get("COMPUTER_PROVIDER", "openrouter"))
+    computer_model: str = field(default_factory=lambda: _get("OPENROUTER_MODEL", ""))
+
+    # The key never leaves the server.  It is read from the environment (a
+    # Codespaces secret, or backend/.env) and is only ever used to build the
+    # Authorization header inside the provider.  No route, no config endpoint
+    # and no frontend bundle ever sees it.
+    openrouter_api_key: str = field(default_factory=lambda: _get("OPENROUTER_API_KEY", "").strip())
+    openrouter_base_url: str = field(
+        default_factory=lambda: _get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    )
+
+    # The loop's own limits, all deliberately small: a control loop that can run
+    # a hundred clicks is a control loop that can empty someone's wallet or
+    # navigate somewhere it should not.
+    computer_max_steps: int = field(default_factory=lambda: int(_get("COMPUTER_MAX_STEPS", "12")))
+    computer_max_json_retries: int = field(default_factory=lambda: int(_get("COMPUTER_MAX_JSON_RETRIES", "2")))
+    computer_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS", "1400")))
+    computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "900")))
+
     # --- The remote computer (GitHub Codespace) ----------------------------
     # There is no hypervisor any more.  The "computer" is the Codespace
     # itself: a real Linux box running real Google Chrome on a real X display.

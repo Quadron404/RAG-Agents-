@@ -199,3 +199,46 @@ export async function ensureDisplay(): Promise<void> {
 export async function restartRemoteBrowser(): Promise<void> {
   await apiFetch("/screen/browser/restart", { method: "POST" });
 }
+
+/* --- computer control ------------------------------------------------------ */
+
+/**
+ * The status the indicator renders.  The backend sends only this and a message:
+ * no coordinates, no model output, and never the API key, because this is the
+ * half of computer control that lives in the browser.
+ */
+export type ComputerStatus = "idle" | "observing" | "controlling" | "done" | "error";
+
+export interface ComputerRun {
+  task_id: string;
+  status: ComputerStatus;
+  step: number;
+  message: string;
+  url: string;
+  steps: number;
+  running: boolean;
+  done: boolean;
+}
+
+/** Hand a task to the model.  Returns as soon as the run is queued. */
+export async function startComputerTask(task: string, threadId = ""): Promise<ComputerRun> {
+  const res = await apiFetch("/ai/computer/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ task, thread_id: threadId }),
+  });
+  const data = (await res.json()) as ComputerRun & { error?: string };
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+export async function fetchComputerTask(taskId: string): Promise<ComputerRun> {
+  const res = await apiFetch(`/ai/computer/${taskId}`);
+  const data = (await res.json()) as ComputerRun & { error?: string };
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+export async function stopComputerTask(taskId: string): Promise<void> {
+  await apiFetch(`/ai/computer/${taskId}/stop`, { method: "POST" });
+}

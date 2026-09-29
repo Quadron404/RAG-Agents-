@@ -32,7 +32,29 @@ class OpenAICompatProvider(Provider):
             if m.role == "system":
                 out.append({"role": "system", "content": m.content})
             elif m.role == "user":
-                out.append({"role": "user", "content": m.content})
+                # A user turn may carry the screenshot.  The OpenAI wire format
+                # only accepts an image inside a user turn as a content *part*,
+                # so once there is an image this becomes a list; a plain text
+                # turn stays a plain string, which is what providers without
+                # vision expect and costs nothing.
+                if m.images:
+                    parts: list = []
+                    if m.content:
+                        parts.append({"type": "text", "text": m.content})
+                    for img in m.images:
+                        if img:
+                            parts.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{image_mime(img)};base64,{img}",
+                                        "detail": "high",
+                                    },
+                                }
+                            )
+                    out.append({"role": "user", "content": parts})
+                else:
+                    out.append({"role": "user", "content": m.content})
             elif m.role == "assistant":
                 msg = {"role": "assistant", "content": m.content or None}
                 if m.tool_calls:

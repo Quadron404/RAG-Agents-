@@ -43,6 +43,20 @@ class Database:
                     updated_at REAL,
                     PRIMARY KEY (user_id, key)
                 );
+                -- One row per computer-control run, written when the run
+                -- finishes.  Only the summary and the per-turn event log: no
+                -- screenshot bytes, so a long run costs a few kilobytes rather
+                -- than tens of megabytes, and nothing here can rebuild a picture
+                -- of the user's screen.
+                CREATE TABLE IF NOT EXISTS computer_runs (
+                    task_id TEXT PRIMARY KEY,
+                    thread_id TEXT,
+                    status TEXT,
+                    steps INTEGER,
+                    summary TEXT,
+                    events TEXT,
+                    created_at REAL
+                );
                 """
             )
             self.conn.commit()
@@ -85,6 +99,68 @@ class Database:
                 "SELECT * FROM messages WHERE thread_id = ? ORDER BY id DESC LIMIT ?", (thread_id, tail)
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    def save_computer_run(
+        self,
+        thread_id: str,
+        task_id: str,
+        summary: Dict[str, object],
+        events: Optional[List[Dict[str, object]]] = None,
+    ) -> None:
+        """Record a finished computer-control run.
+
+        The per-turn events keep the command, the result, any error and the
+        screenshot's dimensions and hash -- enough to answer "where did that
+        click go" from the log, without storing the image itself.
+        """
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO computer_runs (task_id, thread_id, status, steps, summary, events, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(task_id) DO UPDATE SET status = excluded.status, "
+                "steps = excluded.steps, summary = excluded.summary, events = excluded.events",
+                (
+                    task_id,
+                    thread_id,
+                    str(summary.get("status", "")),
+                    int(summary.get("steps", 0) or 0),
+                    json.dumps(summary),
+                    json.dumps(events or []),
+                    time.time(),
+                ),
+            )
+            self.conn.commit()
+
+    def get_computer_run(self, task_id: str) -> Optional[Dict[str, object]]:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT * FROM computer_runs WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        for field in ("summary", "events"):
+            try:
+                record[field] = json.loads(record.get(field) or "{}")
+            except Exception:
+                record[field] = {}
+        return record
+
+    def list_computer_runs(self, thread_id: str, tail: int = 20) -> List[Dict[str, object]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM computer_runs WHERE thread_id = ? ORDER BY created_at DESC LIMIT ?",
+                (thread_id, tail),
+            ).fetchall()
+        out = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["summary"] = json.loads(record.get("summary") or "{}")
+            except Exception:
+                record["summary"] = {}
+            out.append(record)
+        return out
 
     def remember(self, user_id: str, key: str, value: str) -> None:
         with self.lock:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 import mimetypes
 
 def _default_workspace() -> str:
@@ -1212,6 +1212,171 @@ def _pdf_text(path: str) -> str:
     return "(PDF — text extraction not available; open it to download)"
 
 
+# ---------------------------------------------------------------------------
+# Computer control: the primitives an AI agent drives the real browser with.
+#
+# Two decisions here matter more than the code.
+#
+# The screenshot is the X display, not the page.  CDP can capture a page
+# viewport, but that image is in *viewport* coordinates while the address bar and
+# tab strip are not in it at all -- so a model shown that picture would be
+# reasoning about a browser it cannot see the controls of.  x11grab returns the
+# same framebuffer the user is looking at over VNC, tab bar and all.
+#
+# The click is an X event, not a CDP one, and that is what keeps coordinates
+# honest.  A CDP Input.dispatchMouseEvent takes viewport CSS pixels, so it could
+# not honour a coordinate read off a full-display screenshot.  xdotool moves the
+# real pointer on the real display, which is the same input path a human's mouse
+# takes: Chrome receives a genuine click, and it is visibly so in the VNC
+# session and in the next screenshot.
+#
+# Both are read-only with respect to the user's own machine.  Nothing here can
+# reach anything but the local X display the agent already owns.
+# ---------------------------------------------------------------------------
+
+_CAPTURE_LOCK = threading.Lock()
+_SEARCH_ENGINE = os.environ.get("COMPUTER_SEARCH_URL", "https://duckduckgo.com/?q=")
+
+
+def _xdotool(*args: str, timeout: int = 10) -> tuple:
+    import subprocess
+
+    return subprocess.run(
+        ["xdotool", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, "DISPLAY": DESKTOP_DISPLAY},
+    )
+
+
+def _capture_display(draw_mouse: bool = True) -> dict:
+    """One JPEG of the real X display, as base64 with its pixel size.
+
+    `-draw_mouse 1` composites the pointer into the image so the model can see
+    where it last left the cursor, which is the difference between a click and a
+    guess.  The live VNC stream deliberately does the opposite -- a drawn cursor
+    on a 60fps stream is a constant repaint of the same pixels.
+    """
+    import subprocess
+
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    # Serialised on purpose: two concurrent x11grab processes on one display is
+    # the fastest way to make the agent unresponsive for no benefit, and only
+    # ever one agent is driving it.
+    with _CAPTURE_LOCK:
+        cmd = [
+            "ffmpeg", "-loglevel", "error", "-nostdin",
+            "-f", "x11grab",
+            "-video_size", DESKTOP_SIZE,
+            "-draw_mouse", "1" if draw_mouse else "0",
+            "-i", DESKTOP_DISPLAY,
+            "-frames:v", "1",
+            "-q:v", "3",
+            "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+        ]
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=25,
+                env={**os.environ, "DISPLAY": DESKTOP_DISPLAY},
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "screen capture timed out"}
+        except FileNotFoundError:
+            return {"ok": False, "error": "ffmpeg is not installed on the remote computer"}
+    if r.returncode != 0 or not r.stdout:
+        return {
+            "ok": False,
+            "error": (r.stderr or b"capture failed").decode("utf-8", "replace")[:300],
+        }
+    width, _, height = DESKTOP_SIZE.partition("x")
+    return {
+        "ok": True,
+        "image": base64.b64encode(r.stdout).decode("ascii"),
+        "mime": "image/jpeg",
+        "width": int(width or 0),
+        "height": int(height or 0),
+    }
+
+
+def _computer_click(x: int, y: int) -> dict:
+    """Move the real pointer and left-click, in one X server round trip."""
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    try:
+        move = _xdotool("mousemove", "--sync", str(x), str(y))
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not move the pointer: {exc}"}
+    if move.returncode != 0:
+        return {"ok": False, "error": (move.stderr or "mousemove failed").strip()[:200]}
+    try:
+        click = _xdotool("click", "1")
+    except Exception as exc:
+        return {"ok": False, "error": f"could not click: {exc}"}
+    if click.returncode != 0:
+        return {"ok": False, "error": (click.stderr or "click failed").strip()[:200]}
+    return {"ok": True, "x": x, "y": y}
+
+
+def _safe_navigate(url: str) -> dict:
+    """Point the real Chrome at a URL.
+
+    Only http and https reach the browser.  A model that returned
+    `file:///...` or `javascript:` is not navigating, it is trying to read the
+    user's disk or run code in the page, and neither is a thing this loop does.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return {"ok": False, "error": f"refusing to navigate to {parsed.scheme or 'no'} scheme"}
+    wsurl = _cdp_target_wsurl()
+    if not wsurl:
+        return {"ok": False, "error": "chrome is not running on the debug port"}
+    try:
+        import websocket
+
+        ws = _cdp_connect(wsurl)
+        try:
+            _cdp_send(ws, 1, "Page.navigate", {"url": url})
+            for _ in range(40):
+                raw = ws.recv()
+                if not raw:
+                    continue
+                msg = json.loads(raw)
+                if msg.get("id") == 1:
+                    result = msg.get("result") or {}
+                    if result.get("errorText"):
+                        return {"ok": False, "error": str(result["errorText"])}
+                    return {"ok": True, "url": url}
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        return {"ok": False, "error": f"navigation failed: {exc}"}
+    return {"ok": False, "error": "navigation produced no response"}
+
+
+def _computer_search(query: str) -> dict:
+    """Search, in the remote browser, by navigating it to the search engine.
+
+    This is a navigation on purpose.  Typing into the search box would need a
+    click whose target the model has not been shown yet -- on the first turn it
+    has seen no screenshot at all, so there is no coordinate to aim at.  Going
+    straight to the engine's query URL is the same search the user would get, and
+    it is reachable from turn one.
+    """
+    clean = (query or "").strip()
+    if not clean:
+        return {"ok": False, "error": "empty search query"}
+    return _safe_navigate(_SEARCH_ENGINE + quote(clean, safe=""))
+
+
 def sysinfo() -> dict:
     def _mem():
         try:
@@ -1268,6 +1433,7 @@ def sysinfo() -> dict:
         except Exception:
             pass
         return os.uname().sysname if hasattr(os, "uname") else "unknown"
+
 
     def _browser() -> dict:
         """Is the real desktop Chrome up?  Port + recorded pid, nothing else.
@@ -1513,6 +1679,77 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/cdp/input":
             _enqueue_cdp_input(req)
             self._json(202, {"ok": True, "queued": True})
+            return
+        # --- computer control -------------------------------------------------
+        # Driven by the AI loop in backend/app/computer.  Every one of these acts
+        # on the local X display or the local Chrome and nothing else; the agent
+        # is still bound to loopback and still behind the same auth, so this adds
+        # routes and not a door.
+        if path == "/computer/screen":
+            self._json(200, _capture_display(bool(req.get("draw_mouse", True))))
+            return
+        if path == "/computer/click":
+            try:
+                x = int(req.get("x"))
+                y = int(req.get("y"))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "x and y must be integers"})
+                return
+            width, height = _desktop_width(), _desktop_height()
+            if not (0 <= x < width and 0 <= y < height):
+                self._json(400, {"ok": False, "error": f"outside the {width}x{height} display"})
+                return
+            self._json(200, _computer_click(x, y))
+            return
+        if path == "/computer/navigate":
+            url = str(req.get("url") or "").strip()
+            if not url:
+                self._json(400, {"ok": False, "error": "url is required"})
+                return
+            self._json(200, _safe_navigate(url))
+            return
+        if path == "/computer/search":
+            self._json(200, _computer_search(str(req.get("query") or "")))
+            return
+        if path == "/computer/state":
+            url, title = "", ""
+            wsurl = _cdp_target_wsurl()
+            if wsurl:
+                try:
+                    import websocket
+
+                    ws = _cdp_connect(wsurl)
+                    try:
+                        _cdp_send(ws, 1, "Runtime.evaluate",
+                                  {"expression": "JSON.stringify({u:location.href,t:document.title})",
+                                   "returnByValue": True})
+                        for _ in range(30):
+                            raw = ws.recv()
+                            if not raw:
+                                continue
+                            msg = json.loads(raw)
+                            if msg.get("id") == 1:
+                                val = (msg.get("result") or {}).get("result", {}).get("value", "{}")
+                                try:
+                                    info = json.loads(val)
+                                except Exception:
+                                    info = {}
+                                url, title = info.get("u", ""), info.get("t", "")
+                                break
+                    finally:
+                        try:
+                            ws.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            self._json(200, {
+                "ok": True,
+                "url": url,
+                "title": title,
+                "width": _desktop_width(),
+                "height": _desktop_height(),
+            })
             return
         if path in ("/display/restart", "/display/chromium/restart", "/display/ensure"):
             try:

@@ -875,3 +875,187 @@
     animation: none !important;
   }
 }
+
+/* ---- computer control ----------------------------------------------------
+   The bar that tells the user the AI is using their browser.
+
+   Sits just above the dock, inside the chrome, and never over the window stack.
+   Two rules drive everything here: it must not obscure the screen the model is
+   acting on, and it must not steal focus or block input -- a user who cannot
+   interrupt a machine that is clicking on their behalf is not being supervised,
+   they are being held at gunpoint.  The input keeps working while a run is in
+   flight so a task can be queued rather than lost. */
+
+.cc-bar {
+  position: absolute;
+  z-index: 56;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(720px, calc(100% - 24px));
+  padding: 7px 10px 7px 12px;
+  border-radius: 16px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur-lg)) saturate(1.6);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 16px 36px -16px rgba(0, 0, 0, 0.55);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.cc-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.cc-dot--observing {
+  background: #3b82f6;
+  animation: cc-pulse 1.4s ease-in-out infinite;
+}
+
+/* The one state that needs to be unmissable: the machine is moving the
+   pointer. A slow pulse rather than a fast blink, because it sits on screen for
+   as long as the task takes. */
+.cc-dot--controlling {
+  background: #f59e0b;
+  animation: cc-pulse 0.9s ease-in-out infinite;
+}
+
+.cc-dot--done {
+  background: #22c55e;
+}
+
+.cc-dot--error {
+  background: #ef4444;
+}
+
+@keyframes cc-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-dot--observing,
+  .cc-dot--controlling {
+    animation: none;
+  }
+}
+
+.cc-label {
+  flex: none;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.cc-message {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-steps {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--glass-2);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-stop {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: 9px;
+  background: var(--glass-2);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cc-stop:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.cc-form {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cc-input {
+  flex: 1 1 auto;
+  min-width: 120px;
+  padding: 5px 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  background: var(--glass-2);
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.cc-input::placeholder {
+  color: var(--muted);
+}
+
+.cc-input:focus-visible,
+.cc-go:focus-visible,
+.cc-stop:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+}
+
+.cc-go {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cc-go:disabled,
+.cc-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cc-error {
+  flex: none;
+  max-width: 260px;
+  overflow: hidden;
+  color: #ef4444;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .cc-bar {
+    bottom: 84px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+  }
+  .cc-error {
+    max-width: 100%;
+  }
+}

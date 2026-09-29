@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import auth
 from .agents.commander import Commander
+from .computer.runner import ComputerRunner
 from .config import Settings, load_settings
 from .db import Database
 from .providers.base import LLMMessage
@@ -120,7 +121,15 @@ async def require_session(request: Request, call_next):
     # The SPA is served from "/", so an unauthenticated visitor is sent to the
     # app itself and the frontend shows the login screen.  Anything else gets a
     # plain 401, which is what a fetch() expects.
-    if path == "/" or not path.startswith(("/threads", "/sysinfo", "/file", "/cdp", "/computer", "/screen", "/auth")):
+    #
+    # This list is a *denylist*, which means a route added later is public until
+    # somebody remembers to add it here.  Computer control is the reason that is
+    # no longer acceptable: /ai/computer/start is a route that moves a real
+    # pointer on a real signed-in browser, and an unlisted prefix would put it on
+    # the open internet behind a Quick Tunnel.  Anything under /ai belongs in
+    # this list, and new API routes should be added to it in the same commit that
+    # creates them.
+    if path == "/" or not path.startswith(("/threads", "/sysinfo", "/file", "/cdp", "/computer", "/ai", "/screen", "/auth")):
         return await call_next(request)
     return JSONResponse(
         {"ok": False, "error": "authentication required", "auth_required": True},
@@ -240,6 +249,61 @@ async def computer_stop(body: ComputerBody):
 @app.get("/computer")
 async def computer_list():
     return {"computers": computer.list_computers()}
+
+
+# --- computer control: the AI driving the real browser ------------------------
+#
+# Namespaced under /ai/computer rather than added to /computer, because
+# /computer/start already means "power the machine on" and "let the model start
+# clicking things" is a different operation with a different blast radius.
+
+ai_computer = ComputerRunner(settings, router, db, manager=computer)
+
+
+class ComputerTaskBody(BaseModel):
+    task: str = ""
+    thread_id: str = ""
+
+
+@app.post("/ai/computer/start")
+async def ai_computer_start(body: ComputerTaskBody):
+    """Hand a task to the computer-control model and return straight away.
+
+    Synchronous on purpose.  A control loop runs for as many model calls and
+    screenshots as the task needs; holding this request open would mean the
+    browser's own request either times out or blocks every other user of the
+    API.  The frontend polls the status route instead.
+    """
+    task = (body.task or "").strip()
+    if not task:
+        return {"error": "a task is required"}
+    if not settings.openrouter_api_key or not settings.computer_model:
+        # Said up front rather than as a mysterious failure three calls in.
+        return {
+            "error": (
+                "computer control is not configured: set OPENROUTER_API_KEY and "
+                "OPENROUTER_MODEL in the environment (or backend/.env) and restart"
+            )
+        }
+    if not await computer.is_up():
+        return {"error": "the remote computer is not running; start it first"}
+    run = await ai_computer.start(task, thread_id=body.thread_id)
+    return run.public()
+
+
+@app.get("/ai/computer/{task_id}")
+async def ai_computer_status(task_id: str):
+    run = ai_computer.get(task_id)
+    if run is None:
+        return {"error": "no such computer-control task"}
+    return run.public()
+
+
+@app.post("/ai/computer/{task_id}/stop")
+async def ai_computer_stop(task_id: str):
+    if not await ai_computer.stop(task_id):
+        return {"error": "no such computer-control task"}
+    return {"ok": True, "task_id": task_id}
 
 
 async def _computer_url() -> str:

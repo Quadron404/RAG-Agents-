@@ -33,7 +33,9 @@ DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends 
   libasound2t64 \
   procps \
   net-tools \
-  iproute2
+  iproute2 \
+  ffmpeg \
+  xdotool
 
 # --- Google Chrome (NOT Chromium) -----------------------------------------
 if [ -x /usr/bin/google-chrome ]; then
@@ -140,7 +142,11 @@ log "chrome profile: $CHROME_PROFILE"
 log "workspace:      $WORKSPACE"
 
 log "verifying"
-for cmd in Xvfb fluxbox x11vnc websockify google-chrome cloudflared; do
+# ffmpeg and xdotool are in this list for a reason: ffmpeg is what the desktop
+# stream and the AI's screenshots are captured with, and xdotool is what moves
+# the real pointer when the AI clicks.  Both were previously assumed and never
+# installed, so both features failed on a fresh Codespace.
+for cmd in Xvfb fluxbox x11vnc websockify google-chrome cloudflared ffmpeg xdotool; do
   command -v "$cmd" >/dev/null 2>&1 && log "  ok  $cmd" || log "  MISSING  $cmd"
 done
 [ -d "$NOVNC_WEB" ] && log "  ok  novnc web root ($NOVNC_WEB)" || log "  MISSING  novnc web root ($NOVNC_WEB)"

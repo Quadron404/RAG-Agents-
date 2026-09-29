@@ -18,6 +18,7 @@ import { fmtBytes, fmtUptime } from "../lib/format";
 import { haptic } from "../lib/haptics";
 import { DEFAULT_WALLPAPER, WALLPAPERS, readWallpaper, writeWallpaper } from "../lib/wallpapers";
 import { AppIcon, type IconApp } from "./AppIcon";
+import ComputerControlBar from "./ComputerControlBar";
 import { Wallpaper } from "./Wallpaper";
 import { VncScreen } from "./VncScreen";
 
@@ -625,6 +626,13 @@ export function Desktop() {
           </section>
         );
       })}
+
+      {/* ---- computer control ------------------------------------------------
+          Sits in the chrome immediately above the dock, not over the window
+          stack: the user is watching the same Chrome window the model is
+          clicking in, and a status line that covered the screen would hide the
+          thing they are trying to supervise. */}
+      <ComputerControlBar />
 
       {/* ---- dock: the launcher -------------------------------------------
           Always the primary way in.  Icon tiles rather than a row of words, with

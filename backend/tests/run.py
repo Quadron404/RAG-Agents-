@@ -23,6 +23,11 @@ TESTS = (
     "test_websockify_proxy",
     "test_vnc_bridge",
     "test_rfb_handshake",
+    # Computer control.  Run before test_bind_mutations because it is the only
+    # check that would notice a command allowlist quietly growing, and it needs
+    # to pass for a feature that can click a user's real browser to be
+    # deployable at all.
+    "test_computer_control",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",

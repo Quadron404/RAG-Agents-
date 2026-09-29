@@ -24,6 +24,7 @@ _PASS = "correct horse battery staple"
 os.environ["RAG_AUTH_TOKEN"] = _PASS
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="rag-auth-test-")
 
+from fastapi.routing import APIRoute  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
@@ -52,6 +53,92 @@ check(not auth.check_passphrase(_PASS + "x"), "a passphrase prefix is rejected")
 for path in ("/threads?user_id=me", "/screen/config", "/screen/status", "/file?path=/", "/sysinfo"):
     r = anon.get(path)
     check(r.status_code == 401, f"unauthenticated GET {path} -> 401 (got {r.status_code})")
+
+# --- every API route is behind the gate --------------------------------------
+#
+# The 401 list in the auth middleware is a denylist, so a route that is not named
+# in it is public.  That is fine for the SPA and fatal for computer control, so
+# this walks the real route table and insists that anything able to reach the
+# machine refuses an anonymous caller.
+#
+# It exists because this bug shipped once: /ai/computer/start was added, worked
+# perfectly, and would have let anyone with the tunnel URL drive the user's
+# signed-in browser.  Enumerating the routes is the only check that catches the
+# next one.
+#
+# "/" is matched exactly, never as a prefix.  As a prefix it matches every path,
+# which silently makes the whole loop skip everything and pass forever.
+#
+# WebSocket routes are excluded: they are authenticated by a separate branch of
+# the middleware, and probing one with an HTTP GET answers 404 either way, so
+# including them here would only ever report a misleading number.
+_PUBLIC_PATHS = {
+    "/",                      # the SPA catch-all: this *is* the login page
+    "/health",                # the deploy probe
+    "/auth/status",
+    "/auth/login",
+    "/auth/logout",
+    "/favicon.ico",
+    "/index.html",
+    # FastAPI's generated schema and console.  Public before this change and
+    # left that way on purpose: they are built into the app object, gating them
+    # would mean constructing the schema lazily, and they describe routes that
+    # are all refused without a session anyway.  Named here so that the list is
+    # visibly a decision rather than an oversight.
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/docs/oauth2-redirect",
+}
+_PUBLIC_PREFIXES = ("/static", "/assets")
+
+
+def _guards_the_machine(route) -> bool:
+    # Only HTTP routes.  A websocket route has no `methods` and is gated by the
+    # other half of the middleware.
+    if not isinstance(route, APIRoute):
+        return False
+    path = getattr(route, "path", "")
+    return path not in _PUBLIC_PATHS and not path.startswith(_PUBLIC_PREFIXES)
+
+
+leaked: list[str] = []
+checked = 0
+for route in app.routes:
+    if not _guards_the_machine(route):
+        continue
+    path = route.path
+    methods = route.methods or {"GET"}
+    # Ask with a method the route actually accepts: probing a POST-only route
+    # with GET answers 422 or 405, which says nothing about the auth gate.
+    method = "GET" if "GET" in methods else sorted(methods)[0]
+    r = anon.request(method, path)
+    checked += 1
+    # Anything that is not a 401 either reached its handler or was swallowed by
+    # the SPA fallback.  Neither is acceptable for a guarded route.
+    if r.status_code != 401:
+        leaked.append(f"{method} {path} -> {r.status_code}")
+
+check(checked > 8, f"the route walk found routes to check (checked {checked})")
+check(
+    not leaked,
+    "every non-public route refuses an anonymous caller "
+    f"(leaked: {', '.join(sorted(leaked)) or 'none'})",
+)
+
+# The computer-control routes specifically, since they are the ones that move a
+# real pointer.  A POST is used because that is how a task is actually started.
+for path, payload in (
+    ("/ai/computer/start", {"task": "go to example.com"}),
+    ("/ai/computer/abc123", {}),
+    ("/ai/computer/abc123/stop", {}),
+):
+    r = anon.post(path, json=payload) if path.endswith(("start", "stop")) else anon.get(path)
+    check(
+        r.status_code == 401,
+        f"unauthenticated {path} -> 401 (got {r.status_code}); "
+        "an open tunnel must not be able to drive the user's browser",
+    )
 
 # --- unauthenticated WebSocket ---------------------------------------------
 # This is the acceptance criterion "unauthenticated /websockify access is

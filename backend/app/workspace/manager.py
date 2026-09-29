@@ -74,6 +74,41 @@ class WorkspaceManager:
             self._agent_up = False
         return self._agent_up
 
+    async def post_json(
+        self, path: str, payload: Dict[str, object], timeout: float = 40.0
+    ) -> Dict[str, object]:
+        """POST JSON to the agent and return its JSON body.
+
+        Used by computer control, which needs a handful of narrowly-scoped agent
+        routes that have no other caller.  Two details matter:
+
+        * The agent answers some refusals with 4xx and a JSON error body rather
+          than a bare status, so the body is parsed and returned even on failure
+          and the caller decides.  Losing the reason and reporting a generic
+          timeout instead would make every rejection look like a broken machine.
+        * The payload is passed as-is; nothing here adds a command line, so
+          whatever can be serialised to JSON is the only thing that can be sent.
+        """
+        try:
+            resp = await self._call(
+                "POST", path, timeout=timeout, json=dict(payload or {})
+            )
+        except httpx.HTTPStatusError as exc:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict) and body.get("error"):
+                return body
+            return {"ok": False, "error": f"the remote computer refused {path} ({exc.response.status_code})"}
+        except Exception as exc:
+            return {"ok": False, "error": f"the remote computer is unreachable: {exc}"}
+        try:
+            data = resp.json()
+        except Exception as exc:
+            return {"ok": False, "error": f"the remote computer sent no usable reply: {exc}"}
+        return data if isinstance(data, dict) else {"ok": False, "error": "unexpected reply shape"}
+
     @property
     def agent_up(self) -> bool:
         return self._agent_up
