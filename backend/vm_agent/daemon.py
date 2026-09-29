@@ -1253,12 +1253,63 @@ def sysinfo() -> dict:
         except Exception:
             return 0.0
 
+    # The Settings app shows these, so they are part of the same read-only
+    # payload rather than a new endpoint: one request, one auth check, and no
+    # extra surface for the browser to talk to.
+
+    def _os_release() -> str:
+        try:
+            with open("/etc/os-release") as f:
+                for ln in f:
+                    if ln.startswith("PRETTY_NAME="):
+                        name = ln.partition("=")[2].strip().strip('"')
+                        if name:
+                            return name
+        except Exception:
+            pass
+        return os.uname().sysname if hasattr(os, "uname") else "unknown"
+
+    def _browser() -> dict:
+        """Is the real desktop Chrome up?  Port + recorded pid, nothing else.
+
+        Deliberately reports state rather than acting on it: no restart, no
+        navigate, no shell.  The Settings app is a read-only viewer.
+        """
+        listening = _port_listening(CHROME_DEBUG_PORT)
+        pid = _read_pid("chromium") or _read_pid("google-chrome")
+        return {
+            "running": bool(listening or _pid_alive(pid)),
+            "cdp": listening,
+            "pid": pid if _pid_alive(pid) else None,
+            "start_url": START_URL,
+            "display": DESKTOP_DISPLAY,
+        }
+
+    def _display() -> dict:
+        return {
+            "width": _desktop_width(),
+            "height": _desktop_height(),
+            "size": DESKTOP_SIZE,
+        }
+
+    def _load() -> list:
+        try:
+            one, five, fifteen = os.getloadavg()
+            return [one, five, fifteen]
+        except Exception:
+            return [0.0, 0.0, 0.0]
+
     return {
         "mem": _mem(),
         "disk": _disk(),
         "cpu": _cpu(),
         "uptime": _uptime(),
         "hostname": os.uname().nodename if hasattr(os, "uname") else WORKSPACE,
+        "os": _os_release(),
+        "kernel": os.uname().release if hasattr(os, "uname") else "",
+        "browser": _browser(),
+        "display": _display(),
+        "loadavg": _load(),
     }
 
 

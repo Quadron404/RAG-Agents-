@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Code2,
   File,
   FileText,
   Folder,
@@ -10,12 +9,11 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Terminal,
-  X,
 } from "lucide-react";
-import { api, useCore } from "../core";
+import { useCore } from "../core";
 import { fmtBytes } from "../lib/format";
 import { haptic } from "../lib/haptics";
-import type { ToolResult } from "../core";
+import { FilePreview, kindFor } from "../components/FilePreview";
 
 interface Entry {
   name: string;
@@ -45,12 +43,13 @@ function parseListing(output: string): Entry[] {
   return out;
 }
 
+/** One predicate, shared by the grid's icon colours and the preview's renderer. */
 function isImage(name: string) {
-  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+  return kindFor(name) === "image";
 }
 
 function isText(name: string) {
-  return /\.(txt|md|json|yaml|yml|toml|py|js|ts|tsx|jsx|sh|ps1|bat|cmd|csv|xml|html|css|sql|log|ini|cfg|env)$/i.test(name);
+  return kindFor(name) === "text";
 }
 
 export function FilesPane({ embedded = false }: { embedded?: boolean }) {
@@ -62,7 +61,7 @@ export function FilesPane({ embedded = false }: { embedded?: boolean }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [path, setPath] = useState(vmPath || "/workspace");
-  const [preview, setPreview] = useState<{ path: string; name: string; loading: boolean; text?: string; img?: string; err?: string } | null>(null);
+  const [preview, setPreview] = useState<{ path: string; name: string } | null>(null);
   const [sel, setSel] = useState<string | null>(null);
 
   const refresh = async (p: string) => {
@@ -93,30 +92,10 @@ export function FilesPane({ embedded = false }: { embedded?: boolean }) {
       refresh(next);
       return;
     }
-    previewFile(path + "/" + e.name, e.name);
-  };
-
-  const previewFile = async (full: string, name: string) => {
-    setPreview({ path: full, name, loading: true });
-    if (isImage(name)) {
-      const r: ToolResult = await callTool("read_file", { path: full }, 20);
-      if (r.error) {
-        setPreview({ path: full, name, loading: false, err: r.error });
-      } else {
-        setPreview({ path: full, name, loading: false, img: api(`/file?path=${encodeURIComponent(full)}`) });
-      }
-      return;
-    }
-    if (!isText(name)) {
-      setPreview({ path: full, name, loading: false, err: "Binary file — open it in your machine's editor." });
-      return;
-    }
-    const r: ToolResult = await callTool("read_file", { path: full }, 20);
-    if (r.error) {
-      setPreview({ path: full, name, loading: false, err: r.error });
-    } else {
-      setPreview({ path: full, name, loading: false, text: r.output });
-    }
+    // The preview fetches the bytes itself over the authenticated /file route,
+    // so nothing is copied or re-encoded on the way in and the original stays
+    // downloadable untouched.
+    setPreview({ path: path + "/" + e.name, name: e.name });
   };
 
   const crumbs = path.split(/[\\/]+/).filter(Boolean);
@@ -173,9 +152,6 @@ export function FilesPane({ embedded = false }: { embedded?: boolean }) {
             <button className="act-btn" onClick={() => refresh(path)} title="Refresh" aria-label="Refresh">
               <RefreshCw size={14} />
             </button>
-            <button className="act-btn" onClick={() => setPreview(null)} title="Close preview" aria-label="Close preview">
-              <X size={14} />
-            </button>
           </span>
         </div>
 
@@ -226,33 +202,7 @@ export function FilesPane({ embedded = false }: { embedded?: boolean }) {
         )}
 
         {preview ? (
-          <div className="fs-prev">
-            <div className="fs-prev__head">
-              <Code2 size={14} style={{ color: "var(--accent)" }} />
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{preview.name}</span>
-              <span className="fs-prev__tag">{isImage(preview.name) ? "image" : "text"}</span>
-              <button className="act-btn" onClick={() => setPreview(null)} aria-label="Close preview">
-                <X size={14} />
-              </button>
-            </div>
-            <div className="fs-prev__body">
-              {preview.loading ? (
-                <div style={{ display: "flex", gap: 10, alignItems: "center", color: "var(--text-3)", padding: 6 }}>
-                  <span className="spinner" style={{ width: 16, height: 16 }} /> previewing…
-                </div>
-              ) : preview.err ? (
-                <div style={{ color: "var(--text-2)", fontSize: 13 }}>{preview.err}</div>
-              ) : preview.img ? (
-                <img
-                  src={preview.img}
-                  alt={preview.name}
-                  onError={() => setPreview((p) => (p ? { ...p, err: "Preview unavailable on this network." } : p))}
-                />
-              ) : (
-                <pre>{preview.text}</pre>
-              )}
-            </div>
-          </div>
+          <FilePreview path={preview.path} name={preview.name} onClose={() => setPreview(null)} />
         ) : null}
       </div>
     </div>

@@ -257,12 +257,31 @@ async def proxy_sysinfo(user_id: str = ""):
 
 
 @app.get("/file")
-async def proxy_file(path: str = Query("", alias="path"), user_id: str = ""):
+async def proxy_file(
+    path: str = Query("", alias="path"),
+    user_id: str = "",
+    download: bool = False,
+):
+    """Relay a workspace file, or hand it back untouched as an attachment.
+
+    The same route serves both in-app previews and the Download button, so a
+    preview never has to be converted, re-encoded or copied to a second URL
+    to be downloadable.  ``download=1`` only adds a Content-Disposition header;
+    the bytes are the agent's bytes in both cases.
+    """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(f"{await _computer_url()}/file", params={"path": path})
             content_type = resp.headers.get("content-type", "application/octet-stream")
-            return Response(content=resp.content, media_type=content_type)
+            headers = {}
+            if download:
+                # Derived from the last path segment and stripped of anything
+                # that could break out of the header: this value is reflected
+                # into Content-Disposition.
+                name = re.split(r"[\\/]", path)[-1] or "download"
+                name = re.sub(r'[\r\n"\\]', "", name).strip() or "download"
+                headers["Content-Disposition"] = f'attachment; filename="{name}"'
+            return Response(content=resp.content, media_type=content_type, headers=headers)
     except Exception as exc:
         return Response(content=str(exc).encode(), media_type="text/plain", status_code=502)
 

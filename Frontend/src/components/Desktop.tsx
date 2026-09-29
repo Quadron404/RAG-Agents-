@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -14,9 +16,25 @@ import { Cpu, Database, HardDrive, Maximize2, Minimize2, Monitor, Power, X } fro
 import { useCore } from "../core";
 import { fmtBytes, fmtUptime } from "../lib/format";
 import { haptic } from "../lib/haptics";
-import { FilesPane } from "../views/Files";
-import { TerminalPane } from "./TerminalPane";
+import { DEFAULT_WALLPAPER, WALLPAPERS, readWallpaper, writeWallpaper } from "../lib/wallpapers";
+import { AppIcon, type IconApp } from "./AppIcon";
+import { Wallpaper } from "./Wallpaper";
 import { VncScreen } from "./VncScreen";
+
+/* Heavy panes are split out of the initial bundle and fetched the first time
+   somebody opens them.  The Browser deliberately is not: it is the default
+   window, so it is on screen before any of this has had a chance to load. */
+const FilesPane = lazy(() => import("../views/Files").then((m) => ({ default: m.FilesPane })));
+const TerminalPane = lazy(() => import("./TerminalPane").then((m) => ({ default: m.TerminalPane })));
+const SettingsApp = lazy(() => import("../views/SettingsApp").then((m) => ({ default: m.SettingsApp })));
+
+function PaneSkeleton() {
+  return (
+    <div className="dwin__skeleton" aria-hidden>
+      <span className="spinner" />
+    </div>
+  );
+}
 
 /* ============================================================================
    RAG Agents desktop
@@ -39,63 +57,23 @@ import { VncScreen } from "./VncScreen";
    still image of a browser is not a browser.
    ========================================================================= */
 
-/* ---- app icons ------------------------------------------------------------
-   One set, one language: every glyph is drawn on the same 24px grid with the
-   same stroke weight and the same round caps, so the three tiles read as one
-   family instead of three unrelated imports.  Browser is a globe with its
-   meridians rather than a generic window, because that is the one shape
-   everybody already reads as "the web".
-   ------------------------------------------------------------------------- */
+/* ---- app registry ---------------------------------------------------------
+   One entry per dock icon, one source of truth for the window's label, its
+   title-bar icon and its content.  `icon` is drawn by AppIcon rather than
+   imported from an icon set, so the four tiles share one construction and the
+   dock reads as a single object. */
 
-const GLYPH_PROPS = {
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.7,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-  "aria-hidden": true,
-} as const;
-
-function BrowserGlyph() {
-  return (
-    <svg {...GLYPH_PROPS}>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17" />
-      <path d="M12 3.5c2.7 2.6 2.7 14.4 0 17" />
-      <path d="M12 3.5c-2.7 2.6-2.7 14.4 0 17" />
-    </svg>
-  );
-}
-
-function TerminalGlyph() {
-  return (
-    <svg {...GLYPH_PROPS}>
-      <rect x="2.75" y="4.25" width="18.5" height="15.5" rx="3" />
-      <path d="M6.75 9.75 9.5 12l-2.75 2.25" />
-      <path d="M12.5 15h4.75" />
-    </svg>
-  );
-}
-
-function FilesGlyph() {
-  return (
-    <svg {...GLYPH_PROPS}>
-      <path d="M3.25 7.4a2.1 2.1 0 0 1 2.1-2.1h3.2a2.1 2.1 0 0 1 1.6.8l1 1.2a2.1 2.1 0 0 0 1.6.8h5.6a2.1 2.1 0 0 1 2.1 2.1v7.6a2.1 2.1 0 0 1-2.1 2.1H5.35a2.1 2.1 0 0 1-2.1-2.1z" />
-      <path d="M3.4 11.6h17.2" />
-    </svg>
-  );
-}
-
-type AppId = "browser" | "terminal" | "files";
+type AppId = "browser" | "terminal" | "files" | "settings";
 
 interface AppDef {
   id: AppId;
   label: string;
   /** Shown in the window title, under the icon on the dock. */
   blurb: string;
-  Glyph: () => ReactNode;
-  render: (running: boolean) => ReactNode;
+  icon: IconApp;
+  /** Default resting size, so the windows line up instead of scattering. */
+  size: { w: number; h: number };
+  render: (running: boolean, wallpaper: string, onWallpaper: (id: string) => void) => ReactNode;
 }
 
 const APPS: AppDef[] = [
@@ -103,7 +81,8 @@ const APPS: AppDef[] = [
     id: "browser",
     label: "Browser",
     blurb: "Live Chrome",
-    Glyph: BrowserGlyph,
+    icon: "browser",
+    size: { w: 1180, h: 760 },
     // The live screen *is* the browser app.  No address bar, no tabs, no
     // screenshot: the remote Chrome provides all of that, and a second set of
     // controls above it would only cover the part of it people need to click.
@@ -113,15 +92,37 @@ const APPS: AppDef[] = [
     id: "terminal",
     label: "Terminal",
     blurb: "Remote shell",
-    Glyph: TerminalGlyph,
-    render: () => <TerminalPane />,
+    icon: "terminal",
+    size: { w: 860, h: 560 },
+    render: () => (
+      <Suspense fallback={<PaneSkeleton />}>
+        <TerminalPane />
+      </Suspense>
+    ),
   },
   {
     id: "files",
     label: "Files",
     blurb: "Workspace",
-    Glyph: FilesGlyph,
-    render: () => <FilesPane embedded />,
+    icon: "files",
+    size: { w: 1000, h: 640 },
+    render: () => (
+      <Suspense fallback={<PaneSkeleton />}>
+        <FilesPane embedded />
+      </Suspense>
+    ),
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    blurb: "System",
+    icon: "settings",
+    size: { w: 880, h: 620 },
+    render: (_running, wallpaper, onWallpaper) => (
+      <Suspense fallback={<PaneSkeleton />}>
+        <SettingsApp wallpaper={wallpaper} onWallpaper={onWallpaper} />
+      </Suspense>
+    ),
   },
 ];
 
@@ -143,6 +144,7 @@ const INITIAL: Record<AppId, WinState> = {
   browser: { open: true, minimized: false, maximized: true, fullscreen: false, z: 3, x: 0, y: 0, w: 0, h: 0, closing: false },
   terminal: { open: false, minimized: false, maximized: false, fullscreen: false, z: 1, x: 0, y: 0, w: 0, h: 0, closing: false },
   files: { open: false, minimized: false, maximized: false, fullscreen: false, z: 2, x: 0, y: 0, w: 0, h: 0, closing: false },
+  settings: { open: false, minimized: false, maximized: false, fullscreen: false, z: 1, x: 0, y: 0, w: 0, h: 0, closing: false },
 };
 
 const MENUBAR_H = 46;
@@ -166,9 +168,15 @@ const maxedBox = (surface: { w: number; h: number }) => ({
  * returns to where the user left it; a window that has never been placed (the
  * Browser starts maximised, so it has no size yet) gets a sensible default.
  */
-function restoreBox(surface: { w: number; h: number }, sized?: WinState, offset = 0) {
-  const w = sized && sized.w > 0 ? sized.w : Math.min(1080, Math.max(420, Math.round(surface.w * 0.82)));
-  const h = sized && sized.h > 0 ? sized.h : Math.min(760, Math.max(300, Math.round(surface.h * 0.78)));
+function restoreBox(
+  surface: { w: number; h: number },
+  sized?: WinState,
+  offset = 0,
+  pref?: { w: number; h: number }
+) {
+  const want = pref ?? { w: 1080, h: 700 };
+  const w = sized && sized.w > 0 ? sized.w : Math.min(want.w, Math.max(420, Math.round(surface.w * 0.82)));
+  const h = sized && sized.h > 0 ? sized.h : Math.min(want.h, Math.max(300, Math.round(surface.h * 0.78)));
   const clampX = (v: number) => Math.min(Math.max(GAP, v), Math.max(GAP, surface.w - w - GAP));
   const clampY = (v: number) => Math.min(Math.max(MENUBAR_H + GAP, v), Math.max(MENUBAR_H + GAP, surface.h - h - GAP));
   return {
@@ -204,10 +212,30 @@ export function Desktop() {
     browser: false,
     terminal: false,
     files: false,
+    settings: false,
   });
   /** Whether the pointer is near the bottom edge, which reveals the dock. */
   const [dockHot, setDockHot] = useState(false);
   const chromeTimer = useRef<number | null>(null);
+
+  /**
+   * Wallpaper selection.
+   *
+   * Held here rather than inside Settings because the desktop surface owns it:
+   * the choice has to outlive the Settings window, or closing the window would
+   * reset the background.  Resolved to a CSS value here and handed to Settings as
+   * an id, so the two never disagree about what "current" means.
+   */
+  const [wallpaper, setWallpaper] = useState<string>(DEFAULT_WALLPAPER);
+  useEffect(() => setWallpaper(readWallpaper()), []);
+  const wallpaperCss = useMemo(
+    () => WALLPAPERS.find((w) => w.id === wallpaper)?.css ?? null,
+    [wallpaper]
+  );
+  const applyWallpaper = useCallback((id: string) => {
+    setWallpaper(id);
+    writeWallpaper(id);
+  }, []);
 
   useEffect(
     () => () => {
@@ -249,6 +277,8 @@ export function Desktop() {
     });
   }, []);
 
+  const APP_BY_ID = useMemo(() => new Map(APPS.map((a) => [a.id, a])), []);
+
   const openApp = useCallback(
     (id: AppId) => {
       haptic("medium");
@@ -260,12 +290,19 @@ export function Desktop() {
         const offset = Object.values(s).filter((v) => v.open).length * 34;
         return {
           ...s,
-          [id]: { ...s[id], open: true, minimized: false, closing: false, z: top, ...restoreBox(surface, s[id], offset) },
+          [id]: {
+            ...s[id],
+            open: true,
+            minimized: false,
+            closing: false,
+            z: top,
+            ...restoreBox(surface, s[id], offset, APP_BY_ID.get(id)?.size),
+          },
         };
       });
       setActive(id);
     },
-    [surface]
+    [surface, APP_BY_ID]
   );
 
   /** Close with a beat of animation before the window is actually removed. */
@@ -433,7 +470,7 @@ export function Desktop() {
         setDockHot(e.clientY - r.top > surface.h - EDGE);
       }}
     >
-      <div className="desktop__wall" aria-hidden />
+      <Wallpaper css={wallpaperCss} />
 
       {/* ---- menu bar ---------------------------------------------------- */}
       <div className={`deskbar${chromeHidden ? " deskbar--behind" : ""}`}>
@@ -560,7 +597,7 @@ export function Desktop() {
                 </button>
               </div>
               <div className="dwin__title">
-                <app.Glyph />
+                <AppIcon app={app.icon} size={17} className="dwin__titleicon" />
                 <span>{app.label}</span>
                 <em>{app.blurb}</em>
               </div>
@@ -576,7 +613,7 @@ export function Desktop() {
                 </button>
               </div>
             </header>
-            <div className="dwin__body">{app.render(running)}</div>
+            <div className="dwin__body">{app.render(running, wallpaper, applyWallpaper)}</div>
             {!w.maximized && !w.fullscreen ? (
               <div
                 className="dwin__grip"
@@ -614,7 +651,7 @@ export function Desktop() {
               aria-label={`${app.label} — ${app.blurb}`}
             >
               <span className="dockitem__tile">
-                <app.Glyph />
+                <AppIcon app={app.icon} size={44} />
               </span>
               <span className="dockitem__label">{app.label}</span>
               <i className="dockitem__dot" aria-hidden />

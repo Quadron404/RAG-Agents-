@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { initAppearance } from "./store";
 import "./styles/theme.css";
+import "./styles/desktop-upgrade.css";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

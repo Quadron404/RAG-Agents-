@@ -82,9 +82,15 @@ export interface TerminalLine {
 export interface SysInfo {
   hostname?: string;
   uptime?: number;
-  cpu?: { cores?: number };
+  /** Read-only extras for the Settings app, all measured on the remote machine. */
+  os?: string;
+  kernel?: string;
+  cpu?: { cores?: number; idle?: number; total?: number };
   mem?: { total_kb?: number; used_kb?: number };
   disk?: { total?: number; used?: number; free?: number };
+  browser?: { running?: boolean; cdp?: boolean; pid?: number | null; start_url?: string; display?: string };
+  display?: { width?: number; height?: number; size?: string };
+  loadavg?: [number, number, number];
 }
 
 /* ============================================================================
