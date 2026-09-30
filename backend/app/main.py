@@ -19,7 +19,12 @@ from .computer.runner import ComputerRunner
 from .config import Settings, load_settings
 from .db import Database
 from .providers.base import LLMMessage
-from .providers.router import Router
+from .providers.router import (
+    Router,
+    computer_model_for,
+    computer_provider_info,
+    computer_providers,
+)
 from .providers import build_providers
 from .tools.executor import Executor
 from .tools.workspace import WorkspaceClient
@@ -164,6 +169,31 @@ ai_computer = ComputerRunner(settings, router, db, manager=computer)
 class ComputerTaskBody(BaseModel):
     task: str = ""
     thread_id: str = ""
+    provider: str = ""
+
+
+class ComputerProviderBody(BaseModel):
+    provider: str = ""
+
+
+@app.get("/ai/computer/providers")
+async def ai_computer_providers():
+    """The providers a computer-control run may be pointed at.
+
+    Name, display label, model and whether a key is present -- and nothing
+    else.  The browser needs to render a selector and explain why one option
+    will fail, which needs none of the key; a payload carrying it would be a
+    secret shipped to every client for no benefit.  Built from the same
+    ComputerProviderInfo the router resolves with, so what the selector shows
+    and what the loop will do cannot disagree.
+    """
+    return {
+        "providers": [
+            {"name": i.name, "label": i.label, "model": i.model, "configured": i.configured}
+            for i in computer_providers(settings)
+        ],
+        "default": settings.computer_provider,
+    }
 
 
 @app.post("/ai/computer/start")
@@ -178,18 +208,53 @@ async def ai_computer_start(body: ComputerTaskBody):
     task = (body.task or "").strip()
     if not task:
         return {"error": "a task is required"}
-    if not settings.openrouter_api_key or not settings.computer_model:
-        # Said up front rather than as a mysterious failure three calls in.
-        return {
-            "error": (
-                "computer control is not configured: set OPENROUTER_API_KEY and "
-                "OPENROUTER_MODEL in the environment (or backend/.env) and restart"
-            )
-        }
+    # Which provider answers the first request.  Validated against the same
+    # closed list the selector is built from, so an unknown name is refused
+    # here rather than becoming a provider-less run further in.
+    provider = (body.provider or settings.computer_provider or "").strip()
+    if provider not in {i.name for i in computer_providers(settings)}:
+        return {"error": f"unknown computer provider {provider!r}"}
+    info = computer_provider_info(settings, provider)
+    if not info.configured:
+        # Named, so the reader knows which one to go and configure.  "computer
+        # control is not configured" with no subject is a puzzle; the two
+        # providers are configured independently and either can be the missing
+        # one.
+        return {"error": f"{info.label} is not configured"}
+    if not computer_model_for(settings, provider):
+        return {"error": f"{info.label} is not configured: no model configured"}
     if not await computer.is_up():
         return {"error": "the remote computer is not running; start it first"}
-    run = await ai_computer.start(task, thread_id=body.thread_id)
+    run = await ai_computer.start(task, thread_id=body.thread_id, provider=provider)
     return run.public()
+
+
+@app.post("/ai/computer/{task_id}/provider")
+async def ai_computer_set_provider(task_id: str, body: ComputerProviderBody):
+    """Point the next request at a different provider, keeping the run.
+
+    The task, the recorded history and the step count are all untouched: only
+    who answers the next call changes.  The conversation is not replayed
+    through the new provider and it is not summarised for it either -- the next
+    request carries the same complete canonical history, because the history is
+    rebuilt from the recorded events rather than kept in either provider.
+
+    Takes effect on the next request.  A call already in flight is not
+    recalled, so the trace keeps naming the provider that actually answered.
+    """
+    provider = (body.provider or "").strip()
+    if provider not in {i.name for i in computer_providers(settings)}:
+        return {"error": f"unknown computer provider {provider!r}"}
+    info = computer_provider_info(settings, provider)
+    if not info.configured:
+        return {"error": f"{info.label} is not configured"}
+    if not computer_model_for(settings, provider):
+        return {"error": f"{info.label} is not configured: no model configured"}
+    try:
+        run = ai_computer.set_provider(task_id, provider)
+    except KeyError:
+        return {"error": "no such computer-control task"}
+    return {"ok": True, "task_id": task_id, "provider": provider, "model": computer_model_for(settings, provider)}
 
 
 @app.get("/ai/computer/{task_id}")
@@ -223,7 +288,7 @@ async def ai_computer_trace(task_id: str, images: bool = True):
     # the image that really was there.  Building it without them first would make
     # "was a screenshot withheld?" unanswerable, which is the one question this
     # flag exists to answer.
-    report = run.trace_report(include_images=True)
+    report = ai_computer.report(run, include_images=True)
     if not images:
         for turn in report["turns"]:
             turn["image_withheld"] = bool(turn.get("image") or turn.get("next_image"))

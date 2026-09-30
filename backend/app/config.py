@@ -86,6 +86,23 @@ class Settings:
         default_factory=lambda: _get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     )
 
+    # --- Mistral, the second computer-control provider ---------------------
+    # A peer of OpenRouter, not a special case: the same loop, the same prompt,
+    # the same parser and the same executors, with a different name and a
+    # different model behind the provider interface.  Registering it here rather
+    # than as another field per role is what keeps one implementation of the
+    # loop instead of two.
+    #
+    # The model defaults to mistral-small-2506 rather than to empty, because a
+    # configured key with a blank model is a typo rather than an intention, and
+    # failing the run on a missing model name is a worse answer than trying the
+    # small vision model the key is presumably for.
+    mistral_api_key: str = field(default_factory=lambda: _get("MISTRAL_API_KEY", "").strip())
+    mistral_model: str = field(default_factory=lambda: _get("MISTRAL_MODEL", "mistral-small-2506").strip())
+    mistral_base_url: str = field(
+        default_factory=lambda: _get("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+    )
+
     # The loop's own limits, all deliberately small: a control loop that can run
     # a hundred clicks is a control loop that can empty someone's wallet or
     # navigate somewhere it should not.

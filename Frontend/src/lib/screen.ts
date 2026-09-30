@@ -219,11 +219,11 @@ export interface ComputerRun {
 }
 
 /** Hand a task to the model.  Returns as soon as the run is queued. */
-export async function startComputerTask(task: string, threadId = ""): Promise<ComputerRun> {
+export async function startComputerTask(task: string, threadId = "", provider = ""): Promise<ComputerRun> {
   const res = await apiFetch("/ai/computer/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ task, thread_id: threadId }),
+    body: JSON.stringify({ task, thread_id: threadId, provider }),
   });
   const data = (await res.json()) as ComputerRun & { error?: string };
   if (data.error) throw new Error(data.error);
@@ -341,6 +341,42 @@ export interface ComputerTurn {
   next_image_meta: Partial<ComputerImageMeta>;
 }
 
+/** What the browser may know about a selectable computer-control provider. */
+export interface ComputerProvider {
+  name: string;
+  label: string;
+  model: string;
+  configured: boolean;
+}
+
+export async function fetchComputerProviders(): Promise<{
+  providers: ComputerProvider[];
+  default: string;
+}> {
+  const res = await apiFetch("/ai/computer/providers");
+  const data = (await res.json()) as { providers: ComputerProvider[]; default: string; error?: string };
+  if (data.error) throw new Error(data.error);
+  return { providers: data.providers ?? [], default: data.default };
+}
+
+/**
+ * Point the next request at a different provider.
+ *
+ * The run keeps its task, its history and its step count; only who answers the
+ * next call changes.  Takes effect on the next request, so a reply already in
+ * flight is still attributed to the provider that produced it.
+ */
+export async function setComputerProvider(taskId: string, provider: string): Promise<{ provider: string; model: string }> {
+  const res = await apiFetch(`/ai/computer/${taskId}/provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
+  const data = (await res.json()) as { provider: string; model: string; error?: string };
+  if (data.error) throw new Error(data.error);
+  return { provider: data.provider, model: data.model };
+}
+
 export interface ComputerTrace {
   task_id: string;
   task: string;
@@ -351,9 +387,13 @@ export interface ComputerTrace {
   step: number;
   started_at: number;
   finished_at: number;
-  /** The model that answered the most recent request. */
+  /** The provider the next request will use. */
   provider: string;
-  model: string;
+  /** Every provider the selector may offer, and whether it has a key. */
+  selected_providers: ComputerProvider[];
+  /** The provider and model that actually answered the last request. */
+  last_provider: string;
+  last_model: string;
   protocol: {
     first_turn_allowed: string[];
     after_screenshot_allowed: string[];

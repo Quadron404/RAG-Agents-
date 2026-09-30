@@ -1123,8 +1123,11 @@ class TestProviderSurfaceIsReal(unittest.TestCase):
                 settings,
             )
             runner = ComputerRunner(settings, router, db=None, manager=object())
+            from app.computer.runner import ComputerRun
+
+            run = ComputerRun(task_id="t", task="go")
             text, provider_name, model, wire = asyncio.run(
-                runner._ask([LLMMessage(role="user", content="go")])
+                runner._ask([LLMMessage(role="user", content="go")], run)
             )
         finally:
             mod.httpx.AsyncClient = original
@@ -2269,14 +2272,17 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
     def test_the_reports_model_is_the_one_that_actually_answered(self):
         # Taken from the trace, not from settings: after a provider failure
         # those are different claims, and a header naming a model that never
-        # replied makes every turn below it suspect.
+        # replied makes every turn below it suspect.  Kept separate from
+        # `provider`, which is who answers *next* -- a run can be switched
+        # mid-flight, and collapsing those two into one field would attribute
+        # every earlier reply to whichever provider is selected now.
         report, run = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             '{"type":"done","message":"ok"}',
         ])
         self.assertTrue(report["turns"], "no turns to name a model after")
-        self.assertEqual(report["model"], report["turns"][-1]["model"])
-        self.assertEqual(report["provider"], report["turns"][-1]["provider"])
+        self.assertEqual(report["last_model"], report["turns"][-1]["model"])
+        self.assertEqual(report["last_provider"], report["turns"][-1]["provider"])
 
     def test_the_prompt_states_the_size_of_the_screenshot_being_sent(self):
         from app.computer.commands import Bounds
@@ -2710,8 +2716,15 @@ class TestTheTraceEndpoint(unittest.TestCase):
                 node = node[part]
 
         for field in ("task_id", "task", "thread_id", "status", "message", "url",
-                      "step", "started_at", "finished_at", "provider", "model", "turns"):
+                      "step", "started_at", "finished_at", "provider", "last_provider",
+                      "last_model", "selected_providers", "turns"):
             need(body, field, "the trace")
+
+        # What the provider selector renders, and what it must not contain.
+        self.assertTrue(body["selected_providers"], "the selector would be empty")
+        for entry in body["selected_providers"]:
+            for field in ("name", "label", "model", "configured"):
+                need(entry, field, "a selected provider")
 
         self.assertTrue(body["turns"], "the fixture produced no turns to check")
         framed = 0

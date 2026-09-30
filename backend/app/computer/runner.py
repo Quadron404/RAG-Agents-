@@ -28,7 +28,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
 from ..providers.base import LLMMessage, TextDelta, image_mime
-from ..providers.router import ProviderUnavailable, Router
+from ..providers.router import (
+    ProviderUnavailable,
+    Router,
+    computer_model_for,
+    computer_providers,
+)
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command, parse_command
 from .controller import ComputerError, RemoteComputer
 from .prompt import FORMAT_CORRECTION, build_prompt
@@ -182,6 +187,11 @@ class ComputerRun:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancelled: bool = False
+    #: Which provider answers the next request.  Empty means the configured
+    #: default.  Held on the run rather than passed per call so the selector can
+    #: change it while the loop is mid-flight, and so the value the trace shows
+    #: is the value the runner used.
+    provider: str = ""
     #: Per-turn model I/O.  In memory only, never written to the database: it
     #: holds the screenshot bytes, which are the largest thing in the process
     #: and are already being re-captured from the display every turn.
@@ -207,7 +217,12 @@ class ComputerRun:
             "done": self.status in (STATUS_DONE, STATUS_ERROR),
         }
 
-    def trace_report(self, include_images: bool = True) -> Dict[str, Any]:
+    def trace_report(
+        self,
+        include_images: bool = True,
+        providers: Optional[List[Any]] = None,
+        default_provider: str = "",
+    ) -> Dict[str, Any]:
         """The whole run as the inspector and "Copy trace" render it.
 
         Deliberately built from the same records the loop wrote rather than
@@ -223,12 +238,29 @@ class ComputerRun:
             "step": self.step,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            # The provider the next request will use, so the selector can show
+            # the current choice rather than only the one that was last used.
+            "provider": self.provider or default_provider,
+            # What the browser may know about each selectable provider: name,
+            # model, and whether it is configured.  Built by the caller out of
+            # Settings and passed in, rather than reaching for settings from
+            # here, so the run record never holds the API keys these are
+            # derived from.
+            "selected_providers": [
+                {
+                    "name": info.name,
+                    "label": info.label,
+                    "model": info.model,
+                    "configured": info.configured,
+                }
+                for info in (providers or [])
+            ],
             # The model that answered the most recent request, so the panel's
             # header can name it. Taken from the trace rather than settings:
             # after a provider failure the configured model and the model that
             # actually replied are not the same claim.
-            "provider": self.trace[-1].provider if self.trace else "",
-            "model": self.trace[-1].model if self.trace else "",
+            "last_provider": self.trace[-1].provider if self.trace else "",
+            "last_model": self.trace[-1].model if self.trace else "",
             "protocol": {
                 "first_turn_allowed": ["navigate", "search"],
                 "after_screenshot_allowed": list(ALLOWED_TYPES),
@@ -264,21 +296,44 @@ class ComputerRunner:
     def get(self, task_id: str) -> Optional[ComputerRun]:
         return self._runs.get(task_id)
 
-    async def start(self, task: str, thread_id: str = "") -> ComputerRun:
+    async def start(self, task: str, thread_id: str = "", provider: str = "") -> ComputerRun:
         """Queue a run and return it immediately.
 
         The caller gets a run object rather than a finished result on purpose:
         a loop that had to be awaited would hold the request open for as long as
         the task takes, which is exactly as long as the user watches their own
         browser move without them.
+
+        ``provider`` names which provider answers the *first* request.  It is a
+        starting choice rather than a property of the run: the selector can
+        change it between turns, and the conversation it is applied to is
+        unchanged, because the history is rebuilt from the recorded events
+        either way.  Blank means the configured default.
         """
         task_id = uuid.uuid4().hex
         run = ComputerRun(
             task_id=task_id, task=task, thread_id=thread_id, started_at=time.time()
         )
+        if provider:
+            run.provider = provider
         async with self._lock:
             self._runs[task_id] = run
         self._tasks[task_id] = asyncio.create_task(self._execute(run))
+        return run
+
+    def set_provider(self, task_id: str, provider: str) -> ComputerRun:
+        """Point the next request at a different provider.
+
+        Takes effect on the next request, not the current one: a model call
+        already in flight cannot be recalled, and pretending otherwise would
+        mean the trace's provider and the provider that was actually called
+        could disagree.  The run, its history, its protocol and its step count
+        are all untouched -- only who answers next changes.
+        """
+        run = self._runs.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        run.provider = provider
         return run
 
     async def stop(self, task_id: str) -> bool:
@@ -290,6 +345,18 @@ class ComputerRunner:
         if task and not task.done():
             task.cancel()
         return True
+
+    def providers(self) -> List[Any]:
+        """What the browser is allowed to know about each selectable provider."""
+        return computer_providers(self.settings)
+
+    def report(self, run: ComputerRun, include_images: bool = True) -> Dict[str, Any]:
+        """The trace report for a run, with the provider list filled in."""
+        return run.trace_report(
+            include_images=include_images,
+            providers=computer_providers(self.settings),
+            default_provider=self.settings.computer_provider,
+        )
 
     # --- the loop ----------------------------------------------------------
 
@@ -328,7 +395,7 @@ class ComputerRunner:
             )
         return messages
 
-    async def _ask(self, messages: List[LLMMessage]) -> Tuple[str, str, str, Dict[str, Any]]:
+    async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any]]:
         """One model call, returning the reply as text.
 
         Returns ``(text, provider, model, wire)``.  The wire summary is read back
@@ -346,8 +413,15 @@ class ComputerRunner:
         Tool calls are ignored on purpose.  Computer control speaks the JSON text
         protocol only, and a model that also emitted a tool call would have
         nothing to execute it with.
+
+        The provider is resolved here, per call, from the run.  That is the whole
+        provider abstraction: OpenRouter and Mistral are the same class of thing
+        behind the same method, and nothing below this line knows which one it
+        got.  The messages handed in are identical either way, so the complete
+        conversation and the screenshot are not conditional on the provider
+        choice.
         """
-        provider, model = self.router.resolve("computer")
+        provider, model = self.router.resolve("computer", provider_name=run.provider or None)
         parts: List[str] = []
 
         async def drain() -> None:
@@ -584,9 +658,14 @@ class ComputerRunner:
             turn.user_text = last_user.content if last_user else ""
 
             try:
-                raw, provider_name, model, wire = await self._ask(messages)
+                raw, provider_name, model, wire = await self._ask(messages, run)
             except ProviderUnavailable as exc:
-                turn.provider = ""
+                # The provider is named even though the call never happened, so
+                # the trace shows which one was selected and refused.  Blanking
+                # it made "Mistral is not configured" render as an unattributed
+                # error, which is the opposite of the diagnosis.
+                turn.provider = run.provider
+                turn.model = computer_model_for(self.settings, run.provider) if run.provider else ""
                 turn.raw = ""
                 turn.reply_timestamp = time.time()
                 turn.error = str(exc)

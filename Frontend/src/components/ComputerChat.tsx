@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   fetchComputerTrace,
+  setComputerProvider,
   type ComputerTrace,
   type ComputerTurn,
 } from "../lib/screen";
@@ -108,6 +109,7 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
           </span>
         </div>
         <div className="ccchat__head-actions">
+          <ProviderPicker trace={trace} onChanged={() => void load()} />
           <button type="button" onClick={() => void copy()} disabled={!trace} title="Copy the whole trace as JSON">
             <Copy size={13} aria-hidden="true" />
             {copied ? "Copied" : "Copy trace"}
@@ -127,7 +129,9 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
           <>
             <div className="ccchat__meta">
               <span className={`ccchat__status ccchat__status--${trace.status}`}>{trace.status}</span>
-              <span title="The model that answered every request below">{trace.model || "—"}</span>
+              <span title="The provider and model that answered the most recent request below">
+                {trace.last_provider || "—"} &middot; {trace.last_model || "—"}
+              </span>
             </div>
 
             {/* The task, exactly as it was submitted.  It is also repeated in
@@ -167,11 +171,93 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
   );
 }
 
+/**
+ * Which provider answers the next request.
+ *
+ * Shows both the provider and the model it will use, because "Mistral" alone
+ * does not say which of several vision models just aimed at a screenshot, and
+ * the model name is the thing that differs between two runs that both claim
+ * to have worked.
+ *
+ * A provider with no key is offered but not hidden -- it is listed and marked,
+ * and selecting it fails with the reason from the server.  Hiding it would
+ * leave somebody staring at a selector with one option wondering what the
+ * other one is, and would make the missing Codespaces secret invisible until
+ * they went looking for it.
+ */
+function ProviderPicker({ trace, onChanged }: { trace: ComputerTrace | null; onChanged: () => void }) {
+  const options = trace?.selected_providers ?? [];
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (options.length === 0) return null;
+
+  const current = trace?.provider || options[0]?.name;
+  const info = options.find((o) => o.name === current);
+  // The model that answered last, so a switch is visible in the header before
+  // the next request has even been made.
+  const last = trace?.last_provider ? options.find((o) => o.name === trace.last_provider) : undefined;
+
+  const choose = async (name: string) => {
+    if (!trace || name === current) return;
+    setBusy(true);
+    setError("");
+    try {
+      await setComputerProvider(trace.task_id, name);
+      onChanged();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ccpick" title={error || `Next request goes to ${info?.label ?? current}`}>
+      <label className="ccpick__label" htmlFor="cc-provider">
+        Provider
+      </label>
+      <div className="ccpick__row">
+        <select
+          id="cc-provider"
+          className="ccpick__select"
+          value={current}
+          disabled={busy}
+          onChange={(e) => void choose(e.target.value)}
+        >
+          {options.map((o) => (
+            <option key={o.name} value={o.name}>
+              {o.label}
+              {o.configured ? "" : " — not configured"}
+            </option>
+          ))}
+        </select>
+        {busy ? <Loader2 size={13} className="ccchat__spin" aria-hidden="true" /> : null}
+      </div>
+      <div className="ccpick__model" title="The model this provider will be asked for">
+        {info?.label ?? current} &middot; <span className="ccpick__mono">{info?.model || "(no model configured)"}</span>
+      </div>
+      {info && !info.configured && <div className="ccpick__bad">{info.label} is not configured</div>}
+      {error && <div className="ccpick__bad">{error}</div>}
+      {last && last.name !== current && (
+        <div className="ccpick__was">
+          last reply came from {last.label} &middot; <span className="ccpick__mono">{trace?.last_model}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void }) {
   return (
     <div className="ccchat__turn">
       <div className="ccchat__turn-rule">
         <span>Request #{turn.turn}</span>
+        {/* Which provider answered this one.  On the turn, not just in the
+            header: a run can switch provider mid-flight, and a header that
+            shows only the current choice would misattribute every earlier
+            reply to it. */}
+        {turn.provider && <span className="ccchat__prov">{turn.provider}</span>}
+        {turn.model && <span className="ccchat__provmodel">{turn.model}</span>}
         {turn.attempt > 0 && <span className="ccchat__retry">retry {turn.attempt + 1}</span>}
         {turn.first_turn && <span className="ccchat__tag">no screenshot yet</span>}
         <span className="ccchat__turn-time">{clock(turn.timestamp)}</span>

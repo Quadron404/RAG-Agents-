@@ -27,6 +27,13 @@ TESTS = (
     # one proves the agent cannot be talked into running anything else.  Either
     # half alone would leave a way through.
     "test_computer_input",
+    # The second computer-control provider.  Paired with the check above: that
+    # one proves the loop drives a real machine through the OpenAI-compatible
+    # adapter, this one proves swapping in Mistral changed who answers and
+    # nothing else -- same prompt, same history, same screenshot, same parser,
+    # same executors.  A second provider is exactly where two implementations of
+    # a control loop start to drift.
+    "test_computer_providers",
     # The supervisor script.  Before test_bind_mutations, which edits files:
     # this one reads them, and it has to pass before anything is deployed on a
     # machine whose only screen depends on supervise.sh starting.

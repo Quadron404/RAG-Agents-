@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ComputerChat from "./ComputerChat";
 import {
+  fetchComputerProviders,
   fetchComputerTask,
   startComputerTask,
   stopComputerTask,
+  type ComputerProvider,
   type ComputerRun,
   type ComputerStatus,
 } from "../lib/screen";
@@ -23,7 +25,22 @@ export default function ComputerControlIndicator() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [inspect, setInspect] = useState(false);
+  const [providers, setProviders] = useState<ComputerProvider[]>([]);
+  const [provider, setProvider] = useState("");
   const pollRef = useRef<number | null>(null);
+
+  // The provider list is configuration, not run state: it does not change while
+  // a task runs, and a failure here must not stop the status line from working.
+  useEffect(() => {
+    void fetchComputerProviders()
+      .then((r) => {
+        setProviders(r.providers);
+        setProvider((current) => current || r.default || r.providers[0]?.name || "");
+      })
+      .catch(() => {
+        /* the picker simply stays hidden; starting a run still works */
+      });
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -58,7 +75,7 @@ export default function ComputerControlIndicator() {
     setBusy(true);
     setError("");
     try {
-      setRun(await startComputerTask(text));
+      setRun(await startComputerTask(text, "", provider));
       setTask("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -99,7 +116,7 @@ export default function ComputerControlIndicator() {
               onClick={() => setInspect((v) => !v)}
               aria-expanded={inspect}
             >
-              {inspect ? "Hide inspector" : "Inspect"}
+              {inspect ? "Hide AI trace" : "AI trace"}
             </button>
           )}
           {run?.running && (
@@ -108,6 +125,30 @@ export default function ComputerControlIndicator() {
             </button>
           )}
         </>
+      )}
+
+      {/* Which provider answers the first request.  The same list, and the same
+          "not configured" marking, as the picker inside the trace panel, so
+          choosing here and switching there are not two different opinions about
+          what is available. */}
+      {!run?.running && providers.length > 0 && (
+        <label className="cc-prov">
+          <span className="cc-prov__label">Provider</span>
+          <select
+            className="cc-prov__select"
+            value={provider}
+            disabled={busy}
+            onChange={(e) => setProvider(e.target.value)}
+            title="Which provider answers the next computer-control request"
+          >
+            {providers.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.label}
+                {p.configured ? "" : " — not configured"}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       <form

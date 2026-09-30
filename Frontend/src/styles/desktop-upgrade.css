@@ -1603,3 +1603,114 @@
     width: auto;
   }
 }
+
+/* ---- provider selector ------------------------------------------------
+ * Sits in the status bar for a new task and in the panel header for a run in
+ * flight.  Two places rather than one because the interesting switch is the
+ * second one -- changing your mind halfway through a task and watching the next
+ * reply come from a different model -- and a control that only existed before
+ * the run started could not express that. */
+
+.cc-prov {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+.cc-prov__label {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.cc-prov__select,
+.ccpick__select {
+  padding: 4px 7px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.cc-prov__select:disabled,
+.ccpick__select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ccpick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg2);
+}
+
+.ccpick__label {
+  color: var(--text-3);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ccpick__row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ccpick__select {
+  min-width: 128px;
+  border-color: var(--accent);
+  background: var(--bg1);
+  font-weight: 600;
+}
+
+.ccpick__model,
+.ccpick__was {
+  color: var(--text-3);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.ccpick__was {
+  color: var(--text-2);
+}
+
+.ccpick__mono {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 9px;
+}
+
+.ccpick__bad {
+  color: #ef4444;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.ccchat__prov {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ccchat__provmodel {
+  color: var(--text-3);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}

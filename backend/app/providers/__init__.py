@@ -6,6 +6,7 @@ from typing import Dict
 from ..config import Settings
 from .anthropic import AnthropicProvider
 from .gemini import GeminiProvider
+from .mistral import MistralProvider
 from .mock import MockProvider
 from .openai_compat import OpenAICompatProvider
 
@@ -39,5 +40,13 @@ def build_providers(settings: Settings) -> Dict[str, object]:
             "openrouter",
             settings.openrouter_api_key,
             settings.openrouter_base_url,
+        )
+    # Mistral, the other computer-control provider.  Registered the same way
+    # from the same Settings object, so "which providers can drive the
+    # computer" is one list rather than a branch somewhere in the loop.
+    if settings.mistral_api_key:
+        providers["mistral"] = MistralProvider(
+            settings.mistral_api_key,
+            settings.mistral_base_url,
         )
     return providers
