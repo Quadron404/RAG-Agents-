@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ComputerInspector from "./ComputerInspector";
 import {
   fetchComputerTask,
   startComputerTask,
@@ -21,6 +22,7 @@ export default function ComputerControlIndicator() {
   const [task, setTask] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [inspect, setInspect] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -79,6 +81,7 @@ export default function ComputerControlIndicator() {
 
   return (
     <div className="cc-bar" data-status={status}>
+      {inspect && run && <ComputerInspector taskId={run.task_id} />}
       {show && (
         <>
           <span className={`cc-dot cc-dot--${status}`} aria-hidden="true" />
@@ -88,6 +91,16 @@ export default function ComputerControlIndicator() {
             <span className="cc-steps">
               {run.step} {run.step === 1 ? "step" : "steps"}
             </span>
+          )}
+          {run && (
+            <button
+              type="button"
+              className="cc-inspect-toggle"
+              onClick={() => setInspect((v) => !v)}
+              aria-expanded={inspect}
+            >
+              {inspect ? "Hide inspector" : "Inspect"}
+            </button>
           )}
           {run?.running && (
             <button type="button" className="cc-stop" onClick={stop}>

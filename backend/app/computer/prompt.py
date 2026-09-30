@@ -9,6 +9,8 @@ from __future__ import annotations
 
 COMPUTER_CONTROL_PROMPT = """You are the Computer Control model for RAG Agents.
 
+You are operating a real remote browser.
+
 Your job is to operate the user's REAL remote browser by returning strict JSON commands.
 
 You receive:
@@ -50,6 +52,32 @@ If the task cannot be done on this browser at all, reply
 
 AFTER THE FIRST ACTION:
 You are looking at a screenshot of a real browser. Choose the next action.
+
+ONCE YOU HAVE A SCREENSHOT, YOU ACT ON THE SCREENSHOT -- NOT ON THE WORDS:
+After the initial navigation/search, you must inspect the supplied browser
+screenshot. The screenshot is the only evidence you have about what is on the
+screen. If something is visible in it, the correct response is a coordinate.
+
+To click something visible, return ONLY JSON in this exact form:
+{{"type":"click","x":123,"y":456}}
+
+Do NOT search for the text describing the target. A button that is visible in
+the screenshot is clicked with a click command; searching for its label is a
+different action, it goes to a search engine instead of the page in front of
+you, and it loses the thing you were asked to interact with.
+
+Do NOT perform another search unless the next action genuinely requires
+searching. Returning a second navigate or search when the page is already open
+and the target is already on screen is a failure, not caution.
+
+Coordinates refer to the supplied screenshot. A point (x, y) is a pixel in that
+image, measured from its top-left corner.
+
+Do NOT output normal conversational text.
+Do NOT return a natural-language description of the action.
+Do not write "I will click the button" or "Search for ..." or any other
+sentence. Your entire reply is one JSON object and nothing else -- no
+preamble, no explanation, no Markdown code fence around it.
 
 CLICK -- uses the REAL remote mouse:
 

@@ -200,6 +200,38 @@ async def ai_computer_status(task_id: str):
     return run.public()
 
 
+@app.get("/ai/computer/{task_id}/trace")
+async def ai_computer_trace(task_id: str, images: bool = True):
+    """The whole model-in/model-out trace of one run, for the AI Inspector.
+
+    Answers the four questions that a status line cannot: was the screenshot
+    really on the wire, was the computer-control prompt really attached, what
+    exactly did the model say, and what exactly did the executor receive.
+
+    `images=false` drops the base64 and keeps every dimension, hash and MIME
+    type, which is the shape to use when the trace is being posted somewhere or
+    exported -- a dozen full screenshots is several megabytes of text.
+
+    There is no API key, header or token anywhere in this payload: the trace is
+    built from the run record, and the wire summary is built from the request
+    body with the base64 and headers excluded.
+    """
+    run = ai_computer.get(task_id)
+    if run is None:
+        return {"error": "no such computer-control task"}
+    # Built with the images and stripped afterwards, so the flag below describes
+    # the image that really was there.  Building it without them first would make
+    # "was a screenshot withheld?" unanswerable, which is the one question this
+    # flag exists to answer.
+    report = run.trace_report(include_images=True)
+    if not images:
+        for turn in report["turns"]:
+            turn["image_withheld"] = bool(turn.get("image") or turn.get("next_image"))
+            turn.pop("image", None)
+            turn.pop("next_image", None)
+    return report
+
+
 @app.post("/ai/computer/{task_id}/stop")
 async def ai_computer_stop(task_id: str):
     if not await ai_computer.stop(task_id):

@@ -24,12 +24,12 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
-from ..providers.base import LLMMessage, TextDelta
+from ..providers.base import LLMMessage, TextDelta, image_mime
 from ..providers.router import ProviderUnavailable, Router
-from .commands import Bounds, Command, parse_command
+from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command, parse_command
 from .controller import ComputerError, RemoteComputer
 from .prompt import FORMAT_CORRECTION, build_prompt
 
@@ -42,12 +42,119 @@ STATUS_ERROR = "error"
 
 
 @dataclass
+class ComputerTurnTrace:
+    """Everything about one model call, kept so a failure can be located.
+
+    The event log answers "what did the loop do".  This answers "what was the
+    model actually given, and what did it actually say back", which is the only
+    way to tell a model that ignored its instructions from a prompt that never
+    said them, a request that lost the screenshot, and a parser that mangled a
+    perfectly good reply.  Those four look identical from the event log alone.
+
+    The raw reply is stored exactly as it arrived.  It is never replaced by a
+    friendly message, because the moment it is, the evidence is gone.
+    """
+
+    turn: int
+    step: int
+    timestamp: float
+    provider: str = ""
+    model: str = ""
+    task: str = ""
+    first_turn: bool = False
+    attempt: int = 0
+
+    # -- A. the request as constructed
+    prompt: str = ""
+    prompt_attached: bool = False
+    message_count: int = 0
+    messages_meta: List[Dict[str, Any]] = field(default_factory=list)
+    json_only: bool = False
+    # What the parser will actually accept, which is the truth.  The screenshot
+    # list below is narrower: it is what a model may do to something it can see.
+    # Reporting only the narrow list would hide that `navigate` is still legal
+    # later, and reporting only the wide one would hide the rule the model is
+    # being held to.
+    allowed_types: List[str] = field(default_factory=list)
+    screenshot_types: List[str] = field(default_factory=list)
+
+    # -- B. the image, as it was going to be sent
+    screenshot_attached: bool = False
+    image: str = ""
+    image_meta: Dict[str, Any] = field(default_factory=dict)
+
+    # -- C. the request as actually serialised, which is not the same claim as A
+    wire: Dict[str, Any] = field(default_factory=dict)
+
+    # -- D. what came back, verbatim
+    raw: str = ""
+    reply_timestamp: float = 0.0
+    # A transport or provider failure, kept separate from a parse failure: the
+    # two are indistinguishable from the outside and get "fixed" in the wrong
+    # place.
+    error: str = ""
+
+    # -- E. what the parser made of it
+    parse_ok: bool = False
+    parse_error: str = ""
+    command: Dict[str, Any] = field(default_factory=dict)
+
+    # -- F. what the machine did about it
+    execution: Dict[str, Any] = field(default_factory=dict)
+    # -- G. the frame that followed, so a before/after pair can be compared
+    next_image: str = ""
+    next_image_meta: Dict[str, Any] = field(default_factory=dict)
+
+    def public(self, include_images: bool = True) -> Dict[str, Any]:
+        """The inspector's view of one turn."""
+        out = {
+            "turn": self.turn,
+            "step": self.step,
+            "timestamp": self.timestamp,
+            "reply_timestamp": self.reply_timestamp,
+            "provider": self.provider,
+            "model": self.model,
+            "task": self.task,
+            "first_turn": self.first_turn,
+            "attempt": self.attempt,
+            "prompt": self.prompt,
+            "prompt_attached": self.prompt_attached,
+            "message_count": self.message_count,
+            "messages_meta": self.messages_meta,
+            "json_only": self.json_only,
+            "allowed_types": self.allowed_types,
+            "screenshot_types": self.screenshot_types,
+            "screenshot_attached": self.screenshot_attached,
+            "image_meta": self.image_meta,
+            "wire": self.wire,
+            "raw": self.raw,
+            "error": self.error,
+            "parse_ok": self.parse_ok,
+            "parse_error": self.parse_error,
+            "command": self.command,
+            "execution": self.execution,
+            "next_image_meta": self.next_image_meta,
+        }
+        if include_images:
+            out["image"] = self.image
+            out["next_image"] = self.next_image
+        else:
+            # Keys stay, values go.  A missing key is ambiguous -- it reads as
+            # "no screenshot was sent" -- while an empty one with
+            # `image_withheld` beside it is unambiguous.
+            out["image"] = ""
+            out["next_image"] = ""
+        return out
+
+
+@dataclass
 class ComputerEvent:
     """One record of one turn, written to the database.
 
     Screenshot bytes are deliberately absent.  A dozen base64 JPEGs is several
     megabytes per run; the dimensions and hash are enough to prove afterwards
-    which image a coordinate was read from.
+    which image a coordinate was read from.  The bytes for the inspector live
+    in ``ComputerTurnTrace`` instead, which is held in memory only and bounded.
     """
 
     step: int
@@ -72,6 +179,10 @@ class ComputerRun:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancelled: bool = False
+    #: Per-turn model I/O.  In memory only, never written to the database: it
+    #: holds the screenshot bytes, which are the largest thing in the process
+    #: and are already being re-captured from the display every turn.
+    trace: List[ComputerTurnTrace] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:
         """What the browser is allowed to see.
@@ -88,8 +199,34 @@ class ComputerRun:
             "message": self.message,
             "url": self.last_url,
             "steps": len(self.events),
+            "turns": len(self.trace),
             "running": self.status in (STATUS_OBSERVING, STATUS_CONTROLLING),
             "done": self.status in (STATUS_DONE, STATUS_ERROR),
+        }
+
+    def trace_report(self, include_images: bool = True) -> Dict[str, Any]:
+        """The whole run as the inspector and "Copy trace" render it.
+
+        Deliberately built from the same records the loop wrote rather than
+        recomputed, so what is displayed cannot disagree with what happened.
+        """
+        return {
+            "task_id": self.task_id,
+            "task": self.task,
+            "thread_id": self.thread_id,
+            "status": self.status,
+            "message": self.message,
+            "url": self.last_url,
+            "step": self.step,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "protocol": {
+                "first_turn_allowed": ["navigate", "search"],
+                "after_screenshot_allowed": list(ALLOWED_TYPES),
+                "after_screenshot_visible_target": list(SCREENSHOT_ACTIONS),
+                "json_only": True,
+            },
+            "turns": [turn.public(include_images=include_images) for turn in self.trace],
         }
 
 
@@ -182,8 +319,12 @@ class ComputerRunner:
             )
         return messages
 
-    async def _ask(self, messages: List[LLMMessage]) -> str:
+    async def _ask(self, messages: List[LLMMessage]) -> Tuple[str, str, str, Dict[str, Any]]:
         """One model call, returning the reply as text.
+
+        Returns ``(text, provider, model, wire)``.  The wire summary is read back
+        off the provider after the call, which is the only place that knows what
+        the request looked like once it had been serialised.
 
         Goes through Provider.stream(), which is the only method every provider
         actually implements.  This used to call a non-existent ``provider.chat()``
@@ -206,7 +347,8 @@ class ComputerRunner:
                     parts.append(event.content)
 
         await asyncio.wait_for(drain(), timeout=120.0)
-        return "".join(parts)
+        wire = getattr(provider, "last_wire", None) or {}
+        return "".join(parts), getattr(provider, "name", ""), model, wire
 
     async def _execute(self, run: ComputerRun) -> None:
         run.status = STATUS_OBSERVING
@@ -232,9 +374,48 @@ class ComputerRunner:
                 )
                 if command is None:
                     return  # _next_command already set the terminal state
+                # The turn that produced this command, so execution and outcome
+                # land on the same record as the reply that caused them.
+                turn = run.trace[-1] if run.trace else None
 
                 run.step += 1
+                started = time.time()
                 terminal = await self._perform(run, command)
+                if turn is not None:
+                    last_event = run.events[-1] if run.events else None
+                    pointer = dict(last_event.screenshot) if last_event else {}
+                    result = last_event.result if last_event else ""
+                    # `done` and `error` record themselves as the run's final
+                    # message rather than as "ok", so a plain result check would
+                    # report a successful, deliberate finish as a failure.
+                    acted = bool(last_event) and (result == "ok" or terminal)
+                    if command.type == "done" and terminal:
+                        outcome = "done"
+                    elif command.type == "error" and terminal:
+                        outcome = "stopped"
+                    elif result == "ok":
+                        outcome = "executed"
+                    elif result == "failed":
+                        outcome = "refused"
+                    else:
+                        outcome = "not_run"
+                    turn.execution = {
+                        "accepted": acted,
+                        "executed": acted,
+                        "outcome": outcome,
+                        "command": command.to_json(),
+                        "result": result,
+                        "error": last_event.error if last_event else "",
+                        "duration_ms": round((time.time() - started) * 1000, 1),
+                        "terminal": terminal,
+                        "x": pointer.get(f"{command.type}_executed_x"),
+                        "y": pointer.get(f"{command.type}_executed_y"),
+                        "actual_pointer_x": pointer.get(f"{command.type}_actual_x"),
+                        "actual_pointer_y": pointer.get(f"{command.type}_actual_y"),
+                        "landed": pointer.get(f"{command.type}_landed"),
+                        "screen_width": pointer.get("screen_width"),
+                        "screen_height": pointer.get("screen_height"),
+                    }
                 if terminal:
                     return
 
@@ -249,6 +430,12 @@ class ComputerRunner:
                     return
                 pending_image = image
                 bounds = Bounds(width=width, height=height)
+                if turn is not None:
+                    # The image the *next* turn will be sent.  Stored so the
+                    # inspector can show the before/after pair, which is the only
+                    # way to see whether a click changed the page.
+                    turn.next_image = image
+                    turn.next_image_meta = _image_meta(image, width, height)
                 if run.events:
                     # Merged, not replaced: the event may already be carrying the
                     # pointer trace from the action this screenshot follows, and
@@ -289,14 +476,41 @@ class ComputerRunner:
         Returns ``(command, error, raw)``.  A ``None`` command means the run has
         already been given a terminal status and the caller must stop.
         """
-        # Retried per turn, not per run: a model that is well behaved on turn
-        # four should not still be paying for turn one.
         for attempt in range(self.settings.computer_max_json_retries + 2):
+            # One trace entry per *request*, not per command.  A retry is a
+            # second real call to the model with a different message list, and
+            # the question the inspector has to answer is "what did the API
+            # receive, and what came back" -- so a retry that overwrote the
+            # first attempt's raw reply would erase the very reply that caused
+            # the retry.  Overwriting made a run whose model ignored its
+            # instructions look like a single clean failure.
+            turn = ComputerTurnTrace(
+                turn=len(run.trace) + 1,
+                step=run.step + 1,
+                timestamp=time.time(),
+                task=run.task,
+                first_turn=first_turn,
+                attempt=attempt,
+                allowed_types=list(
+                    ("navigate", "search") if first_turn else ALLOWED_TYPES
+                ),
+                screenshot_types=list(SCREENSHOT_ACTIONS),
+                json_only=True,
+            )
+            run.trace.append(turn)
+            self._trim_trace(run)
             messages = self._history(
                 run,
                 bounds.width if bounds else 0,
                 bounds.height if bounds else 0,
             )
+            # Taken from the system message specifically, not from position
+            # zero.  Indexing the list would label the user's text as "the
+            # prompt" on any request where the system message went missing,
+            # which is exactly the fault the inspector exists to surface.
+            system = next((m for m in messages if m.role == "system"), None)
+            turn.prompt = system.content if system else ""
+            turn.prompt_attached = system is not None
             if image:
                 # The correction rides in the *same* user turn as the image
                 # rather than a second consecutive user message, which several
@@ -331,19 +545,59 @@ class ComputerRunner:
                     LLMMessage(role="user", content=text, images=[image] if image else [])
                 )
 
+            # Recorded from the messages actually about to be sent, before the
+            # call, so the inspector shows the request even if the call fails.
+            turn.message_count = len(messages)
+            turn.messages_meta = [
+                {
+                    "role": m.role,
+                    "chars": len(m.content or ""),
+                    "images": len(m.images or []),
+                    "image_bytes": sum(len(i) for i in (m.images or [])),
+                    "content_preview": (m.content or "")[:400],
+                }
+                for m in messages
+            ]
+            turn.screenshot_attached = any(m.images for m in messages)
+            turn.image = image or ""
+            turn.image_meta = (
+                _image_meta(image, bounds.width, bounds.height)
+                if image and bounds
+                else {}
+            )
+
             try:
-                raw = await self._ask(messages)
+                raw, provider_name, model, wire = await self._ask(messages)
             except ProviderUnavailable as exc:
+                turn.provider = ""
+                turn.raw = ""
+                turn.reply_timestamp = time.time()
+                turn.error = str(exc)
                 run.status = STATUS_ERROR
                 run.message = str(exc)
                 return None, str(exc), ""
             except Exception as exc:
+                turn.provider = ""
+                turn.raw = ""
+                turn.reply_timestamp = time.time()
+                turn.error = f"the computer-control model could not be reached: {exc}"
                 run.status = STATUS_ERROR
                 run.message = f"the computer-control model could not be reached: {exc}"
                 return None, "", raw
 
+            turn.provider = provider_name
+            turn.model = model
+            turn.wire = wire
+            turn.reply_timestamp = time.time()
+            # Verbatim.  Whatever came back is what gets shown, including prose,
+            # a fenced code block, or nothing recognisable at all.
+            turn.raw = raw
+
             command, error = parse_command(raw, bounds=bounds, first_turn=first_turn)
+            turn.parse_ok = command is not None
+            turn.parse_error = error
             if command is not None:
+                turn.command = command.to_json()
                 return command, "", raw
 
             self._record(run, {"type": "invalid"}, raw, "refused", error=error)
@@ -355,6 +609,21 @@ class ComputerRunner:
         run.status = STATUS_ERROR
         run.message = "the model never returned a usable command"
         return None, "", ""
+
+    def _trim_trace(self, run: ComputerRun) -> None:
+        """Keep the screenshots of the most recent turns only.
+
+        The trace holds real base64 JPEGs, which are a few hundred kilobytes
+        each, and a run is capped at ``computer_max_steps`` turns -- so without
+        this a long run would quietly pin tens of megabytes in the backend for
+        as long as the run object is alive.  The metadata of a dropped image is
+        kept, so the trace still shows that a screenshot existed and what size
+        it was; only the bytes go.
+        """
+        limit = max(2, int(self.settings.computer_max_steps))
+        for old in run.trace[:-limit] if len(run.trace) > limit else []:
+            old.image = ""
+            old.next_image = ""
 
     async def _perform(self, run: ComputerRun, command: Command) -> bool:
         """Execute one command.  The only place a command reaches the machine.
@@ -412,7 +681,11 @@ class ComputerRunner:
             # dying on a transient click that landed on a moving page.
             self._record(run, command.to_json(), "", "failed", error=str(exc))
             run.message = str(exc)
+            # The refusal is reported here and the caller in `_loop` turns the
+            # recorded event into the turn's execution block, so it cannot be
+            # lost just because it failed.
             return False
+
 
         self._record(run, command.to_json(), "", "ok", trace=trace)
         return False
@@ -525,10 +798,17 @@ def _describe_command(command: Dict[str, Any], error: str) -> str:
 
 
 def _image_meta(image: str, width: int, height: int) -> Dict[str, Any]:
+    """Describe the screenshot without copying it a second time.
+
+    The hash is the useful part: it is what lets a screenshot that was dropped
+    for being old still be proven to be the same bytes, and it is what makes
+    "the model saw a new frame" a checkable claim rather than an assumption.
+    """
     digest = hashlib.sha256(image.encode("ascii", "ignore")).hexdigest()[:16]
     return {
         "width": width,
         "height": height,
-        "sha256_16": digest,
+        "mime": image_mime(image),
         "bytes_b64": len(image),
+        "sha256_16": digest,
     }

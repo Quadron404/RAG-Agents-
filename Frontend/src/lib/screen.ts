@@ -240,3 +240,136 @@ export async function fetchComputerTask(taskId: string): Promise<ComputerRun> {
 export async function stopComputerTask(taskId: string): Promise<void> {
   await apiFetch(`/ai/computer/${taskId}/stop`, { method: "POST" });
 }
+
+/**
+ * One message as it went out, without the text.  The roles and sizes are the
+ * part that is worth showing; the full text of every history message would
+ * bury the one message that matters, the prompt.
+ */
+export interface ComputerMessageMeta {
+  role: string;
+  chars: number;
+  images: number;
+  image_bytes: number;
+  content_preview: string;
+}
+
+/** What the request looked like once serialised, from the body that was sent. */
+export interface ComputerWire {
+  path: string;
+  model: string | null;
+  messages_count: number;
+  roles: string[];
+  text_parts: number;
+  image_count: number;
+  image_present: boolean;
+  image_mime: string;
+  image_payload_type: string;
+  content_part_types: string[];
+  first_image_message_index: number | null;
+  stream: boolean;
+  response_format: string | null;
+  tools_count: number;
+  source_message_count: number;
+}
+
+export interface ComputerImageMeta {
+  width: number;
+  height: number;
+  mime: string;
+  bytes_b64: number;
+  sha256_16: string;
+}
+
+/** What the machine did with the command, and where the pointer ended up. */
+export interface ComputerExecution {
+  accepted: boolean;
+  executed: boolean;
+  /** "executed" | "done" | "stopped" | "refused" | "not_run" */
+  outcome: string;
+  command: Record<string, unknown>;
+  result?: string;
+  error?: string;
+  duration_ms?: number;
+  terminal?: boolean;
+  x?: number | null;
+  y?: number | null;
+  actual_pointer_x?: number | null;
+  actual_pointer_y?: number | null;
+  landed?: boolean | null;
+  screen_width?: number | null;
+  screen_height?: number | null;
+}
+
+/**
+ * One real request to the model, and what came of it.
+ *
+ * One entry per request, not per command: a run that had to correct the model
+ * twice made three calls, and the first two replies are the evidence for why.
+ */
+export interface ComputerTurn {
+  turn: number;
+  step: number;
+  attempt: number;
+  timestamp: number;
+  reply_timestamp: number;
+  provider: string;
+  model: string;
+  task: string;
+  first_turn: boolean;
+  prompt: string;
+  prompt_attached: boolean;
+  message_count: number;
+  messages_meta: ComputerMessageMeta[];
+  json_only: boolean;
+  allowed_types: string[];
+  screenshot_types: string[];
+  screenshot_attached: boolean;
+  image: string;
+  image_meta: Partial<ComputerImageMeta>;
+  image_withheld?: boolean;
+  wire: ComputerWire;
+  raw: string;
+  error: string;
+  parse_ok: boolean;
+  parse_error: string;
+  command: Record<string, unknown>;
+  execution: ComputerExecution;
+  next_image: string;
+  next_image_meta: Partial<ComputerImageMeta>;
+}
+
+export interface ComputerTrace {
+  task_id: string;
+  task: string;
+  thread_id: string;
+  status: string;
+  message: string;
+  url: string;
+  step: number;
+  started_at: number;
+  finished_at: number;
+  protocol: {
+    first_turn_allowed: string[];
+    after_screenshot_allowed: string[];
+    after_screenshot_visible_target: string[];
+    json_only: boolean;
+  };
+  turns: ComputerTurn[];
+}
+
+/**
+ * The full run: the prompt, the screenshot, the verbatim reply, the parsed
+ * command and what the executor did with it.
+ *
+ * The backend never puts an API key or a header in here, and it is the only
+ * place the raw model output exists -- the status endpoint deliberately does
+ * not carry it, so a failure that only shows up in the trace is only visible
+ * here.
+ */
+export async function fetchComputerTrace(taskId: string): Promise<ComputerTrace> {
+  const res = await apiFetch(`/ai/computer/${taskId}/trace`);
+  const data = (await res.json()) as ComputerTrace & { error?: string };
+  if (data.error) throw new Error(data.error);
+  return data;
+}

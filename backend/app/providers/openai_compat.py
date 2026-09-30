@@ -15,6 +15,7 @@ from .base import (
     ToolCallEvent,
     ToolSchema,
     image_mime,
+    summarize_wire,
     tool_schema_openai,
     truncate,
 )
@@ -91,6 +92,10 @@ class OpenAICompatProvider(Provider):
         body = {"model": model, "messages": self._wire_messages(messages), "stream": True}
         if tools:
             body["tools"] = tools
+        # Recorded from the body that is about to go out, before it is sent, so
+        # the inspector shows what the API was actually given.  Headers and the
+        # key are not part of it, and the base64 is not copied into the summary.
+        self.last_wire = summarize_wire(body, messages, path="/chat/completions")
         headers = {"Authorization": f"Bearer {self.api_key}"}
         timeout = httpx.Timeout(self.timeout, connect=15.0)
         acc: dict = {}

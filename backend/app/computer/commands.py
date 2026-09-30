@@ -53,6 +53,23 @@ ALLOWED_TYPES = (
 #: nothing has been done yet, so it would be an unevidenced claim.
 FIRST_TURN_TYPES = ("navigate", "search", "error")
 
+#: What may be done to something that is *visible*.  Narrower than
+#: ALLOWED_TYPES on purpose, and the difference is the whole point: once there
+#: is a screenshot, `navigate` and `search` stop being the answer to "the
+#: button is right there".  They stay in the allowlist because re-navigating is
+#: still legitimate when the task really needs another page, and hiding that
+#: would make the inspector disagree with the parser.  Kept here, beside
+#: ALLOWED_TYPES, so the two lists cannot drift apart silently.
+SCREENSHOT_ACTIONS = (
+    "click",
+    "type",
+    "key",
+    "scroll",
+    "move",
+    "done",
+    "error",
+)
+
 MAX_URL_LENGTH = 2048
 MAX_QUERY_LENGTH = 512
 MAX_MESSAGE_LENGTH = 2000
