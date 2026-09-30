@@ -22,6 +22,11 @@ TESTS = (
     # to pass for a feature that can click a user's real browser to be
     # deployable at all.
     "test_computer_control",
+    # The real xdotool layer on the agent.  Paired with the check above on
+    # purpose: that one proves the loop only asks for allowed commands, and this
+    # one proves the agent cannot be talked into running anything else.  Either
+    # half alone would leave a way through.
+    "test_computer_input",
     # The supervisor script.  Before test_bind_mutations, which edits files:
     # this one reads them, and it has to pass before anything is deployed on a
     # machine whose only screen depends on supervise.sh starting.

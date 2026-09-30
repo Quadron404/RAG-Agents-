@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -357,6 +358,10 @@ class ComputerRunner:
             "navigate": "Opening a page",
             "search": "Searching",
             "click": "Clicking",
+            "type": "Typing",
+            "key": "Pressing a key",
+            "scroll": "Scrolling",
+            "move": "Moving the cursor",
         }[command.type]
 
         try:
@@ -364,8 +369,21 @@ class ComputerRunner:
                 await self.computer.navigate(command.url)
             elif command.type == "search":
                 await self.computer.search(command.query)
-            else:
+            elif command.type == "click":
                 await self.computer.click(command.x, command.y)
+            elif command.type == "type":
+                await self.computer.type_text(command.text)
+            elif command.type == "key":
+                await self.computer.key(command.key)
+            elif command.type == "scroll":
+                await self.computer.scroll(command.delta_y)
+            elif command.type == "move":
+                await self.computer.move(command.x, command.y)
+            else:
+                # Unreachable while parse_command and this dispatch agree, and
+                # kept explicit anyway: a `move` fallback here would silently
+                # turn a future action into a cursor movement.
+                raise ComputerError(f"cannot perform {command.type!r}")
         except ComputerError as exc:
             # The action was refused or failed.  Reported as a normal event so
             # the model sees the evidence and can recover, rather than the run
@@ -422,16 +440,38 @@ class ComputerRunner:
 
 
 def _describe_command(command: Dict[str, Any], error: str) -> str:
+    """The command, written back to the model as the record of what was issued.
+
+    The model reads this on the next turn, so it is the same JSON it produced and
+    it has to survive quoting.  Typed text is arbitrary -- a quote, a backslash
+    or a newline in it used to produce a broken fragment that the model then had
+    to guess at, so every string goes through the JSON encoder.
+
+    Text is truncated in this description only: the log keeps the whole thing,
+    but a screenshot's worth of conversation should not be spent echoing a
+    paragraph the model just sent.
+    """
     kind = command.get("type", "?")
     if error:
         return f"{{rejected: {error}}}"
-    if kind == "click":
-        return f'{{"type": "click", "x": {command.get("x")}, "y": {command.get("y")}}}'
+    if kind in ("click", "move"):
+        return json.dumps(
+            {"type": kind, "x": command.get("x"), "y": command.get("y")}
+        )
+    if kind == "scroll":
+        return json.dumps({"type": "scroll", "delta_y": command.get("delta_y")})
+    if kind == "type":
+        text = str(command.get("text", ""))
+        if len(text) > 120:
+            text = text[:120] + "..."
+        return json.dumps({"type": "type", "text": text})
     if kind == "navigate":
-        return f'{{"type": "navigate", "url": "{command.get("url")}"}}'
+        return json.dumps({"type": "navigate", "url": command.get("url")})
     if kind == "search":
-        return f'{{"type": "search", "query": "{command.get("query")}"}}'
-    return f'{{"type": "{kind}", "message": "{command.get("message", "")}"}}'
+        return json.dumps({"type": "search", "query": command.get("query")})
+    if kind == "key":
+        return json.dumps({"type": "key", "key": command.get("key")})
+    return json.dumps({"type": kind, "message": command.get("message", "")})
 
 
 def _image_meta(image: str, width: int, height: int) -> Dict[str, Any]:

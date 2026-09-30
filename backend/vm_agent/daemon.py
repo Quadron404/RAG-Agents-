@@ -1323,6 +1323,203 @@ def _computer_click(x: int, y: int) -> dict:
     return {"ok": True, "x": x, "y": y}
 
 
+#: The keys a model is allowed to press, mapped to the xdotool keysym.
+#:
+#: This table is the whole of the keyboard surface.  There is no code path from
+#: a model-supplied string to an xdotool argument that is not a value here, and
+#: xdotool is invoked with an argument list and no shell, so nothing in it can
+#: become a command, a flag or a path.  A model that asks for a key that is not
+#: listed gets a refusal, not a best guess.
+_COMPUTER_KEYSYMS: dict[str, str] = {
+    "ENTER": "Return",
+    "RETURN": "Return",
+    "TAB": "Tab",
+    "ESC": "Escape",
+    "ESCAPE": "Escape",
+    "SPACE": "space",
+    "BACKSPACE": "BackSpace",
+    "DELETE": "Delete",
+    "DEL": "Delete",
+    "INSERT": "Insert",
+    "HOME": "Home",
+    "END": "End",
+    "UP": "Up",
+    "DOWN": "Down",
+    "LEFT": "Left",
+    "RIGHT": "Right",
+    "PAGEUP": "Prior",
+    "PAGEDOWN": "Next",
+    "PRIOR": "Prior",
+    "NEXT": "Next",
+    "F1": "F1", "F2": "F2", "F3": "F3", "F4": "F4",
+    "F5": "F5", "F6": "F6", "F7": "F7", "F8": "F8",
+    "F9": "F9", "F10": "F10", "F11": "F11", "F12": "F12",
+}
+
+#: Modifiers, for combos such as CTRL+L.  Also an allowlist: "CTRL+X" is a
+#: shortcut, but only because CTRL and X are both named here.
+_COMPUTER_MODIFIERS: dict[str, str] = {
+    "CTRL": "ctrl",
+    "CONTROL": "ctrl",
+    "ALT": "alt",
+    "SHIFT": "shift",
+    "META": "super",
+    "SUPER": "super",
+}
+
+#: A single character key is allowed, because typing a URL into the address bar
+#: is mostly letters.  One ASCII alphanumeric, and only ever as the final token.
+_COMPUTER_SINGLE = set("abcdefghijklmnopqrstuvwxyz0123456789")
+
+#: Longest string accepted in one type command.  Bounded so a model cannot use
+#: the keyboard to write an unbounded amount into whatever has focus.
+_COMPUTER_MAX_TEXT = 2000
+
+#: Scroll notches are 3 lines each; 120px is a reasonable "one notch" and the
+#: cap keeps a large delta from turning into hundreds of X round trips.
+_COMPUTER_SCROLL_NOTCH = 120
+_COMPUTER_SCROLL_MAX_STEPS = 25
+_COMPUTER_MAX_SCROLL = 5000
+
+
+def _computer_type(text: str) -> dict:
+    """Type into whatever currently has focus on the REAL display.
+
+    The text is a single argv element behind a `--` terminator, so a string that
+    begins with a dash is typed rather than read as an option, and xdotool is
+    run without a shell, so no part of it can be interpreted as a command.
+    """
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    if not text:
+        return {"ok": False, "error": "text is required"}
+    if "\x00" in text:
+        return {"ok": False, "error": "text cannot contain a null byte"}
+    if len(text) > _COMPUTER_MAX_TEXT:
+        return {
+            "ok": False,
+            "error": f"text is longer than {_COMPUTER_MAX_TEXT} characters; type it in parts",
+        }
+    try:
+        r = _xdotool("type", "--clearmodifiers", "--delay", "12", "--", text, timeout=45)
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not type: {exc}"}
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "typing failed").strip()[:200]}
+    return {"ok": True, "chars": len(text)}
+
+
+def _computer_key(name: str) -> dict:
+    """Press one allowlisted key or key combo on the REAL display.
+
+    The xdotool argument is assembled entirely from the two tables above and
+    joined with "+", so the model chooses from a fixed set of names and never
+    supplies an argument.  "CTRL+L" and "ctrl+l" are the same request; anything
+    not in the tables is refused with the list of what is allowed.
+    """
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    raw = (name or "").strip()
+    if not raw:
+        return {"ok": False, "error": "key is required"}
+    parts = [p for p in raw.replace("-", "+").split("+") if p.strip()]
+    if not parts:
+        return {"ok": False, "error": "key is required"}
+    parts = [p.strip().upper() for p in parts]
+    if len(parts) > 3:
+        return {"ok": False, "error": "a key combo may have at most two modifiers and one key"}
+
+    base = parts[-1]
+    mods = parts[:-1]
+    keysym: str
+    if len(base) == 1:
+        # A literal character, for shortcuts like CTRL+L and CTRL+A.  The token
+        # was upper-cased with the rest of the request, so it is matched and
+        # emitted in lower case: a shift is implied by the letter itself.
+        if base.lower() not in _COMPUTER_SINGLE:
+            return {"ok": False, "error": f"{base!r} is not an allowed key"}
+        keysym = base.lower()
+    elif base in _COMPUTER_KEYSYMS:
+        keysym = _COMPUTER_KEYSYMS[base]
+    else:
+        allowed = ", ".join(sorted(_COMPUTER_KEYSYMS))
+        return {
+            "ok": False,
+            "error": f"{base!r} is not an allowed key. Allowed: {allowed}, "
+            "or CTRL/ALT/SHIFT/META plus one of those, or a single letter or digit",
+        }
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for mod in mods:
+        if mod not in _COMPUTER_MODIFIERS:
+            allowed_mods = ", ".join(sorted(set(_COMPUTER_MODIFIERS)))
+            return {"ok": False, "error": f"{mod!r} is not an allowed modifier. Allowed: {allowed_mods}"}
+        token = _COMPUTER_MODIFIERS[mod]
+        if token not in seen:
+            seen.add(token)
+            resolved.append(token)
+    combo = "+".join([*resolved, keysym])
+
+    try:
+        r = _xdotool("key", "--clearmodifiers", combo)
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not press {combo}: {exc}"}
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "key press failed").strip()[:200]}
+    return {"ok": True, "key": combo}
+
+
+def _computer_scroll(delta_y: int) -> dict:
+    """Scroll the REAL focused window with the real wheel buttons.
+
+    xdotool has no scroll verb, so this presses button 4 (up) or 5 (down), which
+    is what a physical wheel does.  A large delta is split into notches instead
+    of one enormous jump, because a browser that gets a 600px wheel in a single
+    event scrolls differently than one that gets five 120px events.
+    """
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    if delta_y == 0:
+        return {"ok": False, "error": "delta_y must not be zero; use a positive or negative value"}
+    if abs(delta_y) > _COMPUTER_MAX_SCROLL:
+        return {
+            "ok": False,
+            "error": f"delta_y must be between -{_COMPUTER_MAX_SCROLL} and {_COMPUTER_MAX_SCROLL}",
+        }
+    button = "5" if delta_y > 0 else "4"  # 5 is down, 4 is up
+    steps = max(1, min(abs(delta_y) // _COMPUTER_SCROLL_NOTCH, _COMPUTER_SCROLL_MAX_STEPS))
+    try:
+        # The button name is chosen above, never taken from the request.
+        r = _xdotool("click", "--repeat", str(steps), "--delay", "40", button, timeout=30)
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not scroll: {exc}"}
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "scroll failed").strip()[:200]}
+    return {"ok": True, "delta_y": delta_y, "steps": steps}
+
+
+def _computer_move(x: int, y: int) -> dict:
+    """Move the REAL pointer without clicking."""
+    if not _x_running():
+        return {"ok": False, "error": "the X display is not running"}
+    try:
+        r = _xdotool("mousemove", "--sync", str(x), str(y))
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not move the pointer: {exc}"}
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "mousemove failed").strip()[:200]}
+    return {"ok": True, "x": x, "y": y}
+
+
 def _safe_navigate(url: str) -> dict:
     """Point the real Chrome at a URL.
 
@@ -1682,9 +1879,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         # --- computer control -------------------------------------------------
         # Driven by the AI loop in backend/app/computer.  Every one of these acts
-        # on the local X display or the local Chrome and nothing else; the agent
-        # is still bound to loopback and still behind the same auth, so this adds
-        # routes and not a door.
+        # on the local X display or the local Chrome and nothing else.  The agent
+        # binds loopback only and is not forwarded, so these add routes to an
+        # already-reachable service, not a new door.  Anything a model can name
+        # is re-validated here as well as in the app: the loopback bind is the
+        # trust boundary, and these are the second lock on the same door.
         if path == "/computer/screen":
             self._json(200, _capture_display(bool(req.get("draw_mouse", True))))
             return
@@ -1707,6 +1906,45 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "url is required"})
                 return
             self._json(200, _safe_navigate(url))
+            return
+        if path == "/computer/type":
+            text = req.get("text")
+            if not isinstance(text, str):
+                self._json(400, {"ok": False, "error": "text must be a string"})
+                return
+            self._json(200, _computer_type(text))
+            return
+        if path == "/computer/key":
+            name = req.get("key")
+            if not isinstance(name, str):
+                self._json(400, {"ok": False, "error": "key must be a string"})
+                return
+            self._json(200, _computer_key(name))
+            return
+        if path == "/computer/scroll":
+            raw = req.get("delta_y")
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                self._json(400, {"ok": False, "error": "delta_y must be a number"})
+                return
+            import math as _math
+
+            if _math.isnan(float(raw)) or _math.isinf(float(raw)):
+                self._json(400, {"ok": False, "error": "delta_y must be a finite number"})
+                return
+            self._json(200, _computer_scroll(int(raw)))
+            return
+        if path == "/computer/move":
+            try:
+                x = int(req.get("x"))
+                y = int(req.get("y"))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "x and y must be integers"})
+                return
+            width, height = _desktop_width(), _desktop_height()
+            if not (0 <= x < width and 0 <= y < height):
+                self._json(400, {"ok": False, "error": f"outside the {width}x{height} display"})
+                return
+            self._json(200, _computer_move(x, y))
             return
         if path == "/computer/search":
             self._json(200, _computer_search(str(req.get("query") or "")))

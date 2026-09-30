@@ -24,10 +24,15 @@ class ComputerError(RuntimeError):
 
 
 class RemoteComputer:
-    """The five actions this feature is allowed to take on the remote machine.
+    """The actions this feature is allowed to take on the remote machine.
 
     The manager is injected rather than imported from a module-level singleton,
     which is what lets the whole loop be tested without a Codespace.
+
+    There is no method here that takes a shell command, a key argument or a file
+    path, and no method that forwards a model's string to the agent unexamined:
+    `key` takes an already-validated combo, and `type` takes text that the agent
+    passes to xdotool as a single argument with no shell involved.
     """
 
     def __init__(
@@ -35,10 +40,16 @@ class RemoteComputer:
         manager: WorkspaceManager,
         settle_ms: int = 1400,
         settle_ms_click: int = 900,
+        settle_ms_typing: int = 700,
     ) -> None:
         self.manager = manager
         self.settle_ms = settle_ms
         self.settle_ms_click = settle_ms_click
+        # Typing does not move the page under the caret, so it needs the least
+        # wait of the three. It is still not zero: the keystrokes are sent one
+        # at a time with a delay between them, and the last few land after the
+        # call has already returned.
+        self.settle_ms_typing = settle_ms_typing
 
     async def _post(
         self, path: str, payload: Dict[str, Any], timeout: float = 30.0
@@ -76,6 +87,46 @@ class RemoteComputer:
         result = await self._post("/computer/click", {"x": int(x), "y": int(y)})
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "click failed"))
+        await self._settle(self.settle_ms_click)
+        return result
+
+    async def type_text(self, text: str) -> Dict[str, Any]:
+        """Type into whatever has focus on the remote display."""
+        result = await self._post("/computer/type", {"text": text}, timeout=60.0)
+        if not result.get("ok"):
+            raise ComputerError(str(result.get("error") or "typing failed"))
+        await self._settle(self.settle_ms_typing)
+        return result
+
+    async def key(self, combo: str) -> Dict[str, Any]:
+        """Press one key or combo.
+
+        `combo` has already been through normalize_key, so it is a list of names
+        from the allowlist joined by "+".  The agent checks it against its own
+        copy of that allowlist regardless of what arrives here.
+        """
+        result = await self._post("/computer/key", {"key": combo})
+        if not result.get("ok"):
+            raise ComputerError(str(result.get("error") or "key press failed"))
+        # The full page settle, not the click one: ENTER in an address bar or a
+        # search box is usually a navigation, and a screenshot taken before the
+        # page has moved is a screenshot of the old page.
+        await self._settle(self.settle_ms)
+        return result
+
+    async def scroll(self, delta_y: int) -> Dict[str, Any]:
+        """Scroll the focused remote window. Positive is down, negative is up."""
+        result = await self._post("/computer/scroll", {"delta_y": int(delta_y)})
+        if not result.get("ok"):
+            raise ComputerError(str(result.get("error") or "scroll failed"))
+        await self._settle(self.settle_ms_click)
+        return result
+
+    async def move(self, x: float, y: float) -> Dict[str, Any]:
+        """Move the remote pointer without clicking."""
+        result = await self._post("/computer/move", {"x": int(x), "y": int(y)})
+        if not result.get("ok"):
+            raise ComputerError(str(result.get("error") or "pointer move failed"))
         await self._settle(self.settle_ms_click)
         return result
 
