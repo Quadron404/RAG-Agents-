@@ -25,6 +25,9 @@ IMPORTANT:
 The screenshot is the actual browser running on the remote computer.
 Coordinates refer to the pixel grid of the LATEST screenshot you were sent.
 
+COORDINATE SYSTEM:
+{screenshot_contract}
+
 You do not control the browser directly. The system executes every command you
 return, on the real remote machine, and then sends you a new screenshot.
 
@@ -33,31 +36,31 @@ COMPUTER CONTROL PROTOCOL:
 FIRST COMPUTER ACTION:
 Your first output MUST be exactly one JSON object of:
 
-{"type":"navigate","url":"https://example.com"}
+{{"type":"navigate","url":"https://example.com"}}
 
 OR:
 
-{"type":"search","query":"something to search"}
+{{"type":"search","query":"something to search"}}
 
 You have not seen a screenshot yet, so there is nothing to click. The system will
 perform that navigation/search and then send you the first screenshot.
 
 If the task cannot be done on this browser at all, reply
-{"type":"error","message":"..."} instead of navigating anywhere.
+{{"type":"error","message":"..."}} instead of navigating anywhere.
 
 AFTER THE FIRST ACTION:
 You are looking at a screenshot of a real browser. Choose the next action.
 
 CLICK -- uses the REAL remote mouse:
 
-{"type":"click","x":123,"y":456}
+{{"type":"click","x":123,"y":456}}
 
 x and y are pixels in the latest screenshot. The system moves the real cursor
 there and clicks, then sends you a new screenshot.
 
 TYPE -- uses the REAL remote keyboard:
 
-{"type":"type","text":"some text"}
+{{"type":"type","text":"some text"}}
 
 Types into whatever is focused in the remote browser, exactly as a person would.
 Type the text and nothing else. Use this to fill a search box or an address bar
@@ -65,22 +68,23 @@ after you have clicked it.
 
 KEY -- uses the REAL remote keyboard:
 
-{"type":"key","key":"ENTER"}
+{{"type":"key","key":"ENTER"}}
 
-Valid keys: ENTER, RETURN, TAB, ESC, SPACE, BACKSPACE, DELETE, HOME, END, UP,
-DOWN, LEFT, RIGHT, PAGEUP, PAGEDOWN, F1-F12, and a single letter or digit.
-Combine up to two modifiers with a key: CTRL+L, CTRL+A, ALT+F4, CTRL+SHIFT+T.
-Modifiers: CTRL, ALT, SHIFT, META.
+Valid keys: ENTER, RETURN, TAB, ESC, ESCAPE, SPACE, BACKSPACE, DELETE, INSERT,
+HOME, END, UP, DOWN, LEFT, RIGHT, ARROWUP, ARROWDOWN, ARROWLEFT, ARROWRIGHT,
+PAGEUP, PAGEDOWN, PRIOR, NEXT, F1-F12, and a single letter or digit.
+Combine up to two modifiers with a key: CTRL+L, CTRL+A, CTRL+C, CTRL+V, ALT+F4,
+CTRL+SHIFT+T. Modifiers: CTRL, ALT, SHIFT, META.
 
 SCROLL -- scrolls the REAL remote page:
 
-{"type":"scroll","delta_y":600}
+{{"type":"scroll","delta_y":600}}
 
 Positive scrolls down, negative scrolls up. Use between -5000 and 5000.
 
 MOVE -- moves the REAL remote cursor without clicking:
 
-{"type":"move","x":700,"y":450}
+{{"type":"move","x":700,"y":450}}
 
 Useful for putting the cursor on a target you can see, when you want to check
 where it is before committing to a click.
@@ -90,11 +94,11 @@ NAVIGATE and SEARCH again at any time, whenever the task needs a different page.
 TASK COMPLETION:
 When the task is complete, output:
 
-{"type":"done","message":"Task complete."}
+{{"type":"done","message":"Task complete."}}
 
 If you cannot safely continue, output:
 
-{"type":"error","message":"Reason."}
+{{"type":"error","message":"Reason."}}
 
 STRICT RULES:
 - Output JSON only. One object. Nothing else.
@@ -117,6 +121,38 @@ STRICT RULES:
 - Stop with "error" when safe progress is impossible.
 - The only allowed "type" values are: navigate, search, click, type, key, scroll,
   move, done, error."""
+
+
+def screenshot_contract(width: int, height: int) -> str:
+    """The coordinate contract, stated in the size actually captured.
+
+    Built from the real screenshot dimensions rather than a hardcoded 1365x768,
+    because a fixed number here would be a lie the moment the display is a
+    different size, and a model told the wrong grid is exactly how clicks end up
+    landing off-target.  On the configured display this is the 1365x768 case.
+    """
+    return (
+        f"The screenshot is {width}x{height} pixels. Coordinates are measured from "
+        f"its top-left corner. x increases right, y increases down. Return "
+        f"coordinates in the screenshot's original pixel coordinate system. Choose "
+        f"the center of the visible target whenever possible. Never reuse "
+        f"coordinates from an earlier screenshot.\n"
+        f"The screenshot is the whole remote screen, including the browser tab "
+        f"strip and address bar, so those are part of the same grid and can be "
+        f"clicked directly. A point (x, y) is executed at exactly (x, y) on the "
+        f"real display: nothing is scaled, offset or converted between what you "
+        f"see and where the pointer goes."
+    )
+
+
+def build_prompt(width: int, height: int) -> str:
+    """The full prompt for a run against a screen of this size.
+
+    The JSON braces are doubled because this is a .format() template; the literal
+    prompt keeps single braces so it reads as the JSON it is asking for.
+    """
+    return COMPUTER_CONTROL_PROMPT.format(screenshot_contract=screenshot_contract(width, height))
+
 
 # Appended to the original prompt when a response could not be parsed.  It names
 # the specific failure, because "invalid JSON" with no detail produces a second

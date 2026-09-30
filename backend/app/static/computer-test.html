@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Computer control test page</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 20px/1.4 system-ui, sans-serif;
+    background: #f4f5f7;
+    color: #14161a;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .wrap { padding: 18px 22px; }
+  .row { display: flex; gap: 26px; align-items: flex-start; margin-top: 18px; }
+  button {
+    /* Large and high-contrast on purpose.  A target that is easy to miss turns
+       a coordinate bug into an intermittent one, which is much harder to
+       diagnose than a page where a correct click always works. */
+    font: inherit;
+    font-weight: 600;
+    padding: 22px 34px;
+    min-width: 240px;
+    min-height: 78px;
+    background: #1a5fd0;
+    color: #fff;
+    border: 3px solid #0d3f8f;
+    border-radius: 8px;
+  }
+  button:active { background: #0d3f8f; }
+  #second { background: #17683a; border-color: #0d4426; }
+  #second:active { background: #0d4426; }
+  input {
+    font: inherit;
+    padding: 20px 22px;
+    min-width: 340px;
+    min-height: 78px;
+    border: 3px solid #14161a;
+    border-radius: 8px;
+  }
+  input:focus { outline: 5px solid #f0a202; }
+  #status {
+    margin-top: 20px;
+    padding: 16px 20px;
+    font-size: 24px;
+    font-weight: 700;
+    background: #fff;
+    border: 3px dashed #8a8f98;
+    border-radius: 8px;
+    min-height: 62px;
+  }
+  #typed { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Computer control test page</h1>
+  <div>Each control below reports what actually happened, so a screenshot is
+       enough to tell a working run from a broken one.</div>
+
+  <div class="row">
+    <button id="first" onclick="report('first', 'clicked')">First button</button>
+    <button id="second" onclick="report('second', 'clicked')">Second button</button>
+  </div>
+
+  <div class="row">
+    <input id="text" type="text" placeholder="Type here" autocomplete="off"
+           oninput="report('text', this.value)">
+  </div>
+
+  <div id="status">Nothing has happened yet.</div>
+  <div>Typed so far: <span id="typed">(empty)</span></div>
+</div>
+
+<script>
+  // The page only *displays* what the pointer and keyboard did.  Nothing here
+  // is read by the agent: it sees pixels, exactly as it would on any real site.
+  function report(what, value) {
+    document.getElementById('status').textContent =
+      what + ' -> ' + (value === '' ? '(empty)' : value);
+    if (what === 'text') {
+      document.getElementById('typed').textContent =
+        value === '' ? '(empty)' : value;
+    }
+  }
+</script>
+</body>
+</html>

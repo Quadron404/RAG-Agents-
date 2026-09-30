@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import unittest
+from pathlib import Path
 from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,10 +32,14 @@ from app.computer.commands import (  # noqa: E402
     parse_command,
 )
 from app.computer.controller import ComputerError  # noqa: E402
-from app.computer.prompt import COMPUTER_CONTROL_PROMPT  # noqa: E402
+from app.computer.prompt import build_prompt  # noqa: E402
 from app.providers.base import Done, LLMMessage, TextDelta  # noqa: E402
 
 SCREEN = Bounds(width=1280, height=800)
+# The prompt is built for a concrete screenshot size, so the tests read the same
+# text a run sends.  Asserting on the raw template would let the coordinate
+# contract go untested -- it is the one part with a number in it.
+COMPUTER_CONTROL_PROMPT = build_prompt(SCREEN.width, SCREEN.height)
 
 
 class TestJsonExtraction(unittest.TestCase):
@@ -232,6 +237,53 @@ class TestPrompt(unittest.TestCase):
             self.assertIn('"%s"' % kind, COMPUTER_CONTROL_PROMPT)
 
 
+class TestThePromptStatesTheRealCoordinateGrid(unittest.TestCase):
+    """The prompt tells the model which pixels its coordinates are in.
+
+    This is the contract the whole click path rests on.  If the number in the
+    prompt is not the number in the screenshot, every coordinate the model
+    returns is wrong by a ratio, and nothing else in the run would reveal it.
+    """
+
+    def test_the_prompt_carries_the_size_it_was_built_for(self):
+        prompt = build_prompt(1365, 768)
+        self.assertIn("The screenshot is 1365x768 pixels.", prompt)
+        # And nothing that would let a model pick up a different number.
+        self.assertNotIn("{screenshot_contract}", prompt)
+        self.assertNotIn("1365x768", build_prompt(1280, 800))
+
+    def test_a_different_display_size_is_stated_instead_of_the_default(self):
+        # The configured display is 1365x768, so a hardcoded number would look
+        # correct here and be wrong on any other X server.
+        prompt = build_prompt(1024, 768)
+        self.assertIn("The screenshot is 1024x768 pixels.", prompt)
+        self.assertNotIn("1365", prompt)
+
+    def test_the_prompt_says_the_mapping_is_one_to_one(self):
+        prompt = build_prompt(1365, 768)
+        for phrase in (
+            "Coordinates are measured from its top-left corner",
+            "x increases right, y increases down",
+            "Return coordinates in the screenshot's original pixel coordinate system",
+            "Choose the center of the visible target whenever possible",
+            "Never reuse coordinates from an earlier screenshot",
+            "the whole remote screen",
+            "tab strip and address bar",
+            "nothing is scaled, offset or converted",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, prompt)
+
+    def test_the_braces_that_shape_the_json_survive_building(self):
+        # The contract is interpolated into a prompt full of JSON examples, so
+        # every literal brace in the template has to survive the format call.
+        # An unescaped one raises at import-time of the message, and a
+        # double-escaped one that slipped through would reach the model as noise.
+        prompt = build_prompt(1365, 768)
+        self.assertNotIn("{{", prompt)
+        self.assertIn('{"type":"click","x":123,"y":456}', prompt)
+
+
 class TestUserMessageImages(unittest.TestCase):
     """The screenshot rides on a *user* turn, so user turns must carry images."""
 
@@ -306,6 +358,9 @@ class FakeComputer:
         self.settle_ms = 0
         self.settle_ms_click = 0
         self.settle_ms_typing = 0
+        # Set to (w, h) to make the capture come back at a size other than the
+        # display bounds, the way a real mismatch would.
+        self.capture_size = None
         # Set to a string to make that one action fail, the way a real refusal
         # from the agent arrives.
         self.fail_on: tuple = ()
@@ -324,6 +379,16 @@ class FakeComputer:
         self.actions.append(("click", x, y))
         if self.fail_on == ("click",):
             raise ComputerError("click failed")
+        # Mirrors the real reply, which carries the pointer position read back
+        # from X so the run can record whether the click landed.
+        return {
+            "ok": True,
+            "x": int(x), "y": int(y),
+            "actual_x": int(x), "actual_y": int(y),
+            "landed": True,
+            "display_width": self._bounds.width,
+            "display_height": self._bounds.height,
+        }
 
     async def type_text(self, text):
         self.actions.append(("type", text))
@@ -344,12 +409,21 @@ class FakeComputer:
         self.actions.append(("move", x, y))
         if self.fail_on == ("move",):
             raise ComputerError("pointer move failed")
+        return {
+            "ok": True,
+            "x": int(x), "y": int(y),
+            "actual_x": int(x), "actual_y": int(y),
+            "landed": True,
+            "display_width": self._bounds.width,
+            "display_height": self._bounds.height,
+        }
 
     async def screenshot(self):
         self.screens += 1
         # A different payload per frame, so a test can prove the model was sent
         # the newest one rather than a cached first one.
-        return f"SCREENSHOT-{self.screens}", self._bounds.width, self._bounds.height
+        width, height = self.capture_size or (self._bounds.width, self._bounds.height)
+        return f"SCREENSHOT-{self.screens}", width, height
 
     async def state(self):
         return {"ok": True, "url": "https://current.test/page"}
@@ -372,6 +446,215 @@ def make_runner(replies, bounds=SCREEN, **settings_overrides):
     runner = ComputerRunner(settings, Router({"openrouter": provider}, settings), db=None)
     runner.computer = FakeComputer(bounds)
     return runner, provider
+
+
+class TestTheDeterministicTestPageExists(unittest.TestCase):
+    """A page whose correct behaviour is visible in a screenshot.
+
+    Verifying a coordinate path needs a target a correct click always hits and
+    an incorrect one never does.  Without a page built for that, "the click
+    missed" and "the model aimed badly" are indistinguishable from the run
+    record alone.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.static_dir = Path(__file__).resolve().parents[1] / "app" / "static"
+        cls.page = cls.static_dir / "computer-test.html"
+        cls.html = cls.page.read_text(encoding="utf-8")
+
+    def test_the_page_file_is_where_the_route_reads_it_from(self):
+        self.assertTrue(self.page.is_file())
+        self.assertEqual(self.page.parent, self.static_dir)
+
+    def test_the_page_has_its_own_route_rather_than_only_a_static_mount(self):
+        # The static mount is the *fallback* for when the frontend build is
+        # missing, and the deployment that matters is the one with the build.
+        # A page reachable only through the fallback is a 404 in production,
+        # which is where verifying a run actually happens.
+        main = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn('@app.get("/computer-test.html")', main)
+        self.assertLess(
+            main.index('@app.get("/computer-test.html")'),
+            main.index('app.mount("/"'),
+            "the route is declared after the catch-all mount and would be shadowed",
+        )
+
+    def test_it_offers_a_button_a_field_and_a_second_button(self):
+        self.assertIn('id="first"', self.html)
+        self.assertIn('id="text"', self.html)
+        self.assertIn('id="second"', self.html)
+
+    def test_each_target_is_large_enough_to_hit(self):
+        # A 20px target is a coin flip at this display size, and a coin flip
+        # reads as an unreliable agent rather than as an unreliable test.
+        for selector in ('button', 'input'):
+            self.assertIn(f"{selector} {{", self.html)
+        self.assertIn("min-width: 240px", self.html)
+        self.assertIn("min-height: 78px", self.html)
+
+    def test_each_target_shows_what_happened_to_it(self):
+        # The page has to report the click or the keystroke, because a
+        # screenshot of an unchanged page cannot distinguish "typed" from
+        # "typed into the void".
+        for target in ("first", "second", "text"):
+            with self.subTest(target=target):
+                self.assertIn(f"report('{target}'", self.html)
+        self.assertIn('id="status"', self.html)
+
+    def test_the_page_does_not_itself_click_or_type(self):
+        # It must be driven only by real pointer and keyboard input.  A timer or
+        # a scripted click here would make a run look like it worked when the
+        # agent had done nothing.
+        for cheating in ("setTimeout", "setInterval", "dispatchEvent", ".click()"):
+            with self.subTest(api=cheating):
+                self.assertNotIn(cheating, self.html)
+
+
+class TestTheRunnerTellsTheModelTheRealSize(unittest.TestCase):
+    """The prompt a run sends must match the screenshot the run is looking at.
+
+    A prompt built once at import and reused every turn is right exactly as long
+    as the display never changes, and silently wrong the moment it does -- with
+    the model aiming at a grid that is not the one in front of it.
+    """
+
+    def test_the_system_prompt_carries_the_current_screenshot_size(self):
+        bounds = Bounds(width=1024, height=600)
+        runner, provider = make_runner(
+            [
+                '{"type":"navigate","url":"https://example.com"}',
+                '{"type":"done","message":"ok"}',
+            ],
+            bounds=bounds,
+        )
+        asyncio.run(_finish(runner, "go"))
+        # The first request is made before any capture exists, so it is the
+        # later ones -- the ones made while the model is looking at a
+        # screenshot -- that have to state that screenshot's size.
+        after_first = provider.calls[1:]
+        self.assertTrue(after_first, "the run never asked again")
+        for request in after_first:
+            system = request[0]
+            self.assertEqual(system.role, "system")
+            self.assertIn(
+                f"The screenshot is {bounds.width}x{bounds.height} pixels.",
+                system.content,
+            )
+
+    def test_the_size_follows_a_screenshot_that_is_not_the_configured_one(self):
+        # The capture can come back at a different size than the display claims.
+        # The model is shown those pixels, so those are the pixels it gets.
+        runner, provider = make_runner(
+            [
+                '{"type":"navigate","url":"https://example.com"}',
+                '{"type":"done","message":"ok"}',
+            ],
+        )
+        runner.computer.capture_size = (800, 450)
+        asyncio.run(_finish(runner, "go"))
+        later = [r for r in provider.calls[1:] if "The screenshot is" in r[0].content]
+        self.assertTrue(later, "no request stated a coordinate grid")
+        self.assertIn("The screenshot is 800x450 pixels.", later[-1][0].content)
+
+    def test_the_first_request_carries_no_screenshot_to_describe(self):
+        # The first turn happens before any capture exists.  The prompt must not
+        # claim a grid the model has not been shown an image of, and the
+        # contract text is what makes that claim, so the first turn gets the
+        # configured default and the real number arrives with the image.
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        asyncio.run(_finish(runner, "go"))
+        first = provider.calls[0]
+        self.assertEqual(len(first), 2, "the first turn was system+task only")
+        self.assertFalse(
+            any(getattr(m, "images", None) for m in first),
+            "an image was attached before one existed",
+        )
+
+
+class TestAPointerIsTrackedFromRequestToResult(unittest.TestCase):
+    """Every stage of a coordinate is recorded, so a miss can be diagnosed.
+
+    Without this a click that missed and a click that worked produce identical
+    runs, and the only way to tell them apart is to watch the VNC session.
+    """
+
+    def _run_to_a_click(self):
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"click","x":700,"y":350}',
+            '{"type":"done","message":"ok"}',
+        ])
+        return asyncio.run(_finish(runner, "go"))
+
+    def test_a_click_records_the_model_executed_and_actual_positions(self):
+        run = self._run_to_a_click()
+        click_events = [e for e in run.events if e.command.get("type") == "click"]
+        self.assertEqual(len(click_events), 1)
+        shot = click_events[0].screenshot
+        self.assertEqual(shot["click_model_x"], 700)
+        self.assertEqual(shot["click_model_y"], 350)
+        self.assertEqual(shot["click_executed_x"], 700)
+        self.assertEqual(shot["click_executed_y"], 350)
+        self.assertEqual(shot["click_actual_x"], 700)
+        self.assertEqual(shot["click_actual_y"], 350)
+        self.assertTrue(shot["click_landed"])
+
+    def test_the_record_also_says_how_big_the_display_was(self):
+        run = self._run_to_a_click()
+        click_events = [e for e in run.events if e.command.get("type") == "click"]
+        shot = click_events[0].screenshot
+        self.assertEqual(shot["screen_width"], SCREEN.width)
+        self.assertEqual(shot["screen_height"], SCREEN.height)
+
+    def test_a_pointer_that_drifted_is_recorded_as_not_landing(self):
+        # The case the trace exists for: the click was issued for 700,350 and
+        # the pointer ended up somewhere else, so the run is not a success even
+        # though nothing raised.
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"click","x":700,"y":350}',
+            '{"type":"done","message":"ok"}',
+        ])
+        original = runner.computer.click
+
+        async def drifted(x, y):
+            result = await original(x, y)
+            return {**result, "actual_x": 300, "actual_y": 120, "landed": False}
+
+        runner.computer.click = drifted
+        run = asyncio.run(_finish(runner, "go"))
+        click_events = [e for e in run.events if e.command.get("type") == "click"]
+        shot = click_events[0].screenshot
+        self.assertEqual(shot["click_executed_x"], 700)
+        self.assertEqual(shot["click_actual_x"], 300)
+        self.assertFalse(shot["click_landed"])
+
+    def test_a_move_is_traced_the_same_way(self):
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"move","x":640,"y":480}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+        moves = [e for e in run.events if e.command.get("type") == "move"]
+        self.assertEqual(len(moves), 1)
+        self.assertEqual(moves[0].screenshot["move_model_x"], 640)
+        self.assertEqual(moves[0].screenshot["move_actual_y"], 480)
+
+    def test_the_trace_does_not_displace_the_screenshot_record(self):
+        # Both live on the same field, so a merge bug would show up as a click
+        # event with no image dimensions -- or as a screenshot with no pointer.
+        run = self._run_to_a_click()
+        click_events = [e for e in run.events if e.command.get("type") == "click"]
+        shot = click_events[0].screenshot
+        self.assertIn("width", shot)
+        self.assertIn("height", shot)
+        self.assertIn("sha256_16", shot)
+        self.assertIn("click_model_x", shot)
 
 
 class TestLoop(unittest.TestCase):

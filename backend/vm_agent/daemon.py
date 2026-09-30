@@ -706,6 +706,17 @@ DESKTOP_DISPLAY = os.environ.get("DESKTOP_DISPLAY", ":99")
 DESKTOP_SIZE = os.environ.get("DESKTOP_SIZE", "1365x768")
 DESKTOP_DEPTH = int(os.environ.get("DESKTOP_DEPTH", "24"))
 DESKTOP_WM = os.environ.get("DESKTOP_WM", "fluxbox")
+
+
+def _log(message: str) -> None:
+    """One line to stdout, which is what supervises.sh captures into agent.log."""
+    print(f"[agent] {message}", flush=True)
+
+
+# The real X screen size, cached.  None means "not measured yet"; a tuple means
+# X has been asked and its answer is what the coordinate contract is built on.
+# See _display_geometry for why the request is not trusted.
+_GEOMETRY_CACHE = None
 VNC_PORT = int(os.environ.get("VNC_PORT", "5900"))
 # The RFB -> WebSocket hop.  The app proxies /websockify here after checking the
 # session cookie, so this port is the only way the framebuffer leaves the
@@ -728,17 +739,152 @@ _desktop_spawn_lock = threading.Lock()
 
 
 def _desktop_width() -> int:
-    try:
-        return int(DESKTOP_SIZE.split("x")[0])
-    except Exception:
-        return 1280
+    w, _ = _display_geometry()
+    return w
 
 
 def _desktop_height() -> int:
+    _, h = _display_geometry()
+    return h
+
+
+def _display_geometry() -> tuple:
+    """The REAL X screen size, asked of the X server itself.
+
+    DESKTOP_SIZE is only a request.  It is what Xvfb was asked for and what
+    ffmpeg is told to grab, so if the two ever disagree -- a stale env var, an X
+    server left over from an earlier run at a different size -- every coordinate
+    in the loop is wrong: the model is told one grid and xdotool acts on
+    another.  `xdotool getdisplaygeometry` reports what X actually has, so that
+    is what bounds are checked against, and the requested size is only a
+    fallback for when X cannot be asked.
+    """
+    global _GEOMETRY_CACHE
+    if _GEOMETRY_CACHE is not None:
+        return _GEOMETRY_CACHE
+    requested = (1365, 768)
     try:
-        return int(DESKTOP_SIZE.split("x")[1])
+        parts = DESKTOP_SIZE.split("x")
+        requested = (int(parts[0]), int(parts[1]))
     except Exception:
-        return 800
+        pass
+    if not _x_running():
+        _GEOMETRY_CACHE = requested
+        return _GEOMETRY_CACHE
+    try:
+        r = _xdotool("getdisplaygeometry", timeout=10)
+        if r.returncode == 0:
+            nums = r.stdout.decode("ascii", "replace").split()
+            if len(nums) == 2 and all(n.isdigit() for n in nums):
+                actual = (int(nums[0]), int(nums[1]))
+                if actual != requested:
+                    _log(
+                        f"DISPLAY GEOMETRY MISMATCH: X is {actual[0]}x{actual[1]} "
+                        f"but DESKTOP_SIZE says {requested[0]}x{requested[1]}. "
+                        f"Coordinates will follow X, not the request."
+                    )
+                _GEOMETRY_CACHE = actual
+                return _GEOMETRY_CACHE
+    except Exception as exc:
+        _log(f"could not read the display geometry ({exc}); using DESKTOP_SIZE")
+    _GEOMETRY_CACHE = requested
+    return _GEOMETRY_CACHE
+
+
+def _reset_display_geometry_cache() -> None:
+    """Forget the cached size.  Called when X is restarted or resized."""
+    global _GEOMETRY_CACHE
+    _GEOMETRY_CACHE = None
+
+
+def _jpeg_size(data: bytes) -> tuple:
+    """The real pixel size of a JPEG, read from its own SOF marker.
+
+    The loop used to report the size of the string in DESKTOP_SIZE and trust
+    that the bytes matched.  The model is told a grid; if the image is a
+    different grid then every coordinate it returns is in the wrong space, and
+    the symptom is a click that misses by a ratio nobody can see.  So the
+    dimensions are read out of the bytes that are actually going to be sent.
+    """
+    if len(data) < 4 or data[:2] != b"\xff\xd8":
+        return (0, 0)
+    i = 2
+    n = len(data)
+    # SOF0..SOF15, skipping the three markers that share the range and are not
+    # frame headers (DHT=c4, JPG=c8, DAC=cc).
+    while i + 9 < n:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        if marker == 0xFF:
+            i += 1
+            continue
+        if i + 4 > n:
+            break
+        seg_len = (data[i + 2] << 8) | data[i + 3]
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            if i + 9 <= n:
+                h = (data[i + 5] << 8) | data[i + 6]
+                w = (data[i + 7] << 8) | data[i + 8]
+                return (w, h)
+            break
+        i += 2 + seg_len
+    return (0, 0)
+
+
+def _pointer_position() -> tuple:
+    """Where the pointer actually is, read back from the X server.
+
+    This is the check that turns "the click probably landed" into "the pointer
+    is at 700,350".  Without it a click that silently missed looks exactly like
+    a click that worked and the page simply did not respond.
+    """
+    try:
+        r = _xdotool("getmouselocation", "--shell", timeout=10)
+        if r.returncode == 0:
+            text = r.stdout.decode("ascii", "replace")
+            x = y = None
+            for line in text.splitlines():
+                if line.startswith("X="):
+                    x = int(line.split("=", 1)[1])
+                elif line.startswith("Y="):
+                    y = int(line.split("=", 1)[1])
+            if x is not None and y is not None:
+                return (x, y)
+    except Exception:
+        pass
+    return (None, None)
+
+
+def _focus_window_under_cursor() -> bool:
+    """Give the keyboard focus to the window the pointer is over.
+
+    Keystrokes go to whatever has input focus, not to whatever is on top.  A
+    click sets focus through the window manager, but not when the click lands on
+    a part of the page that is not focusable, and not at all on the very first
+    action of a run.  Typing then goes to the wrong window and appears to do
+    nothing, which reads as "keyboard control is broken".
+    """
+    if not DESKTOP_WM or DESKTOP_WM.lower() == "none":
+        return False  # no WM means no window focus to hand around
+    try:
+        win = _xdotool("getwindowundercursor", timeout=10)
+        if win.returncode != 0:
+            return False
+        wid = win.stdout.decode("ascii", "replace").strip()
+        if not wid.isdigit():
+            return False
+        act = _xdotool("windowactivate", "--sync", wid, timeout=10)
+        if act.returncode != 0:
+            foc = _xdotool("windowfocus", "--sync", wid, timeout=10)
+            return foc.returncode == 0
+        return True
+    except Exception:
+        return False
 
 
 def _x_socket() -> str:
@@ -950,6 +1096,9 @@ def _ensure_x() -> None:
         ],
     )
     _note_restart("xvfb")
+    # A new X server is a new coordinate system, so the cached size from the old
+    # one is now a lie.
+    _reset_display_geometry_cache()
     for _ in range(60):
         if _x_running():
             break
@@ -1292,35 +1441,92 @@ def _capture_display(draw_mouse: bool = True) -> dict:
             "ok": False,
             "error": (r.stderr or b"capture failed").decode("utf-8", "replace")[:300],
         }
-    width, _, height = DESKTOP_SIZE.partition("x")
+    # The size reported to the app is the size of the bytes actually being sent,
+    # read out of the JPEG itself.  The model is told "these pixels are your
+    # coordinate system", so that number has to describe the image in front of
+    # it.  Reporting the requested size instead would let the two disagree
+    # silently, which is exactly the case where every click is off by a ratio
+    # and nothing anywhere looks wrong.
+    jw, jh = _jpeg_size(r.stdout)
+    disp_w, disp_h = _display_geometry()
+    width, height = (jw, jh) if (jw and jh) else (disp_w, disp_h)
+    matches = (jw, jh) == (disp_w, disp_h) if (jw and jh) else True
+    if not matches:
+        _log(
+            f"SCREENSHOT SIZE MISMATCH: the image is {jw}x{jh} but the X display "
+            f"is {disp_w}x{disp_h}. Reporting the image size, because that is what "
+            f"the model will be shown. Clicks may be off by a ratio."
+        )
     return {
         "ok": True,
         "image": base64.b64encode(r.stdout).decode("ascii"),
         "mime": "image/jpeg",
-        "width": int(width or 0),
-        "height": int(height or 0),
+        "width": int(width),
+        "height": int(height),
+        # Reported alongside so a mismatch is visible in the app's log without
+        # having to go and read the agent's.
+        "display_width": int(disp_w),
+        "display_height": int(disp_h),
+        "geometry_matches": matches,
     }
 
 
 def _computer_click(x: int, y: int) -> dict:
-    """Move the real pointer and left-click, in one X server round trip."""
+    """Move the real pointer to (x, y) and left-click, in ONE xdotool call.
+
+    This used to be two calls -- `mousemove --sync x y` and then `click 1` --
+    which is the most likely reason clicks were landing next to their target.
+    Two processes means two round trips to the X server with a gap in between, and
+    anything that moves the pointer during that gap (the window manager warping
+    it, a real mouse device, a repaint) puts the click somewhere other than where
+    the move left it.  xdotool accepts several commands in one invocation and
+    applies them in order against one connection, so `mousemove --sync x y click
+    1` has no gap at all: the button goes down at the position the pointer was
+    just moved to.
+
+    `--sync` matters too: without it mousemove only asks X to move the pointer
+    and returns before the move has happened, so the click is queued against the
+    old position.
+
+    The pointer is then read back, so the reply says where the click actually
+    landed rather than where it was asked to.
+    """
     if not _x_running():
         return {"ok": False, "error": "the X display is not running"}
+    disp_w, disp_h = _display_geometry()
+    if not (0 <= x < disp_w and 0 <= y < disp_h):
+        # Refused, never clamped: a clamped click is a click on the edge of the
+        # screen wearing the coordinates of something in the middle of it.
+        return {
+            "ok": False,
+            "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display",
+        }
     try:
-        move = _xdotool("mousemove", "--sync", str(x), str(y))
+        r = _xdotool("mousemove", "--sync", str(x), str(y), "click", "1")
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
     except Exception as exc:
-        return {"ok": False, "error": f"could not move the pointer: {exc}"}
-    if move.returncode != 0:
-        return {"ok": False, "error": (move.stderr or "mousemove failed").strip()[:200]}
-    try:
-        click = _xdotool("click", "1")
-    except Exception as exc:
         return {"ok": False, "error": f"could not click: {exc}"}
-    if click.returncode != 0:
-        return {"ok": False, "error": (click.stderr or "click failed").strip()[:200]}
-    return {"ok": True, "x": x, "y": y}
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "click failed").strip()[:200]}
+    # Give the WM a moment to warp or confine the pointer, then read it back.
+    time.sleep(0.05)
+    ax, ay = _pointer_position()
+    landed = (ax == x and ay == y)
+    _log(
+        f"CLICK screen={disp_w}x{disp_h} model=({x},{y}) executed=({x},{y}) "
+        f"actual=({ax},{ay}) {'LANDED' if landed else 'DRIFTED'}"
+    )
+    return {
+        "ok": True,
+        "x": x,
+        "y": y,
+        "actual_x": ax,
+        "actual_y": ay,
+        "landed": landed,
+        "display_width": disp_w,
+        "display_height": disp_h,
+    }
 
 
 #: The keys a model is allowed to press, mapped to the xdotool keysym.
@@ -1347,6 +1553,18 @@ _COMPUTER_KEYSYMS: dict[str, str] = {
     "DOWN": "Down",
     "LEFT": "Left",
     "RIGHT": "Right",
+    # The ARROW* spellings as well as the bare ones.  A model asked for an
+    # arrow key reaches for ARROWDOWN, and a refusal there reads as "the keyboard
+    # is broken" rather than "that is not a name I accept" -- both spellings are
+    # the same xdotool keysym, so allowing both costs nothing.
+    "ARROWUP": "Up",
+    "ARROWDOWN": "Down",
+    "ARROWLEFT": "Left",
+    "ARROWRIGHT": "Right",
+    "UPARROW": "Up",
+    "DOWNARROW": "Down",
+    "LEFTARROW": "Left",
+    "RIGHTARROW": "Right",
     "PAGEUP": "Prior",
     "PAGEDOWN": "Next",
     "PRIOR": "Prior",
@@ -1401,6 +1619,14 @@ def _computer_type(text: str) -> dict:
             "error": f"text is longer than {_COMPUTER_MAX_TEXT} characters; type it in parts",
         }
     try:
+        # Focus first.  Key events go to whatever has input focus, and after a
+        # click that is usually but not always the browser: a click on a
+        # non-focusable part of the page, or the first action of a run before
+        # anything has been clicked, leaves focus somewhere else and the text
+        # goes to it.  This is the difference between "typing does nothing" and
+        # typing working, and it is why the keystrokes are sent by the same
+        # X client that the click was.
+        _focus_window_under_cursor()
         r = _xdotool("type", "--clearmodifiers", "--delay", "12", "--", text, timeout=45)
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
@@ -1464,6 +1690,9 @@ def _computer_key(name: str) -> dict:
     combo = "+".join([*resolved, keysym])
 
     try:
+        # Same reason as typing: the keys go to the focused window, and it is
+        # not always the browser.
+        _focus_window_under_cursor()
         r = _xdotool("key", "--clearmodifiers", combo)
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
@@ -1509,6 +1738,12 @@ def _computer_move(x: int, y: int) -> dict:
     """Move the REAL pointer without clicking."""
     if not _x_running():
         return {"ok": False, "error": "the X display is not running"}
+    disp_w, disp_h = _display_geometry()
+    if not (0 <= x < disp_w and 0 <= y < disp_h):
+        return {
+            "ok": False,
+            "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display",
+        }
     try:
         r = _xdotool("mousemove", "--sync", str(x), str(y))
     except FileNotFoundError:
@@ -1517,7 +1752,21 @@ def _computer_move(x: int, y: int) -> dict:
         return {"ok": False, "error": f"could not move the pointer: {exc}"}
     if r.returncode != 0:
         return {"ok": False, "error": (r.stderr or "mousemove failed").strip()[:200]}
-    return {"ok": True, "x": x, "y": y}
+    ax, ay = _pointer_position()
+    _log(
+        f"MOVE screen={disp_w}x{disp_h} model=({x},{y}) executed=({x},{y}) "
+        f"actual=({ax},{ay})"
+    )
+    return {
+        "ok": True,
+        "x": x,
+        "y": y,
+        "actual_x": ax,
+        "actual_y": ay,
+        "landed": (ax == x and ay == y),
+        "display_width": disp_w,
+        "display_height": disp_h,
+    }
 
 
 def _safe_navigate(url: str) -> dict:
@@ -1894,7 +2143,7 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._json(400, {"ok": False, "error": "x and y must be integers"})
                 return
-            width, height = _desktop_width(), _desktop_height()
+            width, height = _display_geometry()
             if not (0 <= x < width and 0 <= y < height):
                 self._json(400, {"ok": False, "error": f"outside the {width}x{height} display"})
                 return

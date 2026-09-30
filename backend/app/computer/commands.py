@@ -86,6 +86,16 @@ KEY_ALLOWLIST: Dict[str, str] = {
     "DOWN": "Down",
     "LEFT": "Left",
     "RIGHT": "Right",
+    # Both spellings, because a model reaching for an arrow key is as likely to
+    # say ARROWDOWN as DOWN and a refusal there reads as a broken keyboard.
+    "ARROWUP": "Up",
+    "ARROWDOWN": "Down",
+    "ARROWLEFT": "Left",
+    "ARROWRIGHT": "Right",
+    "UPARROW": "Up",
+    "DOWNARROW": "Down",
+    "LEFTARROW": "Left",
+    "RIGHTARROW": "Right",
     "PAGEUP": "Prior",
     "PAGEDOWN": "Next",
     "PRIOR": "Prior",

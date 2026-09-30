@@ -612,6 +612,21 @@ def _frontend_dir() -> str:
     return ""
 
 
+# The deterministic page the computer-control loop is verified against.  Served
+# from its own route rather than from the static mount below, because that mount
+# only happens when the frontend build is *absent* -- and where the build is
+# present, which is the deployment that matters, a page that only exists there is
+# a 404 exactly when someone tries to verify a run.
+@app.get("/computer-test.html")
+async def computer_test_page():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "computer-test.html")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return Response(content=handle.read(), media_type="text/html; charset=utf-8")
+    except OSError:
+        return Response(content="computer test page is missing", status_code=500)
+
+
 _ui_dir = _frontend_dir()
 if _ui_dir:
     app.mount("/", StaticFiles(directory=_ui_dir, html=True), name="ui")

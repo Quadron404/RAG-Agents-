@@ -34,6 +34,16 @@ class RecordingXdotool:
 
     @property
     def argv(self) -> list[str]:
+        """The last call that changed something.
+
+        Not simply the last call: the geometry and pointer readbacks are also
+        calls to xdotool, and a test that asserted on the last one would be
+        asserting on a read while believing it was checking an action.
+        """
+        reads = {"getdisplaygeometry", "getmouselocation", "getwindowundercursor"}
+        for call in reversed(self.calls):
+            if call and call[0] not in reads:
+                return call
         return self.calls[-1] if self.calls else []
 
     @property
@@ -42,9 +52,17 @@ class RecordingXdotool:
 
 
 class subprocess_Result:  # noqa: N801 - a stand-in named for what it replaces
-    def __init__(self, returncode: int, stderr: str) -> None:
+    """Just the three attributes the input paths read off a completed call.
+
+    `stdout` matters as much as the return code: the geometry and pointer
+    readbacks parse it, and a stand-in without it would let those paths be
+    exercised only in their failure branch.
+    """
+
+    def __init__(self, returncode: int = 0, stderr: str = "", stdout: bytes = b"") -> None:
         self.returncode = returncode
         self.stderr = stderr
+        self.stdout = stdout
 
 
 class XdotoolTestCase(unittest.TestCase):
@@ -52,12 +70,239 @@ class XdotoolTestCase(unittest.TestCase):
         self.recorder = RecordingXdotool()
         self._real_xdotool = daemon._xdotool
         self._real_running = daemon._x_running
+        self._real_geometry = daemon._display_geometry
+        self._real_pointer = daemon._pointer_position
+        self._real_focus = daemon._focus_window_under_cursor
         daemon._xdotool = self.recorder
         daemon._x_running = lambda: True
 
     def tearDown(self) -> None:
         daemon._xdotool = self._real_xdotool
         daemon._x_running = self._real_running
+        # Several tests steer the geometry, the pointer readback and the focus
+        # step.  They are module-level functions, so without this a substituted
+        # one would outlive its test and quietly change the next one's answer --
+        # which is how a real disagreement between two layers stayed invisible.
+        daemon._display_geometry = self._real_geometry
+        daemon._pointer_position = self._real_pointer
+        daemon._focus_window_under_cursor = self._real_focus
+        # The geometry cache is module level and keyed on the display, so a
+        # value installed by one test would otherwise be handed to the next.
+        daemon._reset_display_geometry_cache()
+
+
+class TestTheScreenshotIsMeasuredNotAssumed(XdotoolTestCase):
+    """The size sent to the model must be the size of the bytes it is sent.
+
+    The loop tells the model "these pixels are your coordinate system".  If the
+    reported size is a setting rather than a measurement, a capture that comes
+    back at a different size produces clicks that are wrong by a ratio, and
+    nothing in the run looks wrong -- the model is only ever wrong.
+    """
+
+    @staticmethod
+    def jpeg(width: int, height: int) -> bytes:
+        """A byte string with a real SOF0 frame header at the given size.
+
+        Only the header is built.  `_jpeg_size` reads the marker and never
+        decodes, so a synthetic header is enough to pin the parsing and keeps
+        the test from depending on an encoder being installed.
+        """
+        sof = b"\xff\xc0" + (17).to_bytes(2, "big") + b"\x08" + \
+            height.to_bytes(2, "big") + width.to_bytes(2, "big") + b"\x03" + b"\x01\x11\x00\x02\x11\x01\x03\x11\x01"
+        return b"\xff\xd8\xff\xe0" + (16).to_bytes(2, "big") + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + sof + b"\xff\xd9"
+
+    def test_the_size_is_read_out_of_the_jpeg_itself(self):
+        self.assertEqual(daemon._jpeg_size(self.jpeg(1365, 768)), (1365, 768))
+        self.assertEqual(daemon._jpeg_size(self.jpeg(1280, 1024)), (1280, 1024))
+
+    def test_its_own_sof_is_found_past_a_dht_marker(self):
+        # A real JPEG puts a Huffman table (0xFFC4) before the frame header, and
+        # 0xFFC4 sits inside the SOF0..SOF15 range.  A parser that treated any
+        # marker in that range as a frame header would read 0x0000 as the size.
+        data = self.jpeg(800, 600)
+        dht = b"\xff\xc4" + (18).to_bytes(2, "big") + b"\x00" + b"\x10" * 16
+        self.assertEqual(daemon._jpeg_size(data[:2] + dht + data[2:]), (800, 600))
+
+    def test_rubbish_is_reported_as_unknown_rather_than_guessed(self):
+        # Zero means "could not tell", and the caller falls back to the display
+        # geometry.  Guessing here would reintroduce the exact bug this class
+        # exists to prevent.
+        for data in (b"", b"not a jpeg", b"\xff\xd8", b"\x00" * 40):
+            with self.subTest(data=data[:8]):
+                self.assertEqual(daemon._jpeg_size(data), (0, 0))
+
+    def _capture(self, jpeg_bytes: bytes) -> dict:
+        import subprocess as sp
+
+        real_run = sp.run
+        sp.run = lambda *a, **k: sp.CompletedProcess(a[0] if a else [], 0, stdout=jpeg_bytes, stderr=b"")
+        try:
+            return daemon._capture_display()
+        finally:
+            sp.run = real_run
+
+    def test_the_reported_size_is_the_size_of_the_image_that_was_captured(self):
+        daemon._display_geometry = lambda: (1365, 768)
+        result = self._capture(self.jpeg(1280, 720))
+        self.assertTrue(result["ok"], result.get("error"))
+        # The image wins over the display: it is what the model is looking at.
+        self.assertEqual((result["width"], result["height"]), (1280, 720))
+        self.assertFalse(
+            result.get("geometry_matches"),
+            "a capture that does not match the display must say so",
+        )
+
+    def test_a_matching_capture_is_reported_as_matching(self):
+        daemon._display_geometry = lambda: (1365, 768)
+        result = self._capture(self.jpeg(1365, 768))
+        self.assertEqual((result["width"], result["height"]), (1365, 768))
+        self.assertTrue(result.get("geometry_matches"))
+
+    def test_the_mouse_is_drawn_into_the_screenshot_the_model_sees(self):
+        # Without the pointer in the image the model is being asked to aim at a
+        # target using a screenshot taken with no idea where it last clicked.
+        import subprocess as sp
+
+        seen = {}
+        real_run = sp.run
+
+        def spy(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return sp.CompletedProcess(cmd, 0, stdout=self.jpeg(1365, 768), stderr=b"")
+
+        sp.run = spy
+        try:
+            daemon._capture_display(draw_mouse=True)
+        finally:
+            sp.run = real_run
+        self.assertIn("-draw_mouse", seen["cmd"])
+        self.assertEqual(seen["cmd"][seen["cmd"].index("-draw_mouse") + 1], "1")
+
+
+class TestKeyboardFocusFollowsThePointer(XdotoolTestCase):
+    """Keystrokes go to whatever has input focus, not to whatever is on top.
+
+    A click sets focus through the window manager, but not when it lands on a
+    part of the page that is not focusable, and not at all on the first action of
+    a run.  Typing then goes somewhere else and appears to do nothing, which is
+    reported as "keyboard control is broken".
+    """
+
+    def setUp(self):
+        super().setUp()
+        # The real focus function runs here, answering with a window id, so the
+        # whole activation path is exercised rather than stubbed away.
+        self.window_id = "29360134"
+        inner = self.recorder
+        self.focus_calls = 0
+
+        def answering(*args, **kwargs):
+            self.focus_calls += 1
+            if args[:1] == ("getwindowundercursor",):
+                return subprocess_Result(stdout=f"{self.window_id}\n".encode())
+            return inner(*args, **kwargs)
+
+        daemon._xdotool = answering
+
+    def test_typing_activates_the_window_under_the_cursor_first(self):
+        self.recorder.calls.clear()
+        result = daemon._computer_type("hello")
+        self.assertTrue(result["ok"], result.get("error"))
+        kinds = [c[0] for c in self.recorder.calls]
+        self.assertIn("windowactivate", kinds, "the focus step was skipped")
+        self.assertIn("type", kinds)
+        # The focus has to come before the keystrokes, not after.
+        self.assertLess(
+            max(i for i, c in enumerate(kinds) if c.startswith("window")),
+            kinds.index("type"),
+        )
+        self.assertIn(
+            ["windowactivate", "--sync", self.window_id],
+            self.recorder.calls,
+            "focus must be raised with --sync, or the keystrokes race it",
+        )
+
+    def test_a_key_press_also_takes_focus_first(self):
+        self.recorder.calls.clear()
+        result = daemon._computer_key("ENTER")
+        self.assertTrue(result["ok"], result.get("error"))
+        kinds = [c[0] for c in self.recorder.calls]
+        self.assertLess(
+            max(i for i, c in enumerate(kinds) if c.startswith("window")),
+            kinds.index("key"),
+        )
+
+    def test_focus_is_still_attempted_when_there_is_no_window_manager(self):
+        # A refused focus must not become a refused keystroke.  The model cannot
+        # tell whether X has a WM, so it cannot compensate, and the run would
+        # stall on the first thing it tried to type.
+        def no_window(*args, **kwargs):
+            if args[:1] in (("getwindowundercursor",), ("windowactivate",), ("windowfocus",)):
+                return subprocess_Result(returncode=1, stderr=b"no such window")
+            return self.recorder(*args, **kwargs)
+
+        daemon._xdotool = no_window
+        self.recorder.calls.clear()
+        result = daemon._computer_type("hello")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertIn("type", [c[0] for c in self.recorder.calls])
+
+
+class TestTheRealDisplayGeometryIsMeasured(XdotoolTestCase):
+    """The configured size is a request, not a fact.
+
+    DESKTOP_SIZE says what Xvfb was asked for.  The number that decides whether
+    a click lands is the size X actually came up with, and a mismatch between
+    the two is a silent 1.1x error on every coordinate the model produces.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.geometry = "1365 768"
+        inner = self.recorder
+        self.probes = 0
+
+        def answering(*args, **kwargs):
+            if args[:1] == ("getdisplaygeometry",):
+                self.probes += 1
+                return subprocess_Result(stdout=f"{self.geometry}\n".encode())
+            return inner(*args, **kwargs)
+
+        daemon._xdotool = answering
+
+    def _reset(self) -> None:
+        daemon._reset_display_geometry_cache()
+
+    def test_the_size_is_read_from_the_display_not_the_settings(self):
+        self.geometry = "1280 1024"
+        self._reset()
+        self.assertEqual((daemon._desktop_width(), daemon._desktop_height()), (1280, 1024))
+
+    def test_the_settings_are_the_fallback_when_the_query_fails(self):
+        # X can be up but refuse the query.  Falling back to the configured size
+        # is wrong on a real mismatch and right on a real match, so it is only
+        # used when nothing better is available.
+        def failing(*args, **kwargs):
+            if args[:1] == ("getdisplaygeometry",):
+                return subprocess_Result(returncode=1, stderr=b"no such option")
+            return inner(*args, **kwargs)
+
+        daemon._xdotool = failing
+        self._reset()
+        width, height = (int(p) for p in daemon.DESKTOP_SIZE.split("x"))
+        self.assertEqual((daemon._desktop_width(), daemon._desktop_height()), (width, height))
+
+    def test_the_geometry_is_asked_for_once_not_once_per_coordinate(self):
+        # It cannot change under us -- the display is fixed for the life of the
+        # X server, and an Xvfb restart resets the cache explicitly.
+        self.geometry = "1365 768"
+        self._reset()
+        self.probes = 0
+        for _ in range(5):
+            daemon._desktop_width()
+            daemon._desktop_height()
+        self.assertEqual(self.probes, 1, "the display was re-probed for one lookup")
 
 
 class TestTypeReachesTheKeyboard(XdotoolTestCase):
@@ -273,9 +518,24 @@ class TestMoveDoesNotClick(XdotoolTestCase):
     def test_move_only_moves(self):
         result = daemon._computer_move(700, 450)
         self.assertTrue(result["ok"], result.get("error"))
+        # The move is followed by a readback of where the pointer actually is.
+        # Only the mutation itself is asserted here: the point is that no button
+        # is pressed, and "click" appearing nowhere in *any* call is what proves
+        # that.
         self.assertEqual(self.recorder.argv, ["mousemove", "--sync", "700", "450"])
         # "click" appears nowhere, so a move cannot have clicked.
-        self.assertNotIn("click", self.recorder.argv)
+        for call in self.recorder.calls:
+            self.assertNotIn("click", call, f"a move pressed a button: {call}")
+
+    def test_a_move_reports_the_pointer_position_it_reached(self):
+        # Moving the cursor is how a model lines itself up before pressing a
+        # key, so the reply has to say where the pointer ended up rather than
+        # only what was asked for.
+        daemon._pointer_position = lambda: (700, 450)
+        self.recorder.calls.clear()
+        result = daemon._computer_move(700, 450)
+        self.assertEqual((result["actual_x"], result["actual_y"]), (700, 450))
+        self.assertTrue(result["landed"])
 
 
 class TestTheTwoAllowlistsAgree(XdotoolTestCase):
@@ -371,6 +631,72 @@ class TestRoutesAreNotAShell(unittest.TestCase):
         self.assertNotIn("exec(", body)
 
 
+class TestTheClickItselfRefusesRatherThanClamping(XdotoolTestCase):
+    """The refusal has to live in the function, not only in the route.
+
+    The route refuses out-of-bounds coordinates before the function is called,
+    so a test that only drives the route cannot tell a refusing click from a
+    clamping one -- the route has already turned it away.  Called directly, a
+    clamping click would move the real pointer to the edge of the screen and
+    report success, which is the worst possible outcome: the run looks fine and
+    the browser did something else entirely.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._real_geometry = daemon._display_geometry
+        daemon._display_geometry = lambda: (1365, 768)
+
+    def tearDown(self):
+        daemon._display_geometry = self._real_geometry
+        super().tearDown()
+
+    def test_a_negative_coordinate_is_refused_and_the_pointer_never_moves(self):
+        self.recorder.calls.clear()
+        result = daemon._computer_click(-1, 350)
+        self.assertFalse(result["ok"])
+        self.assertIn("outside", result["error"])
+        pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
+        self.assertEqual(pressed, [], "a refused click still moved the pointer")
+
+    def test_a_coordinate_past_the_edge_is_refused(self):
+        for x, y in ((1365, 350), (700, 768), (1365, 768)):
+            with self.subTest(x=x, y=y):
+                self.recorder.calls.clear()
+                result = daemon._computer_click(x, y)
+                self.assertFalse(result["ok"], f"({x},{y}) was accepted")
+                pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
+                self.assertEqual(pressed, [], f"({x},{y}) reached the pointer")
+
+    def test_the_refusal_does_not_claim_the_clicked_point(self):
+        # A clamping implementation would echo back the clamped coordinate, so
+        # the reply must not carry an executed position at all.
+        result = daemon._computer_click(99999, 99999)
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result.get("x"))
+        self.assertIsNone(result.get("y"))
+
+    def test_the_last_in_bounds_pixel_is_accepted(self):
+        # The boundary itself: a check written as `<=` instead of `<` would
+        # refuse a legitimate corner click, and the model would have no way to
+        # reach the bottom-right of the screen.
+        self.recorder.calls.clear()
+        result = daemon._computer_click(1364, 767)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual((result["x"], result["y"]), (1364, 767))
+        pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
+        self.assertEqual(pressed, [["mousemove", "--sync", "1364", "767", "click", "1"]])
+
+    def test_a_move_is_refused_on_the_same_boundary(self):
+        for x, y in ((-1, 0), (0, -1), (1365, 0), (0, 768)):
+            with self.subTest(x=x, y=y):
+                self.recorder.calls.clear()
+                result = daemon._computer_move(x, y)
+                self.assertFalse(result["ok"], f"({x},{y}) was accepted")
+                moved = [c for c in self.recorder.calls if c[0] == "mousemove"]
+                self.assertEqual(moved, [], f"({x},{y}) reached the pointer")
+
+
 class TestRoutesOverRealHttp(XdotoolTestCase):
     """Drive the actual ``/computer/*`` routes over a real socket.
 
@@ -390,14 +716,15 @@ class TestRoutesOverRealHttp(XdotoolTestCase):
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        # The display-size probes shell out; a fixed small desktop keeps the
-        # bounds refusals deterministic without a display.
-        self._real_w, self._real_h = daemon._desktop_width, daemon._desktop_height
-        daemon._desktop_width = lambda: 1280
-        daemon._desktop_height = lambda: 800
+        # The route and the click action must agree on where the display ends.
+        # Both now read `_display_geometry`, and this pins that one seam -- pinning
+        # `_desktop_width`/`_desktop_height` would leave the action checking a
+        # different number, which is exactly the mismatch that let a refused
+        # click through as a 200.  The base class already saved the original.
+        daemon._display_geometry = lambda: (1280, 800)
 
     def tearDown(self):
-        daemon._desktop_width, daemon._desktop_height = self._real_w, self._real_h
+        daemon._display_geometry = self._real_geometry
         self.server.shutdown()
         self.server.server_close()
         super().tearDown()
@@ -434,21 +761,88 @@ class TestRoutesOverRealHttp(XdotoolTestCase):
                 self.assertEqual(status, 200, body)
                 self.assertTrue(body["ok"], body)
                 self.assertTrue(self.recorder.calls, f"{path} never called xdotool")
-                # The model string arrived intact, as a single argument.
-                self.assertIn(expect, self.recorder.calls[-1])
+                # The model string arrived intact, as a single argument.  Checked
+                # against the action itself, not the last call: a pointer
+                # readback now follows every action.
+                self.assertIn(expect, self.recorder.argv)
 
-    def test_click_moves_then_presses_the_left_button(self):
-        # xdotool's `click` takes a button number, not a position, so the
-        # coordinates have to travel in an earlier mousemove.  Getting this wrong
-        # would click wherever the pointer happened to be resting.
+    def test_click_moves_then_presses_in_one_invocation(self):
+        # The whole click must be one xdotool call.  Two calls -- mousemove, then
+        # click -- leaves a gap between two X round trips, and anything that moves
+        # the pointer in that gap puts the button press somewhere the caller never
+        # asked for.  This is the most likely reason clicks missed their target.
         self.recorder.calls.clear()
-        status, body = self.post("/computer/click", {"x": 100, "y": 200})
+        status, body = self.post("/computer/click", {"x": 700, "y": 350})
         self.assertEqual(status, 200, body)
         self.assertTrue(body["ok"], body)
+        # The geometry probe is a read, not part of the click, so the assertion
+        # is about the calls that move or press anything.
         self.assertEqual(
-            self.recorder.calls,
-            [["mousemove", "--sync", "100", "200"], ["click", "1"]],
+            [c for c in self.recorder.calls if c[0] in ("mousemove", "click")],
+            [["mousemove", "--sync", "700", "350", "click", "1"]],
+            "the move and the press must share one X connection",
         )
+        # --sync, or the click is queued against the position the pointer has not
+        # reached yet.
+        self.assertIn("--sync", self.recorder.argv)
+
+    def test_a_click_reports_where_the_pointer_actually_ended_up(self):
+        # The point of the exercise: a click that missed must be visible as a
+        # mismatch rather than looking exactly like one that worked.
+        daemon._pointer_position = lambda: (702, 348)
+        self.recorder.calls.clear()
+        result = daemon._computer_click(700, 350)
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["actual_x"], result["actual_y"]), (702, 348))
+        self.assertFalse(result["landed"], "a drifted click must not claim to land")
+
+    def test_a_click_that_lands_says_so(self):
+        daemon._pointer_position = lambda: (700, 350)
+        self.recorder.calls.clear()
+        result = daemon._computer_click(700, 350)
+        self.assertTrue(result["landed"])
+        self.assertEqual((result["x"], result["y"]), (700, 350))
+
+    def test_a_mismatch_between_the_layers_never_silently_allows_a_click(self):
+        # Regression.  The route checked bounds against one source of truth and
+        # the action checked them against another, so a point one layer believed
+        # was on screen was refused by the other -- and because the refusal came
+        # back from inside a 200, it read as a flaky click rather than as the
+        # disagreement it was.  Pinned at the two sizes, the two layers must
+        # refuse the same points and accept the same ones.
+        original = daemon._display_geometry
+        try:
+            for width, height in ((1280, 800), (1365, 768)):
+                with self.subTest(display=f"{width}x{height}"):
+                    daemon._display_geometry = lambda w=width, h=height: (w, h)
+                    # The last in-bounds point is accepted...
+                    status, body = self.post("/computer/click", {"x": width - 1, "y": height - 1})
+                    self.assertEqual(status, 200, body)
+                    self.assertTrue(body["ok"], body)
+                    # ...and the first out-of-bounds point is refused by the
+                    # route itself, so it never reaches the pointer at all.
+                    self.recorder.calls.clear()
+                    status, body = self.post("/computer/click", {"x": width, "y": height - 1})
+                    self.assertEqual(status, 400, body)
+                    self.assertFalse(body["ok"])
+                    pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
+                    self.assertEqual(pressed, [], "a refused click still moved the pointer")
+        finally:
+            daemon._display_geometry = original
+
+    def test_a_click_outside_the_real_display_is_refused_not_clamped(self):
+        # Refused, never clamped: a clamped click lands on the edge of the screen
+        # while carrying the coordinates of something in the middle of it.  The
+        # assertion is on calls that move or press, so the read-only geometry
+        # probe is not mistaken for a click.
+        for x, y in ((-1, 350), (700, -1), (1280, 350), (700, 800), (99999, 99999)):
+            with self.subTest(x=x, y=y):
+                self.recorder.calls.clear()
+                status, body = self.post("/computer/click", {"x": x, "y": y})
+                self.assertEqual(status, 400, body)
+                self.assertFalse(body["ok"], f"({x},{y}) was accepted")
+                pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
+                self.assertEqual(pressed, [], f"({x},{y}) reached the pointer")
 
     def test_wrong_types_are_refused_not_crashed(self):
         for path, payload in (

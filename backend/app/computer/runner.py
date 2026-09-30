@@ -31,7 +31,7 @@ from ..providers.base import LLMMessage, TextDelta
 from ..providers.router import ProviderUnavailable, Router
 from .commands import Bounds, Command, parse_command
 from .controller import ComputerError, RemoteComputer
-from .prompt import COMPUTER_CONTROL_PROMPT, FORMAT_CORRECTION
+from .prompt import FORMAT_CORRECTION, build_prompt
 
 # The only states a run can be in, and the only strings the frontend renders.
 STATUS_IDLE = "idle"
@@ -82,6 +82,7 @@ class ComputerRun:
         """
         return {
             "task_id": self.task_id,
+
             "status": self.status,
             "step": self.step,
             "message": self.message,
@@ -146,15 +147,23 @@ class ComputerRunner:
 
     # --- the loop ----------------------------------------------------------
 
-    def _history(self, run: ComputerRun) -> List[LLMMessage]:
+    def _history(self, run: ComputerRun, width: int = 0, height: int = 0) -> List[LLMMessage]:
         """The canonical history, rebuilt from the recorded events.
 
         Rebuilt rather than carried in a provider-side conversation id, so the
         loop works against any OpenAI-compatible endpoint and the log is the
         authoritative record rather than something only the provider has.
+
+        The system prompt is built for the size of the screen actually captured.
+        A model told a fixed 1365x768 while it is looking at a different-sized
+        image is being handed a coordinate system that does not exist, and the
+        clicks that follow are wrong by a ratio.
         """
         messages = [
-            LLMMessage(role="system", content=COMPUTER_CONTROL_PROMPT),
+            LLMMessage(
+                role="system",
+                content=build_prompt(width or 1365, height or 768),
+            ),
             LLMMessage(role="user", content=f"Task: {run.task}"),
         ]
         for event in run.events:
@@ -241,7 +250,13 @@ class ComputerRunner:
                 pending_image = image
                 bounds = Bounds(width=width, height=height)
                 if run.events:
-                    run.events[-1].screenshot = _image_meta(image, width, height)
+                    # Merged, not replaced: the event may already be carrying the
+                    # pointer trace from the action this screenshot follows, and
+                    # that is the evidence for whether the click landed.
+                    run.events[-1].screenshot = {
+                        **run.events[-1].screenshot,
+                        **_image_meta(image, width, height),
+                    }
                 try:
                     state = await self.computer.state()
                     run.last_url = str(state.get("url") or run.last_url)
@@ -277,7 +292,11 @@ class ComputerRunner:
         # Retried per turn, not per run: a model that is well behaved on turn
         # four should not still be paying for turn one.
         for attempt in range(self.settings.computer_max_json_retries + 2):
-            messages = self._history(run)
+            messages = self._history(
+                run,
+                bounds.width if bounds else 0,
+                bounds.height if bounds else 0,
+            )
             if image:
                 # The correction rides in the *same* user turn as the image
                 # rather than a second consecutive user message, which several
@@ -364,13 +383,15 @@ class ComputerRunner:
             "move": "Moving the cursor",
         }[command.type]
 
+        trace: Dict[str, Any] = {}
         try:
             if command.type == "navigate":
                 await self.computer.navigate(command.url)
             elif command.type == "search":
                 await self.computer.search(command.query)
             elif command.type == "click":
-                await self.computer.click(command.x, command.y)
+                result = await self.computer.click(command.x, command.y)
+                trace = _pointer_trace("click", command.x, command.y, result)
             elif command.type == "type":
                 await self.computer.type_text(command.text)
             elif command.type == "key":
@@ -378,7 +399,8 @@ class ComputerRunner:
             elif command.type == "scroll":
                 await self.computer.scroll(command.delta_y)
             elif command.type == "move":
-                await self.computer.move(command.x, command.y)
+                result = await self.computer.move(command.x, command.y)
+                trace = _pointer_trace("move", command.x, command.y, result)
             else:
                 # Unreachable while parse_command and this dispatch agree, and
                 # kept explicit anyway: a `move` fallback here would silently
@@ -392,7 +414,7 @@ class ComputerRunner:
             run.message = str(exc)
             return False
 
-        self._record(run, command.to_json(), "", "ok")
+        self._record(run, command.to_json(), "", "ok", trace=trace)
         return False
 
     def _record(
@@ -402,9 +424,9 @@ class ComputerRunner:
         raw_reply: str,
         result: str,
         error: str = "",
+        trace: Optional[Dict[str, Any]] = None,
     ) -> None:
-        run.events.append(
-            ComputerEvent(
+        event = ComputerEvent(
                 step=run.step,
                 command=command,
                 raw_reply=raw_reply,
@@ -412,7 +434,11 @@ class ComputerRunner:
                 error=error,
                 timestamp=time.time(),
             )
-        )
+        if trace:
+            # Kept on the event so a bad click can be diagnosed after the fact:
+            # what was asked for, what was sent, and where the pointer ended up.
+            event.screenshot = dict(event.screenshot, **trace)
+        run.events.append(event)
 
     def _persist(self, run: ComputerRun) -> None:
         if self.db is None:
@@ -437,6 +463,30 @@ class ComputerRunner:
         except Exception:
             # A log write failing must not change what happened on screen.
             pass
+
+
+def _pointer_trace(kind: str, model_x: float, model_y: float, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Every stage of one coordinate, as the agent reported it.
+
+    The whole point of the 1:1 contract is that these three agree.  Recording
+    them next to the event means a run that missed its target can be read back
+    without re-running it: if model and executed differ the parse was wrong, and
+    if executed and actual differ the pointer moved on its own.
+    """
+    if not isinstance(result, dict):
+        # Diagnostics must never be the reason a run dies.
+        return {"screen_width": None, "screen_height": None}
+    return {
+        f"{kind}_model_x": model_x,
+        f"{kind}_model_y": model_y,
+        f"{kind}_executed_x": result.get("x"),
+        f"{kind}_executed_y": result.get("y"),
+        f"{kind}_actual_x": result.get("actual_x"),
+        f"{kind}_actual_y": result.get("actual_y"),
+        f"{kind}_landed": result.get("landed"),
+        "screen_width": result.get("display_width"),
+        "screen_height": result.get("display_height"),
+    }
 
 
 def _describe_command(command: Dict[str, Any], error: str) -> str:

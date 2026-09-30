@@ -10,9 +10,32 @@ the model could assemble into a local one.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 from ..workspace.manager import WorkspaceManager
+
+log = logging.getLogger(__name__)
+
+
+def _trace_click(label: str, x: float, y: float, result: Dict[str, Any]) -> None:
+    """One line per pointer action, with every stage of the coordinate contract.
+
+    model -> validated -> executed -> actual.  When a click misses, this is the
+    line that says which of those four disagreed, instead of leaving it to be
+    guessed at from a screenshot.
+    """
+    actual_x = result.get("actual_x")
+    actual_y = result.get("actual_y")
+    log.info(
+        "%s screen=%sx%s model=(%s,%s) executed=(%s,%s) actual=(%s,%s) %s",
+        label,
+        result.get("display_width"), result.get("display_height"),
+        x, y,
+        result.get("x"), result.get("y"),
+        actual_x, actual_y,
+        "LANDED" if result.get("landed") else ("DRIFTED" if actual_x is not None else "UNVERIFIED"),
+    )
 
 
 class ComputerError(RuntimeError):
@@ -84,9 +107,19 @@ class RemoteComputer:
         return result
 
     async def click(self, x: float, y: float) -> Dict[str, Any]:
+        """Click a point in the screenshot's own pixel grid.
+
+        The coordinates go to the agent unchanged and become
+        `xdotool mousemove --sync <x> <y> click 1` on the real display, so the
+        grid the model was shown and the grid X acts on are the same one.  The
+        reply carries the pointer position read back from X afterwards, logged
+        here so a click that drifted off its target is visible rather than
+        silent.
+        """
         result = await self._post("/computer/click", {"x": int(x), "y": int(y)})
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "click failed"))
+        _trace_click("CLICK", x, y, result)
         await self._settle(self.settle_ms_click)
         return result
 
@@ -127,6 +160,7 @@ class RemoteComputer:
         result = await self._post("/computer/move", {"x": int(x), "y": int(y)})
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "pointer move failed"))
+        _trace_click("MOVE", x, y, result)
         await self._settle(self.settle_ms_click)
         return result
 
@@ -136,6 +170,14 @@ class RemoteComputer:
         This is the whole screen, not a page viewport, which is what makes the
         coordinates in it -- the tab strip, the address bar, the page -- all
         one coordinate system, and all clickable by the same call.
+
+        The size returned is the size of the image that was actually captured,
+        read out of the JPEG by the agent.  It is deliberately not a value the
+        app decided: the model is told this number as its coordinate system, so
+        it has to describe the bytes in front of the model and nothing else.
+        There is no resize anywhere between the two -- the same base64 string is
+        handed to the provider -- so a coordinate the model returns is in this
+        grid already, with no conversion left to get wrong.
         """
         # 45s: the capture is an ffmpeg invocation on a busy remote machine, and
         # a screenshot that times out is a false negative the model would then be
@@ -143,7 +185,24 @@ class RemoteComputer:
         result = await self._post("/computer/screen", {"draw_mouse": True}, timeout=45.0)
         if not result.get("ok") or not result.get("image"):
             raise ComputerError(str(result.get("error") or "could not capture the screen"))
-        return result["image"], int(result.get("width") or 0), int(result.get("height") or 0)
+        width = int(result.get("width") or 0)
+        height = int(result.get("height") or 0)
+        if not (width > 0 and height > 0):
+            raise ComputerError(
+                f"the agent reported a {width}x{height} screenshot; refusing to "
+                "reason about coordinates in an unknown grid"
+            )
+        # The agent compares the image against the X display and says so here.
+        # A mismatch is not fatal -- the run continues on the image's own grid --
+        # but it is logged, because it means every coordinate is off by a ratio.
+        if result.get("geometry_matches") is False:
+            log.warning(
+                "computer: screenshot is %dx%d but the X display is %sx%s; "
+                "coordinates will be off by a ratio",
+                width, height,
+                result.get("display_width"), result.get("display_height"),
+            )
+        return result["image"], width, height
 
     async def state(self) -> Dict[str, Any]:
         """The current URL and title, read out of the real browser."""
