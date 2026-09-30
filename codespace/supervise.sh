@@ -15,7 +15,13 @@ CODESPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$CODESPACE_DIR/env.sh"
 
 RUN_DIR="$DESKTOP_RUN_DIR"
-mkdir -p "$RUN_DIR"
+# This process writes the child pid files, so it needs the run dir to be its own
+# before it starts.  Refuse to run rather than supervise a screen it cannot
+# track: every restart decision below reads those files.
+if ! ensure_run_dir "$RUN_DIR"; then
+  log "FATAL: cannot use $RUN_DIR; supervisor not starting"
+  exit 1
+fi
 SUPERVISOR_LOG="$DESKTOP_LOG_DIR/supervisor.log"
 
 log "supervisor starting (pid $$), logs -> $SUPERVISOR_LOG"
@@ -119,7 +125,7 @@ start_agent() {
   CHILD_PID[agent]=$!
   # The daemon tracks its children in RUN_DIR/<name>.pid, so the supervisor and
   # the daemon must agree on the directory or they fight over pid files.
-  echo "${CHILD_PID[agent]}" > "$RUN_DIR/supervisor-agent.pid"
+  write_pid "$RUN_DIR/supervisor-agent.pid" "${CHILD_PID[agent]}"
   log "agent started (pid ${CHILD_PID[agent]}) on 127.0.0.1:$AGENT_PORT"
 
   if ! listening "$AGENT_PORT"; then
@@ -153,7 +159,7 @@ start_websockify() {
   CHILD_PID[websockify]=$!
   # The same name the daemon uses, so the two supervisors cannot each spawn a
   # websockify and fight over the port.
-  echo "${CHILD_PID[websockify]}" > "$RUN_DIR/websockify.pid"
+  write_pid "$RUN_DIR/websockify.pid" "${CHILD_PID[websockify]}"
   for _ in $(seq 1 20); do
     listening "$WEBSOCKIFY_PORT" && break
     sleep 0.5
@@ -176,7 +182,7 @@ start_tunnel() {
   setsid bash "$CODESPACE_DIR/start-tunnel.sh" \
     >>"$DESKTOP_LOG_DIR/cloudflared.log" 2>&1 &
   CHILD_PID[tunnel]=$!
-  echo "${CHILD_PID[tunnel]}" > "$RUN_DIR/supervisor-tunnel.pid"
+  write_pid "$RUN_DIR/supervisor-tunnel.pid" "${CHILD_PID[tunnel]}"
   log "cloudflared started (pid ${CHILD_PID[tunnel]})"
 }
 

@@ -31,6 +31,10 @@ TESTS = (
     # this one reads them, and it has to pass before anything is deployed on a
     # machine whose only screen depends on supervise.sh starting.
     "test_supervisor",
+    # Why the Codespace came up with no URL: install.sh created /tmp/ragdesktop
+    # as root, so every pid write from the unprivileged stack failed with EACCES
+    # and the tunnel was never asked for a hostname.
+    "test_run_dir_ownership",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",

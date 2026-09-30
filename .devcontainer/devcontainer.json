@@ -61,9 +61,13 @@
     "DESKTOP_LOG_DIR": "/tmp",
     "PUBLIC_URL_FILE": "/tmp/ragdesktop/public-url"
   },
-  // RAG_AUTH_TOKEN is deliberately absent. The app refuses every route without
-  // it, so a missing secret stops the deployment instead of publishing a live
-  // signed-in browser. Add it under Settings > Codespaces > Codespaces secrets.
+  // RAG_AUTH_TOKEN is deliberately absent, and it is NOT a required secret here.
+  // The app used to refuse every route without it; that gate was removed at the
+  // owner's request, so a missing token does not stop the deployment and must not
+  // be read as a safety interlock. What is actually enforced: only the app on
+  // 8000 is ever published through the tunnel, 5900/6080/9000 stay on loopback,
+  // and 6080/8000 are forwarded privately. The live hostname is therefore the
+  // credential, and restarting the tunnel is how to revoke it.
 
   "postCreateCommand": "sudo bash codespace/install.sh && sudo mkdir -p /workspaces/chrome-profile && sudo chown -R codespace:codespace /workspaces/chrome-profile",
 

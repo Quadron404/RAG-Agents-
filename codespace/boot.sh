@@ -10,7 +10,17 @@ CODESPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$CODESPACE_DIR/env.sh"
 
 RUN_DIR="$DESKTOP_RUN_DIR"
-mkdir -p "$RUN_DIR" "$CHROME_PROFILE" "$WORKSPACE"
+# Before anything writes.  The pid files below, the daemon's own child pid files
+# and the live tunnel URL all live here, and a run dir owned by anyone else
+# fails every one of those writes with EACCES -- which takes the supervisor, then
+# the backend, then the Quick Tunnel down with it.  ensure_run_dir repairs the
+# owner and is a no-op when it is already right, so a second run cannot break it
+# again.
+if ! ensure_run_dir "$RUN_DIR"; then
+  log "FATAL: cannot use $RUN_DIR; not starting anything."
+  exit 1
+fi
+mkdir -p "$CHROME_PROFILE" "$WORKSPACE"
 
 log "=== RAG Agents computer booting ==="
 
@@ -71,7 +81,7 @@ if [ -f "$RUN_DIR/supervisor.pid" ] && kill -0 "$(cat "$RUN_DIR/supervisor.pid" 
 else
   setsid bash "$CODESPACE_DIR/supervise.sh" \
     >>"$DESKTOP_LOG_DIR/supervisor.log" 2>&1 &
-  echo $! > "$RUN_DIR/supervisor.pid"
+  write_pid "$RUN_DIR/supervisor.pid" "$!"
   log "supervisor started (pid $!)"
 fi
 
@@ -135,7 +145,7 @@ else
     # file.  Only the second, competing parser is gone.
     exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
   ) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
-  echo $! > "$RUN_DIR/backend.pid"
+  write_pid "$RUN_DIR/backend.pid" "$!"
   log "backend started (pid $!) on 127.0.0.1:$BACKEND_PORT"
 
   # Wait for it and, if it never arrives, say why instead of leaving the

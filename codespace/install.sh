@@ -137,9 +137,30 @@ else
 fi
 
 # --- persistent profile ----------------------------------------------------
-mkdir -p "$CHROME_PROFILE" "$DESKTOP_RUN_DIR" "$WORKSPACE"
+# The chrome profile is on the root-owned /workspaces volume, so it does have to
+# be created with privilege.
+mkdir -p "$CHROME_PROFILE"
+chown -R "$(codespace_user)" "$CHROME_PROFILE"
 log "chrome profile: $CHROME_PROFILE"
 log "workspace:      $WORKSPACE"
+
+# The run dir is NOT created here, and that is deliberate.
+#
+# This script is run as root from postCreateCommand, so the old
+# `mkdir -p ... "$DESKTOP_RUN_DIR"` left /tmp/ragdesktop owned by root
+# forever -- `mkdir -p` on an existing directory changes nothing. boot.sh then
+# runs unprivileged as the runtime user and every write into that directory
+# failed with EACCES:
+#
+#   boot.sh: line 74: /tmp/ragdesktop/supervisor.pid: Permission denied
+#
+# which stopped the supervisor, then the backend, then the Quick Tunnel, so no
+# public URL was ever created and the whole desktop looked dead.
+#
+# It is left to ensure_run_dir (env.sh), called by boot.sh and supervise.sh as
+# the runtime user. The directory is then created by the user who has to write
+# to it, so it is owned correctly the first time and needs no chown at all.
+mkdir -p "$WORKSPACE"
 
 log "verifying"
 # ffmpeg and xdotool are in this list for a reason: ffmpeg is what the desktop
