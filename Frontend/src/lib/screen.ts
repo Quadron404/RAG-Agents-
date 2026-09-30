@@ -328,6 +328,8 @@ export interface ComputerTurn {
   image: string;
   image_meta: Partial<ComputerImageMeta>;
   image_withheld?: boolean;
+  /** The user turn this request ended with, in full. */
+  user_text: string;
   wire: ComputerWire;
   raw: string;
   error: string;
@@ -349,6 +351,9 @@ export interface ComputerTrace {
   step: number;
   started_at: number;
   finished_at: number;
+  /** The model that answered the most recent request. */
+  provider: string;
+  model: string;
   protocol: {
     first_turn_allowed: string[];
     after_screenshot_allowed: string[];

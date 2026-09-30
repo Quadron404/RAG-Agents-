@@ -15,6 +15,7 @@ verified against a live paid API is a control loop nobody can safely change.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -357,6 +358,37 @@ class FakeProvider:
         yield Done()
 
 
+def _jpeg_frame(seed: int, width: int, height: int) -> str:
+    """A real, decodable JPEG base64 frame of exactly the given size.
+
+    The chat panel captions each screenshot with the dimensions and the type
+    taken from the trace, so a test that checks the caption has to hand the
+    trace real bytes -- a marker string would prove only that the fixture is
+    not an image.
+
+    Pillow is used when it is installed, because then the pixel size in the
+    JPEG header is genuinely the size that was asked for.  Without it there is
+    a hand-built fallback, and the caller is told which one it got: a test that
+    needs the fallback to be exact must not silently pass on Pillow.
+    """
+    from io import BytesIO
+
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
+
+    if Image is not None:
+        buf = BytesIO()
+        # A visible per-frame difference, so a "same frame" check has teeth.
+        Image.new("RGB", (width, height), (seed * 37 % 256, seed * 91 % 256, seed * 13 % 256)).save(
+            buf, format="JPEG", quality=70
+        )
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    raise unittest.SkipTest("Pillow is needed to build a real frame of a given size")
+
+
 class FakeComputer:
     """Records the exact sequence of actions the loop asked for.
 
@@ -375,6 +407,10 @@ class FakeComputer:
         # Set to (w, h) to make the capture come back at a size other than the
         # display bounds, the way a real mismatch would.
         self.capture_size = None
+        # Set to True to return real, decodable JPEGs instead of the "SCREENSHOT-n"
+        # marker string, for the tests that assert a caption's pixel size and
+        # file type against the bytes.
+        self.real_frames = False
         # Set to a string to make that one action fail, the way a real refusal
         # from the agent arrives.
         self.fail_on: tuple = ()
@@ -434,9 +470,15 @@ class FakeComputer:
 
     async def screenshot(self):
         self.screens += 1
+        width, height = self.capture_size or (self._bounds.width, self._bounds.height)
+        if self.real_frames:
+            # Real, decodable frames of the stated size.  Needed by the tests
+            # that check the panel's screenshot captions, because a caption
+            # asserts a pixel size and a file type: both have to be read off
+            # real bytes, not off a counter.
+            return _jpeg_frame(self.screens, width, height), width, height
         # A different payload per frame, so a test can prove the model was sent
         # the newest one rather than a cached first one.
-        width, height = self.capture_size or (self._bounds.width, self._bounds.height)
         return f"SCREENSHOT-{self.screens}", width, height
 
     async def state(self):
@@ -459,6 +501,8 @@ def make_runner(replies, bounds=SCREEN, **settings_overrides):
     settings.workspace_base_url = "http://127.0.0.1:9"
     runner = ComputerRunner(settings, Router({"openrouter": provider}, settings), db=None)
     runner.computer = FakeComputer(bounds)
+    if settings_overrides.get("real_frames"):
+        runner.computer.real_frames = True
     return runner, provider
 
 
@@ -2194,6 +2238,45 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         # Byte-for-byte the prompt the builder produces, no elisions.
         self.assertEqual(prompt, build_prompt(SCREEN.width, SCREEN.height))
 
+    def test_the_user_turn_is_carried_in_full_and_not_as_a_preview(self):
+        # The panel shows what the user side of the request said.  A 400-char
+        # preview is fine for the history list and wrong for the one message
+        # that carries the screenshot and the correction, because the
+        # instruction to reply with only JSON lives at the very start of it.
+        #
+        # Note this is the *whole* user turn, including the screenshot note the
+        # runner appends -- not the bare task.  The payload is what the model
+        # got, so a panel that showed the task alone would be describing a
+        # request that was never made.
+        long = "TASK " + ("x" * 900)
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"click","x":10,"y":20}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner._history = lambda *a, **k: [LLMMessage(role="user", content=long)]
+        report = asyncio.run(_finish(runner, self.CLICK_TASK)).trace_report(include_images=False)
+        for turn in report["turns"]:
+            with self.subTest(turn=turn["turn"]):
+                user_text = turn["user_text"]
+                self.assertTrue(user_text.startswith(long), "the task was not carried through whole")
+                if turn["screenshot_attached"]:
+                    self.assertIn("screenshot", user_text.lower(), "the screenshot note is missing from the turn shown")
+                # And it really is longer than the preview it sits beside,
+                # otherwise this test is not testing the thing it claims.
+                self.assertGreater(len(user_text), len(turn["messages_meta"][-1]["content_preview"]))
+
+    def test_the_reports_model_is_the_one_that_actually_answered(self):
+        # Taken from the trace, not from settings: after a provider failure
+        # those are different claims, and a header naming a model that never
+        # replied makes every turn below it suspect.
+        report, run = self._report([
+            '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        self.assertTrue(report["turns"], "no turns to name a model after")
+        self.assertEqual(report["model"], report["turns"][-1]["model"])
+        self.assertEqual(report["provider"], report["turns"][-1]["provider"])
 
     def test_the_prompt_states_the_size_of_the_screenshot_being_sent(self):
         from app.computer.commands import Bounds
@@ -2590,8 +2673,8 @@ class TestTheTraceEndpoint(unittest.TestCase):
         cls.main = main_module
         cls.client = TestClient(main_module.app)
 
-    def _register(self, replies):
-        runner, _ = make_runner(replies)
+    def _register(self, replies, **kwargs):
+        runner, _ = make_runner(replies, **kwargs)
         run = asyncio.run(_finish(runner, "click the visible button"))
         self.main.ai_computer._runs[run.task_id] = run
         self.addCleanup(self.main.ai_computer._runs.pop, run.task_id, None)
@@ -2601,6 +2684,133 @@ class TestTheTraceEndpoint(unittest.TestCase):
         response = self.client.get(path)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def test_every_field_the_chat_panel_reads_is_actually_in_the_response(self):
+        # The panel's types are hand-written TypeScript, so `tsc` only proves
+        # the component matches the *type*, never that the type matches the
+        # route.  A renamed or dropped key here is invisible to the compiler
+        # and shows up as a blank bubble or an "undefined" in a screenshot
+        # caption, which is exactly the kind of quietly wrong display this
+        # panel exists to prevent.  So the field list is pinned here.
+        run = self._register([
+            '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"click","x":700,"y":350}',
+            '{"type":"type","text":"jane@example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        body = self._get(f"/ai/computer/{run.task_id}/trace")
+
+        def need(obj, path, where):
+            node = obj
+            for part in path.split("."):
+                self.assertIn(
+                    part, node,
+                    f"{where} is missing {path!r}; the chat panel renders it",
+                )
+                node = node[part]
+
+        for field in ("task_id", "task", "thread_id", "status", "message", "url",
+                      "step", "started_at", "finished_at", "provider", "model", "turns"):
+            need(body, field, "the trace")
+
+        self.assertTrue(body["turns"], "the fixture produced no turns to check")
+        framed = 0
+        for turn in body["turns"]:
+            label = f"turn {turn['turn']}"
+            for field in (
+                "turn", "step", "attempt", "timestamp", "reply_timestamp", "provider",
+                "model", "task", "first_turn", "prompt", "prompt_attached",
+                "message_count", "messages_meta", "json_only", "allowed_types",
+                "screenshot_types", "screenshot_attached", "image", "image_meta",
+                "user_text", "wire", "raw", "error", "parse_ok", "parse_error",
+                "command", "execution", "next_image", "next_image_meta",
+            ):
+                need(turn, field, label)
+
+            # The chips the panel prints above every screenshot.  Each metadata
+            # block is checked against its own frame: the first turn has an
+            # after-shot from its navigate but no screenshot of its own, so its
+            # image_meta is legitimately empty and the panel renders "?" there.
+            for key, blob in (("image", "image_meta"), ("next_image", "next_image_meta")):
+                if turn[key]:
+                    framed += 1
+                    for field in ("width", "height", "mime", "bytes_b64", "sha256_16"):
+                        need(turn, f"{blob}.{field}", f"{label} {blob}")
+                else:
+                    # Still an object, so the panel can read a property without
+                    # guarding every access.
+                    self.assertIsInstance(turn[blob], dict, f"{label} {blob} is not an object")
+
+            for field in ("model", "messages_count", "image_present", "image_mime",
+                          "image_payload_type", "content_part_types"):
+                need(turn, "wire." + field, f"{label} wire")
+
+            for field in ("accepted", "executed", "outcome", "command"):
+                need(turn, "execution." + field, f"{label} execution")
+
+            for i, msg in enumerate(turn["messages_meta"]):
+                for field in ("role", "chars", "images", "image_bytes", "content_preview"):
+                    need(msg, field, f"{label} message {i}")
+
+        self.assertGreater(framed, 0, "the fixture run carried no frame, so nothing was checked")
+
+    def test_the_screenshot_caption_data_is_real_not_a_placeholder(self):
+        # The panel puts this metadata straight into a caption and an alt text,
+        # so it has to be read off the actual bytes.  Real frames, decoded, and
+        # the dimensions in the caption are compared with the dimensions the
+        # image reports about itself.
+        from io import BytesIO
+
+        from PIL import Image
+
+        run = self._register(
+            [
+                '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+                '{"type":"click","x":700,"y":350}',
+            ],
+            real_frames=True,
+        )
+        body = self._get(f"/ai/computer/{run.task_id}/trace")
+        later = [t for t in body["turns"] if t["screenshot_attached"]]
+        self.assertTrue(later, "no turn carried a screenshot")
+
+        magic = {
+            "image/jpeg": "/9j/",
+            "image/png": "iVBOR",
+            "image/gif": "R0lGOD",
+            "image/webp": "UklGR",
+        }
+        for turn in later:
+            meta = turn["image_meta"]
+            self.assertIn(meta["mime"], magic, f"unknown declared type {meta['mime']!r}")
+            self.assertTrue(turn["image"].startswith(magic[meta["mime"]]), "the caption type does not match the bytes")
+            self.assertEqual(meta["bytes_b64"], len(turn["image"]))
+            self.assertEqual(len(meta["sha256_16"]), 16)
+
+            # The caption says 1280x800.  Decode the frame and make sure that is
+            # the size of the image, not just the size the runner believed in.
+            with Image.open(BytesIO(base64.b64decode(turn["image"]))) as decoded:
+                self.assertEqual((decoded.width, decoded.height), (meta["width"], meta["height"]))
+                self.assertEqual(decoded.format, "JPEG")
+
+        # The after-shot is a different frame, and the hash is what says so.
+        for turn in body["turns"]:
+            if turn["next_image"] and turn["image"]:
+                self.assertNotEqual(
+                    turn["image_meta"]["sha256_16"],
+                    turn["next_image_meta"]["sha256_16"],
+                    "the before and after frames are identical",
+                )
+
+    def test_the_capture_path_produces_the_jpeg_the_model_is_told_about(self):
+        # The prompt and the wire summary both say image/jpeg, so the real
+        # capture has to be a JPEG or every caption and every claim about the
+        # payload is off by a format.
+        from app.providers.base import image_mime
+
+        self.assertEqual(image_mime("/9j/4AAQSkZJRg=="), "image/jpeg")
+        source = (Path(__file__).resolve().parents[1] / "vm_agent" / "webbrowser.py").read_text(encoding="utf-8")
+        self.assertIn('"format": "jpeg"', source, "the screenshot capture is no longer asking for a JPEG")
 
     def test_it_returns_the_run_report(self):
         run = self._register([

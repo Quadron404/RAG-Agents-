@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import ComputerInspector from "./ComputerInspector";
+import ComputerChat from "./ComputerChat";
 import {
   fetchComputerTask,
   startComputerTask,
@@ -81,7 +81,7 @@ export default function ComputerControlIndicator() {
 
   return (
     <div className="cc-bar" data-status={status}>
-      {inspect && run && <ComputerInspector taskId={run.task_id} />}
+      {inspect && run && <ComputerChat taskId={run.task_id} />}
       {show && (
         <>
           <span className={`cc-dot cc-dot--${status}`} aria-hidden="true" />

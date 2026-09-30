@@ -82,6 +82,8 @@ class ComputerTurnTrace:
     screenshot_attached: bool = False
     image: str = ""
     image_meta: Dict[str, Any] = field(default_factory=dict)
+    #: The user turn this request ended with, in full.
+    user_text: str = ""
 
     # -- C. the request as actually serialised, which is not the same claim as A
     wire: Dict[str, Any] = field(default_factory=dict)
@@ -126,6 +128,7 @@ class ComputerTurnTrace:
             "screenshot_types": self.screenshot_types,
             "screenshot_attached": self.screenshot_attached,
             "image_meta": self.image_meta,
+            "user_text": self.user_text,
             "wire": self.wire,
             "raw": self.raw,
             "error": self.error,
@@ -220,6 +223,12 @@ class ComputerRun:
             "step": self.step,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            # The model that answered the most recent request, so the panel's
+            # header can name it. Taken from the trace rather than settings:
+            # after a provider failure the configured model and the model that
+            # actually replied are not the same claim.
+            "provider": self.trace[-1].provider if self.trace else "",
+            "model": self.trace[-1].model if self.trace else "",
             "protocol": {
                 "first_turn_allowed": ["navigate", "search"],
                 "after_screenshot_allowed": list(ALLOWED_TYPES),
@@ -565,6 +574,14 @@ class ComputerRunner:
                 if image and bounds
                 else {}
             )
+            # The full text of the user turn this request ended with, unabridged.
+            # `messages_meta` only carries a preview, and a preview of the one
+            # message that carries the screenshot and the correction is the wrong
+            # thing to cut: "your last command was rejected, reply with only
+            # JSON" is entirely in the first 400 characters and entirely missing
+            # if the history is long.
+            last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+            turn.user_text = last_user.content if last_user else ""
 
             try:
                 raw, provider_name, model, wire = await self._ask(messages)
