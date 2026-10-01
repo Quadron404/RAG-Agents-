@@ -2,6 +2,7 @@ import { Loader2, Monitor, Power } from "lucide-react";
 import { useCore } from "../core";
 import { haptic } from "../lib/haptics";
 import { Desktop } from "../components/Desktop";
+import ComputerChat from "../components/ComputerChat";
 
 /**
  * The Computer page.
@@ -24,7 +25,26 @@ export function ComputerView() {
   const computer = useCore((s) => s.computer);
   const computerStart = useCore((s) => s.computerStart);
 
-  if (computer.running) return <Desktop />;
+  /* The AI transcript is a permanent column of the page, not a panel that
+     belongs to the Browser window.  It used to be rendered inside that window,
+     which meant closing or minimising an unrelated window destroyed the whole
+     conversation and the only way to start a task: `Desktop` returns null for a
+     window with `open: false`, so the panel went with it.  Here the desktop
+     keeps its own floating windows and the transcript keeps its own column, so
+     the two can be watched and used at the same time and neither can take the
+     other away. */
+  if (computer.running) {
+    return (
+      <div className="csplit">
+        <div className="csplit__desk">
+          <Desktop />
+        </div>
+        <aside className="csplit__ai" aria-label="Computer AI">
+          <ComputerChat />
+        </aside>
+      </div>
+    );
+  }
 
   if (computer.booting) {
     return (

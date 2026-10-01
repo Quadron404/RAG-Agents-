@@ -2895,11 +2895,14 @@ textarea {
   gap: 8px;
   padding: 26px;
   text-align: center;
-  color: #eef0f6;
+color: #eef0f6;
   background: rgba(7, 8, 12, 0.82);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  z-index: 3;
+  /* Below `.dwin__bar` (z-index 3).  `.dwin__body` covers the whole window,
+     title bar included, so this overlay genuinely overlaps the window's own
+     controls and must not outrank them when they are revealed. */
+  z-index: 1;
 }
 
 .vnc__overlayTitle {

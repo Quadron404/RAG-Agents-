@@ -1084,24 +1084,102 @@
   border-color: var(--accent);
 }
 
+/* ---- the two-column Computer page --------------------------------------
+   The live screen and the AI transcript are siblings in a grid, not one
+   absolutely positioned above the other.
+
+   Every part of this is here because the panel was invisible or clipped when
+   it was not:
+
+   - grid, with min-height:0 on both children, is what lets the transcript
+     actually be taller than zero.  A flex or grid child defaults to
+     min-height:auto, so it refuses to shrink below its content and pushes the
+     row past the window instead of scrolling.
+   - overflow:hidden on the row stops the panel's own scroll from escaping and
+     being clipped by the window's rounded corners.
+   - the transcript scrolls internally (its own overflow-y) rather than the
+     column growing, so the newest message is always reachable with the wheel.
+   - a fixed basis rather than a percentage, because 46vw put the panel over
+     the dock on a laptop and left the remote Chrome too narrow to read.
+
+   On a narrow screen the columns stack, and the transcript keeps a usable
+   minimum height instead of collapsing to nothing. */
+
+.csplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 430px);
+  /* `flex: 1` for the same reason `.desktop` uses it: the Computer page is a
+     column flex box, and a percentage height here has no definite basis to
+     resolve against, which collapses the transcript to its content height. */
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The desktop keeps its own full-bleed surface: the menu bar, the floating
+   windows and the dock all position themselves against `.desktop`, so this
+   wrapper only has to hand it a box that fills the grid cell. */
+.csplit__desk {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.csplit__desk > .desktop {
+  position: absolute;
+  inset: 0;
+}
+
+/* The transcript column is a sibling of the desktop, not a child of a window,
+   so nothing inside `.desktop` can cover it or take it away. */
+.csplit__ai {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.csplit__screen {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .csplit {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(240px, 42%);
+  }
+}
+
 /* ---- the panel itself ------------------------------------------------ */
 
 .ccchat {
-  position: absolute;
-  right: 10px;
-  bottom: calc(100% + 8px);
-  z-index: 40;
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(440px, 46vw);
-  max-height: min(74vh, 680px);
+  /* Fills its column.  `.csplit__ai` is a column flex box, so height is the
+     main axis and only `flex-grow` stretches it -- without this the transcript
+     collapses to the height of the idle intro text. */
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--glass-line);
-  border-radius: 14px;
+  border-left: 1px solid var(--glass-line);
   background: var(--bg2);
-  box-shadow:
-    0 24px 64px -20px rgba(0, 0, 0, 0.45),
-    0 2px 8px -2px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 900px) {
+  .ccchat {
+    border-left: none;
+    border-top: 1px solid var(--glass-line);
+  }
 }
 
 .ccchat__head {

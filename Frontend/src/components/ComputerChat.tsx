@@ -7,6 +7,7 @@ import {
   Loader2,
   Monitor,
   MousePointerClick,
+  Play,
   Send,
   Terminal,
   User,
@@ -15,18 +16,29 @@ import {
 import {
   fetchComputerTrace,
   setComputerProvider,
+  type ComputerProvider,
   type ComputerTrace,
   type ComputerTurn,
 } from "../lib/screen";
+import { useComputerRun, useRunPolling } from "../lib/computerRun";
 
 /**
- * The Computer Chat: the computer-use loop as a conversation you can watch.
+ * The Computer AI panel: the computer-use loop as a conversation you can watch.
  *
  * The point is to answer "what is the AI actually seeing and saying, right
  * now" without opening a log file.  So this is a timeline, not a table: the
  * task, then for every request the input the model was handed, the bytes it
  * sent back, what the parser made of them, what the machine did, and the frame
  * that came after.
+ *
+ * It is a column of the Computer page's layout rather than a popup over it,
+ * and it is mounted whether or not a task has ever been started.  Both of those
+ * are load-bearing.  As a popup anchored above the status bar it sat behind the
+ * dock, and it only existed once somebody pressed a button labelled "AI trace"
+ * -- so the panel that exists to explain a run was itself the easiest thing in
+ * the product to fail to find, at the moment of finding out a run had failed.
+ * Mounted unconditionally, the no-run case says what it is instead of not
+ * rendering.
  *
  * Three things it refuses to do, because each one destroys the only evidence
  * there is when a run goes wrong:
@@ -42,20 +54,40 @@ import {
  *  3. It never claims a click landed.  It shows what was asked for and what X
  *     reported back, and when those two differ that is the finding.
  */
-export default function ComputerChat({ taskId }: { taskId: string }) {
+export default function ComputerChat() {
+  useRunPolling();
+  const run = useComputerRun((s) => s.run);
+  const task = useComputerRun((s) => s.task);
+  const busy = useComputerRun((s) => s.busy);
+  const error = useComputerRun((s) => s.error);
+  const start = useComputerRun((s) => s.start);
+  const stop = useComputerRun((s) => s.stop);
+  const providers = useComputerRun((s) => s.providers);
+  const provider = useComputerRun((s) => s.provider);
+  const setProvider = useComputerRun((s) => s.setProvider);
+  const setTask = useComputerRun((s) => s.setTask);
+
   const [trace, setTrace] = useState<ComputerTrace | null>(null);
-  const [error, setError] = useState("");
+  const [traceError, setTraceError] = useState("");
   const [zoom, setZoom] = useState<{ src: string; label: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
+  const taskId = run?.task_id ?? "";
+
   const load = useCallback(async () => {
+    // Nothing to read yet is not an error: it is the state before the first task.
+    if (!taskId) {
+      setTrace(null);
+      setTraceError("");
+      return;
+    }
     try {
       setTrace(await fetchComputerTrace(taskId));
-      setError("");
+      setTraceError("");
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : String(exc));
+      setTraceError(exc instanceof Error ? exc.message : String(exc));
     }
   }, [taskId]);
 
@@ -64,9 +96,10 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
   // last one.
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 1500);
+    if (!taskId) return;
+    const timer = window.setInterval(() => void load(), 1000);
     return () => window.clearInterval(timer);
-  }, [load]);
+  }, [load, taskId]);
 
   // Follow the newest turn, but only while the user is already at the bottom.
   // Yanking the view down mid-scroll while they are reading an earlier reply is
@@ -81,6 +114,19 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
     const el = scroller.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [trace]);
+
+  /**
+   * Re-pin after the screenshots decode.
+   *
+   * Pinning on the trace alone lands too early: the turn markup is in the DOM
+   * before a single <img> has decoded, and every frame that arrives afterwards
+   * pushes the newest turn further down. The result is a live log that appears
+   * to follow the run and then quietly stops, parked above the last reply.
+   */
+  const repin = useCallback(() => {
+    const el = scroller.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, []);
 
   useEffect(() => {
     if (!zoom) return;
@@ -98,31 +144,59 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  /** Who answered, and with what, even before a run exists to say so. */
+  const headerProvider = trace?.provider || provider;
+  const headerModel = trace?.last_model || providers.find((p) => p.name === headerProvider)?.model || "";
+
   return (
-    <aside className="ccchat" aria-label="Computer chat: what the AI receives and sends">
+    <aside className="ccchat" aria-label="Computer AI chat: what the AI receives and sends">
       <header className="ccchat__head">
         <div className="ccchat__title">
           <Bot size={15} aria-hidden="true" />
-          <span>Computer Chat</span>
+          <span>Computer AI</span>
           <span className="ccchat__count">
             {trace ? `${trace.turns.length} ${trace.turns.length === 1 ? "request" : "requests"}` : "—"}
           </span>
         </div>
         <div className="ccchat__head-actions">
-          <ProviderPicker trace={trace} onChanged={() => void load()} />
+          <ProviderPicker
+            trace={trace}
+            providers={providers}
+            selected={provider}
+            onSelect={setProvider}
+            onChanged={() => void load()}
+          />
           <button type="button" onClick={() => void copy()} disabled={!trace} title="Copy the whole trace as JSON">
             <Copy size={13} aria-hidden="true" />
-            {copied ? "Copied" : "Copy trace"}
+            {copied ? "Copied" : "Copy"}
           </button>
         </div>
       </header>
 
+      {/* Provider and model named at the top of the panel, not only on each
+          request.  Shown even with no run, so a misconfigured provider is
+          visible before a task is spent discovering it. */}
+      <div className="ccchat__whoami">
+        <span>
+          Provider <b>{labelFor(providers, headerProvider)}</b>
+        </span>
+        <span>
+          Model <b className="ccpick__mono">{headerModel || "(not configured)"}</b>
+        </span>
+      </div>
+
       <div className="ccchat__scroll" ref={scroller} onScroll={onScroll}>
+        {traceError && <p className="ccchat__error">Cannot read the trace: {traceError}</p>}
         {error && <p className="ccchat__error">{error}</p>}
-        {!trace && !error && (
-          <p className="ccchat__empty">
-            <Loader2 size={15} className="ccchat__spin" aria-hidden="true" /> Reading the run…
-          </p>
+
+        {!trace && !traceError && (
+          <div className="ccchat__intro">
+            <p className="ccchat__intro-lead">
+              Every request the AI makes and every reply it gets back: the screenshot it was shown,
+              the exact bytes it returned, what was parsed from them, and what the computer did.
+            </p>
+            <p>Start a task below. Each step appears here as it happens.</p>
+          </div>
         )}
 
         {trace && (
@@ -137,16 +211,16 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
             {/* The task, exactly as it was submitted.  It is also repeated in
                 every request's history, but the conversation needs it stated
                 once at the top to read as a conversation. */}
-            <Bubble side="user" icon={<User size={13} aria-hidden="true" />} label="Task" tone="task">
+            <Bubble side="user" icon={<User size={13} aria-hidden="true" />} label="User task" tone="task">
               {trace.task}
             </Bubble>
 
             {trace.turns.map((turn) => (
-              <Turn key={turn.turn} turn={turn} onZoom={setZoom} />
+              <Turn key={turn.turn} turn={turn} onZoom={setZoom} onGrown={repin} />
             ))}
 
             {trace.turns.length === 0 && (
-              <p className="ccchat__empty">No request has been made yet.</p>
+              <p className="ccchat__empty">The run has been accepted but has not asked the model anything yet.</p>
             )}
 
             <Bubble side="system" icon={<Terminal size={13} aria-hidden="true" />} label="Run">
@@ -155,6 +229,43 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
           </>
         )}
       </div>
+
+      {/* The composer lives with the transcript rather than in the status bar.
+          The two belong together: you write the task here and read what it
+          caused a few inches below, and a run started from anywhere else still
+          shows its outcome in this panel. */}
+      <form
+        className="ccchat__compose"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void start(task);
+        }}
+      >
+        {run?.running ? (
+          <button type="button" className="ccchat__stop" onClick={() => void stop()}>
+            <X size={13} aria-hidden="true" /> Stop the run
+          </button>
+        ) : (
+          <>
+            <input
+              className="ccchat__task"
+              value={task}
+              placeholder="Tell the AI what to do on the computer…"
+              aria-label="Task for the AI to perform in the browser"
+              onChange={(e) => setTask(e.target.value)}
+              disabled={busy || run?.running}
+            />
+            <button type="submit" className="ccchat__send" disabled={busy || run?.running || !task.trim()}>
+              {busy ? (
+                <Loader2 size={13} className="ccchat__spin" aria-hidden="true" />
+              ) : (
+                <Play size={13} aria-hidden="true" />
+              )}
+              {busy ? "Starting" : "Send"}
+            </button>
+          </>
+        )}
+      </form>
 
       {zoom && (
         <div className="cczoom" role="dialog" aria-modal="true" aria-label={zoom.label} onClick={() => setZoom(null)}>
@@ -171,38 +282,60 @@ export default function ComputerChat({ taskId }: { taskId: string }) {
   );
 }
 
+function labelFor(providers: ComputerProvider[], name: string): string {
+  if (!name) return "—";
+  return providers.find((p) => p.name === name)?.label ?? name;
+}
+
 /**
  * Which provider answers the next request.
  *
  * Shows both the provider and the model it will use, because "Mistral" alone
  * does not say which of several vision models just aimed at a screenshot, and
- * the model name is the thing that differs between two runs that both claim
- * to have worked.
+ * the model name is what differs between two runs that both claim to have
+ * worked.
+ *
+ * Before a run exists this sets the provider the *next* task will use; once one
+ * is running it switches that run, taking effect on the next request without
+ * discarding the conversation.
  *
  * A provider with no key is offered but not hidden -- it is listed and marked,
  * and selecting it fails with the reason from the server.  Hiding it would
- * leave somebody staring at a selector with one option wondering what the
- * other one is, and would make the missing Codespaces secret invisible until
- * they went looking for it.
+ * leave somebody staring at a selector with one option wondering what the other
+ * one is, and would make a missing Codespaces secret invisible until they went
+ * looking for it.
  */
-function ProviderPicker({ trace, onChanged }: { trace: ComputerTrace | null; onChanged: () => void }) {
-  const options = trace?.selected_providers ?? [];
+function ProviderPicker({
+  trace,
+  providers,
+  selected,
+  onSelect,
+  onChanged,
+}: {
+  trace: ComputerTrace | null;
+  providers: ComputerProvider[];
+  selected: string;
+  onSelect: (name: string) => void;
+  onChanged: () => void;
+}) {
+  const options = trace?.selected_providers?.length ? trace.selected_providers : providers;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   if (options.length === 0) return null;
 
-  const current = trace?.provider || options[0]?.name;
+  const current = (trace ? trace.provider || options[0]?.name : selected || options[0]?.name) ?? "";
   const info = options.find((o) => o.name === current);
   // The model that answered last, so a switch is visible in the header before
   // the next request has even been made.
   const last = trace?.last_provider ? options.find((o) => o.name === trace.last_provider) : undefined;
 
   const choose = async (name: string) => {
-    if (!trace || name === current) return;
+    if (name === current) return;
     setBusy(true);
     setError("");
     try {
-      await setComputerProvider(trace.task_id, name);
+      if (trace) await setComputerProvider(trace.task_id, name);
+      onSelect(name);
       onChanged();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -233,10 +366,6 @@ function ProviderPicker({ trace, onChanged }: { trace: ComputerTrace | null; onC
         </select>
         {busy ? <Loader2 size={13} className="ccchat__spin" aria-hidden="true" /> : null}
       </div>
-      <div className="ccpick__model" title="The model this provider will be asked for">
-        {info?.label ?? current} &middot; <span className="ccpick__mono">{info?.model || "(no model configured)"}</span>
-      </div>
-      {info && !info.configured && <div className="ccpick__bad">{info.label} is not configured</div>}
       {error && <div className="ccpick__bad">{error}</div>}
       {last && last.name !== current && (
         <div className="ccpick__was">
@@ -247,7 +376,7 @@ function ProviderPicker({ trace, onChanged }: { trace: ComputerTrace | null; onC
   );
 }
 
-function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void }) {
+function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
   return (
     <div className="ccchat__turn">
       <div className="ccchat__turn-rule">
@@ -272,9 +401,7 @@ function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string;
           <Fact ok>
             {turn.message_count} {turn.message_count === 1 ? "message" : "messages"} of context
           </Fact>
-          <Fact ok={turn.wire.image_present}>
-            Screenshot on the wire: {turn.wire.image_present ? "yes" : "no"}
-          </Fact>
+          <Fact ok={turn.wire.image_present}>Screenshot on the wire: {turn.wire.image_present ? "yes" : "no"}</Fact>
           <Fact ok={turn.wire.messages_count === turn.message_count}>
             {turn.wire.messages_count} serialised for the API
           </Fact>
@@ -283,12 +410,7 @@ function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string;
         {turn.user_text && <Verbatim>{turn.user_text}</Verbatim>}
 
         {turn.screenshot_attached ? (
-          <Shot
-            image={turn.image}
-            meta={turn.image_meta}
-            caption="sent to the model"
-            onZoom={onZoom}
-          />
+          <Shot image={turn.image} meta={turn.image_meta} caption="sent to the model" onZoom={onZoom} onGrown={onGrown} />
         ) : (
           <p className="ccchat__none">
             {turn.first_turn
@@ -327,7 +449,12 @@ function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string;
 
       {/* 4.  What the parser made of it. */}
       {turn.raw !== "" && !turn.error && (
-        <Bubble side="system" icon={<Cpu size={13} aria-hidden="true" />} label="Parsed command" tone={turn.parse_ok ? "ok" : "bad"}>
+        <Bubble
+          side="system"
+          icon={<Cpu size={13} aria-hidden="true" />}
+          label="Parsed command"
+          tone={turn.parse_ok ? "ok" : "bad"}
+        >
           {turn.parse_ok ? (
             <Verbatim small>{JSON.stringify(turn.command, null, 2)}</Verbatim>
           ) : (
@@ -351,12 +478,7 @@ function Turn({ turn, onZoom }: { turn: ComputerTurn; onZoom: (z: { src: string;
       {/* 6.  The frame that followed. */}
       {turn.next_image && (
         <Bubble side="ai" icon={<Monitor size={13} aria-hidden="true" />} label="Next screenshot" tone="input">
-          <Shot
-            image={turn.next_image}
-            meta={turn.next_image_meta}
-            caption="captured after the action"
-            onZoom={onZoom}
-          />
+          <Shot image={turn.next_image} meta={turn.next_image_meta} caption="captured after the action" onZoom={onZoom} onGrown={onGrown} />
           {turn.image_meta.sha256_16 === turn.next_image_meta.sha256_16 && (
             <p className="ccchat__warn">
               Identical to the frame the model was just given — nothing on screen changed.
@@ -408,13 +530,11 @@ function Execution({ turn }: { turn: ComputerTurn }) {
   if (ex.error) rows.push(["error", ex.error]);
 
   return (
-    <>
-      <div className="ccchat__facts">
-        {rows.map(([k, v]) => (
-          <Fact key={k} k={k} v={v} />
-        ))}
-      </div>
-    </>
+    <div className="ccchat__facts">
+      {rows.map(([k, v]) => (
+        <Fact key={k} k={k} v={v} />
+      ))}
+    </div>
   );
 }
 
@@ -423,11 +543,13 @@ function Shot({
   meta,
   caption,
   onZoom,
+  onGrown,
 }: {
   image: string;
   meta: Partial<{ width: number; height: number; mime: string; bytes_b64: number; sha256_16: string }>;
   caption: string;
   onZoom: (z: { src: string; label: string }) => void;
+  onGrown: () => void;
 }) {
   if (!image) {
     return (
@@ -447,7 +569,7 @@ function Shot({
   return (
     <figure className="ccshot">
       <button type="button" className="ccshot__btn" onClick={() => onZoom({ src, label })} title="Open a larger preview">
-        <img src={src} alt={label} />
+        <img src={src} alt={label} onLoad={onGrown} />
       </button>
       <figcaption>
         <span className="ccshot__tag">Remote Chrome screenshot</span>

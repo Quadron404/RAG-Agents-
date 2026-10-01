@@ -87,6 +87,9 @@ const APPS: AppDef[] = [
     // The live screen *is* the browser app.  No address bar, no tabs, no
     // screenshot: the remote Chrome provides all of that, and a second set of
     // controls above it would only cover the part of it people need to click.
+    // The AI transcript that sits beside this screen is a column of the Computer
+    // page, not a child of this window -- see ComputerView -- so nothing done to
+    // this window can take the conversation away.
     render: (running) => <VncScreen running={running} controls="overlay" />,
   },
   {
