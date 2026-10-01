@@ -333,12 +333,67 @@ export interface ComputerTurn {
   wire: ComputerWire;
   raw: string;
   error: string;
+  /**
+   * How the request ended, when it ended badly.
+   *
+   * Split out from `error` because "the provider refused" and "the provider was
+   * never reached" are different problems with different fixes, and one
+   * flattened sentence cannot say which happened. `provider_reached` is the
+   * whole distinction; the fields after it are the evidence behind it.
+   */
+  provider_reached?: boolean | null;
+  http_status?: number;
+  http_reason?: string;
+  /** The provider's own explanation, extracted from its error body. */
+  provider_error?: string;
+  /** The error body verbatim, for when the extracted sentence is not enough. */
+  provider_error_raw?: string;
+  retry_after?: number | null;
+  retry_attempts?: number;
+  http_attempts?: ComputerHttpAttempt[];
   parse_ok: boolean;
   parse_error: string;
   command: Record<string, unknown>;
   execution: ComputerExecution;
   next_image: string;
   next_image_meta: Partial<ComputerImageMeta>;
+}
+
+/**
+ * One refused HTTP attempt.
+ *
+ * A run that hit a 429 three times before giving up made three attempts, and
+ * only the last one is visible in `http_status`. This is the list behind it, so
+ * a bounded retry reads as "tried three times, then stopped" rather than
+ * "failed once, for no stated reason".
+ */
+export interface ComputerHttpAttempt {
+  attempt: number;
+  provider: string;
+  model: string;
+  http_status: number;
+  http_reason: string;
+  provider_error: string;
+  provider_error_raw: string;
+  retry_after: number | null;
+  retryable: boolean;
+  reached: boolean;
+}
+
+/** The structured reason a run stopped, attached to the whole trace. */
+export interface ComputerFailure {
+  turn: number;
+  provider: string;
+  model: string;
+  message: string;
+  provider_reached: boolean | null;
+  http_status: number;
+  http_reason: string;
+  provider_error: string;
+  retry_after: number | null;
+  retry_attempts: number;
+  http_attempts: ComputerHttpAttempt[];
+  final_result: string;
 }
 
 /** What the browser may know about a selectable computer-control provider. */
@@ -394,6 +449,16 @@ export interface ComputerTrace {
   /** The provider and model that actually answered the last request. */
   last_provider: string;
   last_model: string;
+  /**
+   * Why the run stopped, field by field, or absent when it did not fail.
+   *
+   * Read off the turn that actually carries the error rather than off the last
+   * turn, so a failure is attributed to the request that caused it. The panel
+   * uses this instead of parsing `message`, because the whole point of these
+   * fields is that the difference between a rate limit and an unreachable host
+   * is not something a string can carry.
+   */
+  failure?: ComputerFailure;
   protocol: {
     first_turn_allowed: string[];
     after_screenshot_allowed: string[];

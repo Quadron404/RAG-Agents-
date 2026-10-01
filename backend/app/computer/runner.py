@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
 from ..providers.base import LLMMessage, TextDelta, image_mime
+from ..providers.errors import ProviderHTTPError
 from ..providers.router import (
     ProviderUnavailable,
     Router,
@@ -44,6 +45,33 @@ STATUS_OBSERVING = "observing"
 STATUS_CONTROLLING = "controlling"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"
+
+
+def _backoff_delay(
+    attempt: int,
+    retry_after: Optional[float],
+    base: float,
+    cap: float,
+) -> float:
+    """How long to wait before retry ``attempt``.
+
+    The provider's ``Retry-After`` wins when it sent a usable one, because it is
+    the only party that knows when its quota resets.  Otherwise this is plain
+    exponential backoff, capped so a long outage cannot turn one request into a
+    request that sleeps for an hour.
+
+    Full jitter is applied on top: the delay is drawn uniformly from
+    ``[0, computed]`` rather than being the computed value itself.  Without it,
+    every client that got the same 429 retries on the same schedule, which is how
+    a rate limit that was already close to its threshold gets driven over it
+    again.  Jitter spreads them out.
+    """
+    import random
+
+    if retry_after is not None and retry_after >= 0:
+        return min(float(retry_after), float(cap))
+    window = min(float(base) * (2 ** max(0, attempt - 1)), float(cap))
+    return random.uniform(0.0, window) if window > 0 else 0.0
 
 
 @dataclass
@@ -106,6 +134,21 @@ class ComputerTurnTrace:
     parse_error: str = ""
     command: Dict[str, Any] = field(default_factory=dict)
 
+    # -- E2. how the request ended, when it ended badly
+    #:
+    #: Split out from `error` because "the provider refused" and "the provider
+    #: was unreachable" are different diagnoses with different fixes, and a
+    #: flattened sentence cannot say which happened.  `provider_reached` is the
+    #: whole distinction; the rest is the evidence behind it.
+    provider_reached: Optional[bool] = None
+    http_status: int = 0
+    http_reason: str = ""
+    provider_error: str = ""
+    provider_error_raw: str = ""
+    retry_after: Optional[float] = None
+    retry_attempts: int = 0
+    http_attempts: List[Dict[str, Any]] = field(default_factory=list)
+
     # -- F. what the machine did about it
     execution: Dict[str, Any] = field(default_factory=dict)
     # -- G. the frame that followed, so a before/after pair can be compared
@@ -137,6 +180,14 @@ class ComputerTurnTrace:
             "wire": self.wire,
             "raw": self.raw,
             "error": self.error,
+            "provider_reached": self.provider_reached,
+            "http_status": self.http_status,
+            "http_reason": self.http_reason,
+            "provider_error": self.provider_error,
+            "provider_error_raw": self.provider_error_raw,
+            "retry_after": self.retry_after,
+            "retry_attempts": self.retry_attempts,
+            "http_attempts": self.http_attempts,
             "parse_ok": self.parse_ok,
             "parse_error": self.parse_error,
             "command": self.command,
@@ -196,6 +247,11 @@ class ComputerRun:
     #: holds the screenshot bytes, which are the largest thing in the process
     #: and are already being re-captured from the display every turn.
     trace: List[ComputerTurnTrace] = field(default_factory=list)
+    #: Every HTTP refusal seen on the current request, oldest first, so the
+    #: trace can show that a 429 was retried twice before giving up rather than
+    #: only the last one.  Reset per request, not per run: a retry budget is
+    #: about one request.
+    http_attempts: List[Dict[str, Any]] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:
         """What the browser is allowed to see.
@@ -217,6 +273,33 @@ class ComputerRun:
             "done": self.status in (STATUS_DONE, STATUS_ERROR),
         }
 
+    def _failure(self) -> Dict[str, Any]:
+        """The structured reason this run stopped, if it stopped badly.
+
+        Gathered from the trace rather than kept separately, so it cannot drift
+        from the turn it describes.  Returns ``{}`` for a run that has not
+        failed; `trace_report` then omits the key entirely, because an empty
+        object is truthy in JavaScript and would read as a failure.
+        """
+        for turn in reversed(self.trace):
+            if not turn.error:
+                continue
+            return {
+                "turn": turn.turn,
+                "provider": turn.provider,
+                "model": turn.model,
+                "message": turn.error,
+                "provider_reached": turn.provider_reached,
+                "http_status": turn.http_status,
+                "http_reason": turn.http_reason,
+                "provider_error": turn.provider_error,
+                "retry_after": turn.retry_after,
+                "retry_attempts": turn.retry_attempts,
+                "http_attempts": list(turn.http_attempts),
+                "final_result": "stopped",
+            }
+        return {}
+
     def trace_report(
         self,
         include_images: bool = True,
@@ -228,6 +311,23 @@ class ComputerRun:
         Deliberately built from the same records the loop wrote rather than
         recomputed, so what is displayed cannot disagree with what happened.
         """
+        report = self._build_report(include_images, providers, default_provider)
+        # `failure` is left out entirely when the run did not fail, rather than
+        # sent as an empty object. `{}` is truthy in JavaScript, so a panel that
+        # renders on the presence of this key puts a failure banner above a run
+        # that finished cleanly -- which is exactly what happened: an "empty"
+        # failure with no turn, no provider and no message, displayed as a
+        # confident report of a failure that never occurred.
+        if not report.get("failure"):
+            report.pop("failure", None)
+        return report
+
+    def _build_report(
+        self,
+        include_images: bool,
+        providers: Optional[List[Any]],
+        default_provider: str,
+    ) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
             "task": self.task,
@@ -261,6 +361,11 @@ class ComputerRun:
             # actually replied are not the same claim.
             "last_provider": self.trace[-1].provider if self.trace else "",
             "last_model": self.trace[-1].model if self.trace else "",
+            # Why the run stopped, in a form the panel can render field by
+            # field.  `failed_turn` is the last turn that carries an `error`,
+            # so a failure is attributed to the request that caused it rather
+            # than to whatever happened to be last in the list.
+            "failure": self._failure(),
             "protocol": {
                 "first_turn_allowed": ["navigate", "search"],
                 "after_screenshot_allowed": list(ALLOWED_TYPES),
@@ -422,16 +527,71 @@ class ComputerRunner:
         choice.
         """
         provider, model = self.router.resolve("computer", provider_name=run.provider or None)
-        parts: List[str] = []
 
-        async def drain() -> None:
-            async for event in provider.stream(messages, [], model):
-                if isinstance(event, TextDelta):
-                    parts.append(event.content)
+        attempts: List[Dict[str, Any]] = []
+        last: Optional[ProviderHTTPError] = None
 
-        await asyncio.wait_for(drain(), timeout=120.0)
-        wire = getattr(provider, "last_wire", None) or {}
-        return "".join(parts), getattr(provider, "name", ""), model, wire
+        for attempt in range(1, self.settings.computer_max_http_attempts + 1):
+            parts: List[str] = []
+            try:
+                async def drain() -> None:
+                    async for event in provider.stream(messages, [], model):
+                        if isinstance(event, TextDelta):
+                            parts.append(event.content)
+
+                await asyncio.wait_for(drain(), timeout=120.0)
+            except ProviderHTTPError as exc:
+                # The provider answered and refused.  This is not "could not be
+                # reached", and the difference decides whether the reader goes
+                # looking at a rate limit or at their API key.
+                last = exc
+                attempts.append({"attempt": attempt, **exc.to_dict()})
+                run.http_attempts = attempts
+                if not exc.retryable or attempt >= self.settings.computer_max_http_attempts:
+                    raise
+                # Bounded exponential backoff with jitter, and the provider's
+                # own Retry-After wins when it sent one: it knows its quota,
+                # we only know a shape.  The jitter is what stops every worker
+                # in the fleet retrying on the same schedule and re-creating
+                # the limit that caused it.
+                delay = _backoff_delay(
+                    attempt=attempt,
+                    retry_after=exc.retry_after,
+                    base=self.settings.computer_retry_base_seconds,
+                    cap=self.settings.computer_retry_max_seconds,
+                )
+                run.message = (
+                    f"Provider reached — HTTP {exc.status}"
+                    f"{' ' + exc.reason if exc.reason else ''}; retrying in {delay:.1f}s"
+                    f" (attempt {attempt + 1} of {self.settings.computer_max_http_attempts})"
+                )
+                await asyncio.sleep(delay)
+                continue
+            except (ProviderUnavailable, asyncio.TimeoutError):
+                raise
+            except Exception:
+                # A transport-level failure: DNS, TLS, a refused connection, a
+                # timeout.  Retrying cannot fix those quickly and hammering a
+                # broken endpoint helps nobody, so they go straight out.
+                raise
+
+            wire = getattr(provider, "last_wire", None) or {}
+            run.http_attempts = attempts
+            return "".join(parts), getattr(provider, "name", ""), model, wire
+
+        # Unreachable while retries remain, but a loop that can fall out of its
+        # own range must not fall out silently: return the last real error
+        # rather than an empty string that reads like an empty completion.
+        if last is not None:
+            raise last
+        raise ProviderHTTPError(
+            provider=getattr(provider, "name", ""),
+            model=model,
+            status=0,
+            reason="",
+            body="the provider did not answer",
+            retry_after=None,
+        )
 
     async def _execute(self, run: ComputerRun) -> None:
         run.status = STATUS_OBSERVING
@@ -560,6 +720,10 @@ class ComputerRunner:
         already been given a terminal status and the caller must stop.
         """
         for attempt in range(self.settings.computer_max_json_retries + 2):
+            # The retry budget belongs to one request.  Cleared here so the
+            # attempts recorded on this turn are this request's, not a leftover
+            # count from whatever failed earlier in the run.
+            run.http_attempts = []
             # One trace entry per *request*, not per command.  A retry is a
             # second real call to the model with a different message list, and
             # the question the inspector has to answer is "what did the API
@@ -657,6 +821,17 @@ class ComputerRunner:
             last_user = next((m for m in reversed(messages) if m.role == "user"), None)
             turn.user_text = last_user.content if last_user else ""
 
+            # `raw` is the target of the assignment above, so it does not exist
+            # if that line raised.  Initialising it here is what keeps a provider
+            # failure from becoming an UnboundLocalError: this handler used to
+            # return `raw`, which raised a *second* exception inside the
+            # handler, and that one propagated instead of the provider's real
+            # error -- so the trace showed "cannot access local variable 'raw'"
+            # and the actual 429 was gone.
+            raw = ""
+            provider_name = ""
+            model = ""
+            wire: Dict[str, Any] = {}
             try:
                 raw, provider_name, model, wire = await self._ask(messages, run)
             except ProviderUnavailable as exc:
@@ -669,22 +844,66 @@ class ComputerRunner:
                 turn.raw = ""
                 turn.reply_timestamp = time.time()
                 turn.error = str(exc)
+                turn.provider_reached = False
                 run.status = STATUS_ERROR
                 run.message = str(exc)
                 return None, str(exc), ""
-            except Exception as exc:
-                turn.provider = ""
+            except ProviderHTTPError as exc:
+                # The provider was reached and refused.  Recorded as structured
+                # fields, not flattened into one string, because the reader has
+                # to be able to tell a rate limit from a bad key from a 500, and
+                # a single sentence cannot carry the status, the body and the
+                # number of retries without becoming unreadable.
+                turn.provider = exc.provider or run.provider
+                turn.model = exc.model or (computer_model_for(self.settings, run.provider) if run.provider else "")
                 turn.raw = ""
                 turn.reply_timestamp = time.time()
-                turn.error = f"the computer-control model could not be reached: {exc}"
+                turn.error = exc.message
+                turn.provider_reached = True
+                turn.http_status = exc.status
+                turn.http_reason = exc.reason
+                turn.provider_error = exc.provider_detail
+                turn.provider_error_raw = exc.body
+                turn.retry_after = exc.retry_after
+                turn.retry_attempts = len(run.http_attempts or [])
+                turn.http_attempts = list(run.http_attempts or [])
                 run.status = STATUS_ERROR
-                run.message = f"the computer-control model could not be reached: {exc}"
-                return None, "", raw
+                run.message = exc.message
+                return None, exc.message, ""
+            except Exception as exc:
+                # Anything else: a transport failure, a timeout, a bug.  The
+                # provider's own words are still preserved where they exist, and
+                # the original exception's type is named, because
+                # "something went wrong" is what made this path hard to fix.
+                turn.provider = run.provider
+                turn.model = computer_model_for(self.settings, run.provider) if run.provider else ""
+                turn.raw = ""
+                turn.reply_timestamp = time.time()
+                turn.error = f"{type(exc).__name__}: {exc}"
+                turn.provider_reached = False
+                run.status = STATUS_ERROR
+                run.message = turn.error
+                return None, turn.error, ""
 
             turn.provider = provider_name
             turn.model = model
             turn.wire = wire
             turn.reply_timestamp = time.time()
+            # Refusals this request recovered from.  Attached on success as well
+            # as on failure: a request that was refused once and then answered
+            # looks identical to one that was never refused unless the refusals
+            # travel with the reply, and a provider that starts refusing is
+            # exactly what somebody reading this transcript needs to notice.
+            turn.http_attempts = list(run.http_attempts or [])
+            turn.retry_attempts = len(turn.http_attempts)
+            if turn.http_attempts:
+                last_refusal = turn.http_attempts[-1]
+                turn.http_status = int(last_refusal.get("http_status") or 0)
+                turn.http_reason = str(last_refusal.get("http_reason") or "")
+                turn.provider_error = str(last_refusal.get("provider_error") or "")
+                turn.provider_error_raw = str(last_refusal.get("provider_error_raw") or "")
+                turn.retry_after = last_refusal.get("retry_after")
+                turn.provider_reached = True
             # Verbatim.  Whatever came back is what gets shown, including prose,
             # a fenced code block, or nothing recognisable at all.
             turn.raw = raw

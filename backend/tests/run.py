@@ -34,6 +34,17 @@ TESTS = (
     # same executors.  A second provider is exactly where two implementations of
     # a control loop start to drift.
     "test_computer_providers",
+    # Provider failure handling.  Paired with the two above because they only
+    # ever drive a provider that answers: a 429, a 5xx, an unparseable body and
+    # a refused connection are the paths where the loop's own error reporting
+    # runs, and it used to raise a second exception from inside its handler, so
+    # the provider's real reason was replaced by a NameError.
+    "test_computer_provider_failures",
+    # The same failures over a real socket.  The check above substitutes a
+    # provider that raises, which cannot prove that a streamed error body is
+    # actually read, that Retry-After survives the round trip, or that a refused
+    # connection is not reported as "provider reached".
+    "test_provider_http_429",
     # The supervisor script.  Before test_bind_mutations, which edits files:
     # this one reads them, and it has to pass before anything is deployed on a
     # machine whose only screen depends on supervise.sh starting.

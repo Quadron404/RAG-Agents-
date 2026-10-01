@@ -148,6 +148,11 @@ export default function ComputerChat() {
   const headerProvider = trace?.provider || provider;
   const headerModel = trace?.last_model || providers.find((p) => p.name === headerProvider)?.model || "";
 
+  /* The run's failure, if it has one.  A message is required as well as the
+     key: the backend omits `failure` on a clean run, but an empty object would
+     still be truthy here and would raise a failure banner over a `done` run. */
+  const failure = trace?.failure && trace.failure.message ? trace.failure : null;
+
   return (
     <aside className="ccchat" aria-label="Computer AI chat: what the AI receives and sends">
       <header className="ccchat__head">
@@ -207,6 +212,36 @@ export default function ComputerChat() {
                 {trace.last_provider || "—"} &middot; {trace.last_model || "—"}
               </span>
             </div>
+
+            {/* The run's outcome, stated at the top as well as at the failing
+                request below.  A run that died on its last turn is otherwise
+                only readable by scrolling to the end of a long transcript, and
+                the cause is the one thing anybody opens this panel to find.
+
+                The `failure` key is optional and is only sent when the run
+                really failed.  It is still checked for a message as well as
+                for presence, because an empty object is truthy in JavaScript:
+                rendering on presence alone put a confident "Run failed" banner
+                above runs that finished with done. */}
+            {failure && (
+              <div className="ccfail ccfail--run" role="status">
+                <p className="ccfail__headline">
+                  {failure.provider_reached === true
+                    ? `Provider reached — HTTP ${failure.http_status}${failure.http_reason ? ` ${failure.http_reason}` : ""}`
+                    : failure.provider_reached === false
+                      ? "Provider was not reached"
+                      : "Run failed"}
+                  {failure.final_result && <span className="ccfail__tag">{failure.final_result}</span>}
+                </p>
+                {failure.provider_error && <p className="ccfail__why">{failure.provider_error}</p>}
+                <p className="ccfail__hint">
+                  Request {failure.turn} of {trace.turns.length} &middot;{" "}
+                  {failure.provider || "no provider"} &middot;{" "}
+                  {(failure.retry_attempts ?? 1) > 1 ? `${failure.retry_attempts} attempts` : "1 attempt"}
+                  . The failing request below has the full account.
+                </p>
+              </div>
+            )}
 
             {/* The task, exactly as it was submitted.  It is also repeated in
                 every request's history, but the conversation needs it stated
@@ -376,6 +411,137 @@ function ProviderPicker({
   );
 }
 
+/**
+ * A request that was refused and then answered anyway.
+ *
+ * The reply is real and the run carried on, so nothing is broken -- but the
+ * reader is looking at a success with no way to know the provider had refused
+ * it first. That hides exactly the thing worth noticing: a provider that
+ * refuses one request in three is about to refuse one in one, and the evidence
+ * is right there in `http_attempts`.
+ */
+function Recovered({ attempts, turn }: { attempts: NonNullable<ComputerTurn["http_attempts"]>; turn: ComputerTurn }) {
+  const last = attempts[attempts.length - 1];
+  return (
+    <div className="ccfail ccfail--recovered">
+      <p className="ccfail__headline">
+        Refused {attempts.length === 1 ? "once" : `${attempts.length} times`}, then answered
+        <span className="ccfail__tag">retried</span>
+      </p>
+      <p className="ccfail__hint">
+        {last.http_status ? (
+          <>
+            HTTP {last.http_status}
+            {last.http_reason ? ` ${last.http_reason}` : ""}
+            {last.provider_error ? ` — ${last.provider_error}` : ""}
+            {last.retry_after ? `. The provider asked to wait ${Number(last.retry_after).toFixed(0)}s, and this reply arrived after that pause` : ""}.
+          </>
+        ) : (
+          <>The provider refused, the request was re-sent, and this is the reply that came back.</>
+        )}{" "}
+        {turn.provider && `Answered by ${turn.provider}.`}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Why a request failed, told apart by cause instead of by prose.
+ *
+ * The wording used to be a fixed "the model was never reached" in front of
+ * whatever the error said, and that sentence is false for the most common
+ * failure there is: a 429 or a 5xx is the provider *having* been reached and
+ * having refused. Sending the reader after the network when the cause was a
+ * rate limit that clears on its own is the specific misdiagnosis this replaces.
+ *
+ * The fields come from the backend as separate values precisely so the panel
+ * does not have to parse them back out of a sentence.
+ */
+function Failure({ turn }: { turn: ComputerTurn }) {
+  const status = turn.http_status ?? 0;
+  const reached = turn.provider_reached;
+  const attempts = turn.http_attempts ?? [];
+  const rateLimited = status === 429;
+
+  const headline =
+    reached === true
+      ? `Provider reached — HTTP ${status}${turn.http_reason ? ` ${turn.http_reason}` : ""}`
+      : reached === false
+        ? "Provider was not reached"
+        : turn.error;
+
+  return (
+    <div className="ccfail">
+      <p className="ccfail__headline">
+        {headline}
+        {rateLimited && <span className="ccfail__tag">rate limited</span>}
+      </p>
+
+      {turn.provider_error && <p className="ccfail__why">{turn.provider_error}</p>}
+
+      <div className="ccfail__facts">
+        <Fact ok={Boolean(turn.provider)}>Provider: {turn.provider || "unknown"}</Fact>
+        <Fact ok={Boolean(turn.model)}>
+          Model: <span className="ccpick__mono">{turn.model || "unknown"}</span>
+        </Fact>
+        {status > 0 && (
+          <Fact ok={false}>
+            HTTP status: {status}
+            {turn.http_reason ? ` ${turn.http_reason}` : ""}
+          </Fact>
+        )}
+        {turn.retry_after !== undefined && turn.retry_after !== null && (
+          <Fact ok>
+            Provider asked to wait: {Number(turn.retry_after).toFixed(Number(turn.retry_after) % 1 ? 1 : 0)}s
+          </Fact>
+        )}
+        <Fact ok={(turn.retry_attempts ?? 0) <= 1}>
+          Attempts made: {turn.retry_attempts ?? 1}
+        </Fact>
+      </div>
+
+      {rateLimited && (
+        <p className="ccfail__hint">
+          The provider was reached and refused on purpose, so this is not a network or a key problem.
+          Quota limits clear on their own; the request is retried with a widening, jittered pause and
+          then stops rather than retrying forever.
+        </p>
+      )}
+      {status > 0 && !rateLimited && status >= 400 && status < 500 && (
+        <p className="ccfail__hint">
+          A 4xx means this request was refused and re-sending it unchanged would be refused the same
+          way. Check the provider key and the model name before starting another run.
+        </p>
+      )}
+
+      {attempts.length > 1 && (
+        <Details summary={`Every refused attempt (${attempts.length})`}>
+          <ol className="ccfail__attempts">
+            {attempts.map((a) => (
+              <li key={a.attempt}>
+                <b>Attempt {a.attempt}</b> — HTTP {a.http_status}
+                {a.http_reason ? ` ${a.http_reason}` : ""}
+                {a.retryable ? " · retried" : " · not retried"}
+                {a.provider_error ? ` · ${a.provider_error}` : ""}
+              </li>
+            ))}
+          </ol>
+        </Details>
+      )}
+
+      {turn.provider_error_raw && turn.provider_error_raw !== turn.provider_error && (
+        <Details summary="Provider response body, verbatim">
+          <Verbatim small>{turn.provider_error_raw}</Verbatim>
+        </Details>
+      )}
+
+      {!turn.provider_error && !status && (
+        <p className="ccchat__none">{turn.error}</p>
+      )}
+    </div>
+  );
+}
+
 function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
   return (
     <div className="ccchat__turn">
@@ -439,11 +605,19 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
       {/* 3.  The reply, exactly as it arrived. */}
       <Bubble side="ai" icon={<Bot size={13} aria-hidden="true" />} label="AI response" tone="raw">
         {turn.error ? (
-          <p className="ccchat__none">The model was never reached: {turn.error}</p>
+          <Failure turn={turn} />
         ) : turn.raw === "" ? (
           <p className="ccchat__none">(the model returned an empty response)</p>
         ) : (
-          <Verbatim raw>{turn.raw}</Verbatim>
+          <>
+            {/* A request that was refused and then answered on a retry has a
+                perfectly good reply above and no sign at all that it was ever
+                refused, which makes the retry policy invisible. The refusals
+                are on the turn, so they are shown here rather than only when
+                the retry budget finally ran out. */}
+            {(turn.http_attempts?.length ?? 0) > 0 && <Recovered attempts={turn.http_attempts ?? []} turn={turn} />}
+            <Verbatim raw>{turn.raw}</Verbatim>
+          </>
         )}
       </Bubble>
 

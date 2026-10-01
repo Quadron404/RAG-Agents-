@@ -108,6 +108,21 @@ class Settings:
     # navigate somewhere it should not.
     computer_max_steps: int = field(default_factory=lambda: int(_get("COMPUTER_MAX_STEPS", "12")))
     computer_max_json_retries: int = field(default_factory=lambda: int(_get("COMPUTER_MAX_JSON_RETRIES", "2")))
+    # Total HTTP requests allowed per model call, the first one included.
+    # Small on purpose: these are re-sends against a quota that is already
+    # exhausted, and a large number turns one task into a burst that keeps the
+    # limit closed.  Named "attempts" rather than "retries" because 3 means 3
+    # requests, not 1 plus 3 -- the loop counted attempts, and the old name
+    # implied a budget four times larger than the one actually enforced.
+    computer_max_http_attempts: int = field(default_factory=lambda: int(_get("COMPUTER_MAX_HTTP_ATTEMPTS", "3")))
+    computer_retry_base_seconds: float = field(
+        default_factory=lambda: float(_get("COMPUTER_RETRY_BASE_SECONDS", "1.5"))
+    )
+    #: Ceiling for a single computed backoff, so a long outage cannot turn one
+    #: request into a request that sleeps for an hour.
+    computer_retry_max_seconds: float = field(
+        default_factory=lambda: float(_get("COMPUTER_RETRY_MAX_SECONDS", "30"))
+    )
     computer_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS", "1400")))
     computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "900")))
 
