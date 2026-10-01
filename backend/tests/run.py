@@ -27,6 +27,12 @@ TESTS = (
     # one proves the agent cannot be talked into running anything else.  Either
     # half alone would leave a way through.
     "test_computer_input",
+    # The screenshot itself when the browser is real but the X display is not.
+    # Paired with the check above on purpose: that one proves a model's
+    # coordinates can never become a shell command, this one proves the loop can
+    # still see the page those coordinates are aimed at -- the one thing a
+    # control loop cannot fake, and the reason the CDP capture exists at all.
+    "test_computer_cdp_capture",
     # The second computer-control provider.  Paired with the check above: that
     # one proves the loop drives a real machine through the OpenAI-compatible
     # adapter, this one proves swapping in Mistral changed who answers and
@@ -34,6 +40,11 @@ TESTS = (
     # same executors.  A second provider is exactly where two implementations of
     # a control loop start to drift.
     "test_computer_providers",
+    # Groq, the third.  Same claim as the two above with one provider further
+    # along: a new provider is a name, a key and a model, and nothing about the
+    # loop, the prompt, the strict JSON protocol or the screenshot changes.  Also
+    # the only place that proves GROQ_API_KEY never reaches the browser.
+    "test_computer_groq",
     # Provider failure handling.  Paired with the two above because they only
     # ever drive a provider that answers: a 429, a 5xx, an unparseable body and
     # a refused connection are the paths where the loop's own error reporting

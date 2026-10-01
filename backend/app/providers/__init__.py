@@ -6,6 +6,7 @@ from typing import Dict
 from ..config import Settings
 from .anthropic import AnthropicProvider
 from .gemini import GeminiProvider
+from .groq import GroqProvider
 from .mistral import MistralProvider
 from .mock import MockProvider
 from .openai_compat import OpenAICompatProvider
@@ -48,5 +49,14 @@ def build_providers(settings: Settings) -> Dict[str, object]:
         providers["mistral"] = MistralProvider(
             settings.mistral_api_key,
             settings.mistral_base_url,
+        )
+    # Groq, the third computer-control provider.  Registered the same way from
+    # the same Settings object for the same reason: one list decides which
+    # providers can drive the computer, and nothing in the loop knows or cares
+    # which of them was picked.
+    if settings.groq_api_key:
+        providers["groq"] = GroqProvider(
+            settings.groq_api_key,
+            settings.groq_base_url,
         )
     return providers

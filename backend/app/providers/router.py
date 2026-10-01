@@ -35,7 +35,7 @@ class ComputerProviderInfo:
 #: selector lists them.  A closed list rather than whatever happens to be in
 #: `providers`: the browser can only be offered a computer provider that knows
 #: its own model name, and a provider that has no entry here has none.
-COMPUTER_PROVIDER_ORDER = ("openrouter", "mistral")
+COMPUTER_PROVIDER_ORDER = ("openrouter", "mistral", "groq")
 
 
 def computer_provider_info(settings: Settings, name: str) -> ComputerProviderInfo:
@@ -50,6 +50,11 @@ def computer_provider_info(settings: Settings, name: str) -> ComputerProviderInf
             settings.mistral_model,
             bool(settings.mistral_api_key),
         ),
+        "groq": (
+            "Groq",
+            settings.groq_model,
+            bool(settings.groq_api_key),
+        ),
     }.get(name, (name, "", False))
     return ComputerProviderInfo(name=name, label=label, model=model, configured=configured)
 
@@ -63,10 +68,14 @@ def computer_model_for(settings: Settings, name: str) -> str:
 
     Mistral defaults to a vision-capable model because a key with no model
     named is a missing variable rather than a request for a text-only model,
-    and computer control without an image is not computer control.
+    and computer control without an image is not computer control.  Groq is the
+    same case: GROQ_MODEL is optional, and the default is the vision model
+    Groq names, so omitting the variable does not silently cost the screenshot.
     """
     if name == "mistral":
         return settings.mistral_model or "mistral-small-2506"
+    if name == "groq":
+        return settings.groq_model or "qwen/qwen3.8-27b"
     return settings.computer_model or ""
 
 

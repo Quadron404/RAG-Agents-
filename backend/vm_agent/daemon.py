@@ -218,7 +218,13 @@ def browser(args: dict, timeout: int) -> dict:
             return {"ok": False, "error": f"browser timed out after {timeout}s"}
 
 
-CDP_DEBUG_PORT = 9222
+#: Chrome's DevTools port.  The same value the rest of the stack already uses
+#: (`CHROME_DEBUG_PORT`), so the CDP helpers below talk to the browser this
+#: process itself started rather than to a hardcoded 9222 that only happens to
+#: match the Codespace.  Two browsers cannot share one debug port, and the
+#: failure mode without this is silent: every CDP call returns "chrome not
+#: running on debug port" while Chrome is plainly running.
+CDP_DEBUG_PORT = int(os.environ.get("CHROME_DEBUG_PORT", "9222"))
 
 
 def _cdp_port_open() -> bool:
@@ -256,7 +262,12 @@ def _cdp_target_wsurl() -> Optional[str]:
 
 def _cdp_connect(wsurl: str):
     import websocket
-    ws = websocket.create_connection(wsurl, timeout=10)
+    # `suppress_origin`: Chrome refuses a DevTools WebSocket that carries an
+    # `Origin` header unless it was started with `--remote-allow-origins`, and
+    # it answers with a bare 403 that the callers above this swallow into an
+    # empty url, an empty title and "the X display is not running".  Sending no
+    # origin at all is accepted by Chrome whether or not the flag was passed.
+    ws = websocket.create_connection(wsurl, timeout=10, suppress_origin=True)
     ws.settimeout(0.2)
     return ws
 
@@ -341,8 +352,15 @@ def _cdp_in_ws():
     return ws
 
 
-def _cdp_cmd(method: str, params: dict | None = None, wait: float = 3.0) -> dict:
-    """Send one CDP command over a persistent websocket (auto-reconnect once)."""
+def _cdp_cmd(method: str, params: dict | None = None, wait: float = 3.0,
+             want_result: bool = False) -> dict:
+    """Send one CDP command over a persistent websocket (auto-reconnect once).
+
+    `want_result` hands back the command's `result` payload.  Chrome stops
+    replying on a *second* connection to a page target once another client is
+    attached, so a command that needs data has to travel on the same socket the
+    input worker owns rather than on a connection of its own.
+    """
     import websocket
     global _cdp_seq
     for attempt in range(2):
@@ -374,7 +392,7 @@ def _cdp_cmd(method: str, params: dict | None = None, wait: float = 3.0) -> dict
                     if msg.get("id") == mid:
                         if msg.get("error"):
                             return {"ok": False, "error": str(msg["error"])}
-                        return {"ok": True}
+                        return {"ok": True, "result": msg.get("result") or {}} if want_result else {"ok": True}
                     if msg.get("method") == "Inspector.detached":
                         _cdp_in_reset()
                         raise RuntimeError("cdp detached")
@@ -1399,6 +1417,83 @@ def _xdotool(*args: str, timeout: int = 10) -> tuple:
     )
 
 
+def _cdp_viewport() -> tuple:
+    """(width, height, dpr) of the page, in CSS pixels, or (0, 0, 0).
+
+    CSS pixels are the coordinate space every CDP input command uses -- a click
+    at (700, 450) is 700 from the left edge of the viewport, whatever the
+    display's scaling factor happens to be.
+    """
+    reply = _cdp_cmd("Runtime.evaluate",
+                     {"expression": "JSON.stringify({w:innerWidth,h:innerHeight,"
+                                    "dpr:devicePixelRatio})", "returnByValue": True},
+                     wait=5.0, want_result=True)
+    if not reply.get("ok"):
+        return (0, 0, 0)
+    try:
+        value = (((reply.get("result") or {}).get("result") or {}).get("value"))
+        info = json.loads(value or "{}")
+        return (int(info.get("w") or 0), int(info.get("h") or 0), float(info.get("dpr") or 0))
+    except Exception:
+        return (0, 0, 0)
+
+
+def _cdp_screenshot() -> dict:
+    """One JPEG of the real Chrome window, captured over CDP.
+
+    The X path in `_capture_display` is the production one: it captures the
+    whole desktop, so anything else on the display is visible to the model too.
+    It needs Xvfb, which only exists on the Codespace.  Where Chrome is running
+    with its debug port open and there is no X display -- a workstation, a CI
+    box -- the same real pixels are one CDP command away, and refusing there
+    would make the loop unable to see a browser that is right there.
+
+    Same pixels, one less dependency: `Page.captureScreenshot` is Chrome
+    compositing its own page, not a drawing of anything the loop made up.  The
+    JSON is the same shape `_capture_display` returns, so the loop cannot tell
+    the two apart and needs no branch of its own.
+    """
+    wsurl = _cdp_target_wsurl()
+    if not wsurl:
+        return {"ok": False, "error": "chrome is not running on the debug port"}
+    params = {"format": "jpeg", "quality": 82}
+    width, height, dpr = _cdp_viewport()
+    if width > 0 and height > 0:
+        # Capture in CSS pixels, not device pixels.  Chrome's screenshot comes
+        # back at the display's scaling factor -- 1.25 here -- while every input
+        # command below is in CSS pixels, so an unscaled image would hand the
+        # model a coordinate system 25% larger than the one its clicks are
+        # measured in, and every click would miss by exactly that ratio.
+        params["clip"] = {"x": 0, "y": 0, "width": width, "height": height,
+                          "scale": round(1.0 / dpr, 4) if dpr > 0 else 1.0}
+    else:
+        # No viewport to ask for (a page that is still loading, say): take the
+        # window and report whatever size the bytes turn out to be.
+        params["captureBeyondViewport"] = False
+    reply = _cdp_cmd("Page.captureScreenshot", params, wait=20.0, want_result=True)
+    if not reply.get("ok"):
+        return {"ok": False, "error": f"cdp screenshot failed: {reply.get('error')}"}
+    data = ((reply.get("result") or {}).get("data")) or ""
+    if not data:
+        return {"ok": False, "error": "cdp screenshot returned no image"}
+    try:
+        raw = base64.b64decode(data)
+    except Exception:
+        return {"ok": False, "error": "cdp screenshot returned an undecodable image"}
+    image_width, image_height = _jpeg_size(raw)
+    if width > 0 and height > 0 and (image_width, image_height) != (width, height):
+        # Loud rather than quiet: the size reported to the app is the coordinate
+        # system the model is told to reason in, so a disagreement here is the
+        # "every click misses by a ratio and nothing looks wrong" failure.
+        _log(
+            f"CDP GEOMETRY MISMATCH: page is {width}x{height} CSS px but the "
+            f"screenshot is {image_width}x{image_height}. Coordinates will be off by a ratio."
+        )
+        width, height = image_width, image_height
+    return {"ok": True, "image": data, "width": image_width or width,
+            "height": image_height or height, "source": "cdp"}
+
+
 def _capture_display(draw_mouse: bool = True) -> dict:
     """One JPEG of the real X display, as base64 with its pixel size.
 
@@ -1410,6 +1505,11 @@ def _capture_display(draw_mouse: bool = True) -> dict:
     import subprocess
 
     if not _x_running():
+        # No X display, but Chrome may still be right here on its debug port.
+        # Fall back to its own pixels rather than refusing: the alternative is a
+        # loop that cannot see a browser that is plainly open.
+        if _cdp_target_wsurl():
+            return _cdp_screenshot()
         return {"ok": False, "error": "the X display is not running"}
     # Serialised on purpose: two concurrent x11grab processes on one display is
     # the fastest way to make the agent unresponsive for no benefit, and only

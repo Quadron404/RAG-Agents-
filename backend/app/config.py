@@ -103,6 +103,21 @@ class Settings:
         default_factory=lambda: _get("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
     )
 
+    # --- Groq, the third computer-control provider -------------------------
+    # Same shape as the two above, and for the same reason: the loop, the
+    # prompt, the parser and the executors live above the provider interface,
+    # so a provider is a name, a key and a model rather than a second control
+    # loop.  The key is a Codespaces secret read from the environment and only
+    # ever used to build the Authorization header inside the adapter.
+    #
+    # The model is named rather than blank, because computer control without a
+    # vision model is not computer control: with no model configured, Groq is
+    # "not configured" and the run says so by name instead of quietly sending a
+    # screenshot to a text-only model.
+    groq_api_key: str = field(default_factory=lambda: _get("GROQ_API_KEY", "").strip())
+    groq_model: str = field(default_factory=lambda: _get("GROQ_MODEL", "qwen/qwen3.8-27b").strip())
+    groq_base_url: str = field(default_factory=lambda: _get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"))
+
     # The loop's own limits, all deliberately small: a control loop that can run
     # a hundred clicks is a control loop that can empty someone's wallet or
     # navigate somewhere it should not.

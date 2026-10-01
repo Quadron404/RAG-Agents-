@@ -468,19 +468,23 @@ class TestTheProviderSelectorIsAnApi(unittest.TestCase):
         for key, value in self._saved.items():
             setattr(self.main.settings, key, value)
 
-    def test_it_lists_both_providers_with_their_models(self):
+    def test_it_lists_every_provider_with_its_model(self):
         self.main.settings.openrouter_api_key = "sk-or-secret"
         self.main.settings.mistral_api_key = "mistral-secret"
         self.main.settings.computer_model = "openrouter/vision"
         self.main.settings.mistral_model = DEFAULT_MISTRAL_MODEL
+        # Groq is listed as a peer, unconfigured here, so this stays a check of
+        # the two configured providers without hiding that Groq exists.
+        self.main.settings.groq_api_key = ""
         body = self.client.get("/ai/computer/providers").json()
-        self.assertEqual([p["name"] for p in body["providers"]], ["openrouter", "mistral"])
+        self.assertEqual([p["name"] for p in body["providers"]], ["openrouter", "mistral", "groq"])
         by_name = {p["name"]: p for p in body["providers"]}
         self.assertEqual(by_name["openrouter"]["label"], "OpenRouter")
         self.assertEqual(by_name["openrouter"]["model"], "openrouter/vision")
         self.assertEqual(by_name["mistral"]["label"], "Mistral")
         self.assertEqual(by_name["mistral"]["model"], "mistral-small-2506")
-        self.assertTrue(all(p["configured"] for p in body["providers"]))
+        self.assertTrue(all(p["configured"] for p in body["providers"][:2]))
+        self.assertFalse(by_name["groq"]["configured"], "Groq has no key here")
 
     def test_an_unconfigured_provider_is_listed_and_marked_not_hidden(self):
         # Hidden, it would be an invisible missing Codespaces secret until
