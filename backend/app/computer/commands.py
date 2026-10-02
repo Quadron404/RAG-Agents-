@@ -164,6 +164,7 @@ class Command:
     key: str = ""
     delta_y: int = 0
     message: str = ""
+    history: str = ""
 
     def to_json(self) -> Dict[str, Any]:
         """The canonical record of what was issued, for the event log.
