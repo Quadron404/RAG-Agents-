@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
-from ..providers.base import LLMMessage, TextDelta, ToolCall, ToolCallEvent, image_mime
+from ..providers.base import LLMMessage, TextDelta, ToolCall, ToolCallEvent, image_mime, stream_model
 from ..providers.errors import ProviderHTTPError
 from ..providers.router import (
     ProviderUnavailable,
@@ -720,82 +720,53 @@ class ComputerRunner:
         return ["click", "type", "key", "scroll"]
 
     async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int]]:
-        """One model call: text, tool calls, usage and the wire summary.
+        """Make exactly one logical model request.
 
-        Returns ``(text, provider, model, wire, tool_calls, usage)``.
-
-        The tool calls are the point of the redesign.  The previous loop passed
-        `[]` for tools and parsed JSON out of the text, so a control command was
-        a format the model had to get right by hand on every single turn.  It is
-        now a schema the API enforces, and the arguments arrive already parsed
-        into a string that only needs `json.loads`.
-
-        Usage comes back from the same call because the two are the same
-        transaction: a token count recorded "afterwards" from a local estimate
-        would be a number nobody can check.
+        The provider layer owns the global ten-second pacing and 429 stall/retry
+        policy. A 429 therefore never creates a new logical request here and
+        cannot be overtaken by another queued message.
         """
-        provider, model = self.router.resolve("computer", provider_name=run.provider or None)
+        provider, model = self.router.resolve(
+            "computer",
+            provider_name=run.provider or None,
+        )
 
-        attempts: List[Dict[str, Any]] = []
         parts: List[str] = []
         calls: List[ToolCall] = []
-        try:
-            async def drain() -> None:
-                async for event in stream_model(
-                    provider,
-                    messages,
-                    computer_tools(self._allowed_tools(run)),
-                    model,
-                ):
-                    if isinstance(event, TextDelta):
-                        parts.append(event.content)
-                    elif isinstance(event, ToolCallEvent):
-                        calls.append(event.call)
 
-            await asyncio.wait_for(drain(), timeout=120.0)
-        except ProviderHTTPError as exc:
-            attempts.append({"attempt": 1, **exc.to_dict()})
-            run.http_attempts = attempts
-            raise
-        except (ProviderUnavailable, asyncio.TimeoutError):
-            raise
-        except Exception:
-            raise
+        async def drain() -> None:
+            async for event in stream_model(
+                provider,
+                messages,
+                computer_tools(self._allowed_tools(run)),
+                model,
+            ):
+                if isinstance(event, TextDelta):
+                    parts.append(event.content)
+                elif isinstance(event, ToolCallEvent):
+                    calls.append(event.call)
+
+        await asyncio.wait_for(drain(), timeout=120.0)
 
         wire = getattr(provider, "last_wire", None) or {}
-            run.http_attempts = attempts
-            usage = getattr(provider, "last_usage", None) or {}
-            raw = "".join(parts)
-            if calls and not raw.strip():
-                # A turn that is entirely a tool call arrives with no prose at
-                # all, and a trace whose "raw" field is blank is unreadable: the
-                # reader is left asking what the model did with its turn.  So
-                # the call itself is rendered for the trace, and only then -- the
-                # model never receives this text, it is not part of any request.
-                raw = "".join(
-                    json.dumps({"name": c.name, "arguments": c.arguments}) for c in calls
-                )
-            return (
-                raw,
-                getattr(provider, "name", ""),
-                model,
-                wire,
-                calls,
-                dict(usage),
+        usage = getattr(provider, "last_usage", None) or {}
+        raw = "".join(parts)
+
+        if calls and not raw.strip():
+            # A pure native tool-call response has no prose. Keep the trace
+            # readable without feeding this synthetic text back to the model.
+            raw = "".join(
+                json.dumps({"name": c.name, "arguments": c.arguments})
+                for c in calls
             )
 
-        # Unreachable while retries remain, but a loop that can fall out of its
-        # own range must not fall out silently: return the last real error
-        # rather than an empty string that reads like an empty completion.
-        if last is not None:
-            raise last
-        raise ProviderHTTPError(
-            provider=getattr(provider, "name", ""),
-            model=model,
-            status=0,
-            reason="",
-            body="the provider did not answer",
-            retry_after=None,
+        return (
+            raw,
+            getattr(provider, "name", ""),
+            model,
+            wire,
+            calls,
+            dict(usage),
         )
 
     async def _execute(self, run: ComputerRun) -> None:
