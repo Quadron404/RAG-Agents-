@@ -328,7 +328,7 @@ class ComputerRun:
     #: something the executor cannot see is worth keeping -- but they are never
     #: proof that anything happened, never gate the next action, and never
     #: appear as fact in the run report.
-    notes: List[str] = field(default_factory=list)
+    history_text: str = ""
     #: What the executor actually did with the most recent action, and what it
     #: actually reported back.  This is the single source of truth the next
     #: request is told about, so the model learns what happened from the machine
@@ -653,8 +653,8 @@ class ComputerRunner:
             # Only ever set from a verified state read, never from a call the
             # model made or wished it had made.
             parts.append(f"Current URL: {run.last_url}")
-        if run.facts:
-            parts.append("What actually happened so far:\n" + "\n".join(run.facts))
+        if run.history_text:
+            parts.append("History.txt (latest complete version; use only this):\n" + run.history_text)
         if run.last_action:
             parts.append("Last action: " + _result_line(run.last_action))
         if image:
@@ -714,7 +714,7 @@ class ComputerRunner:
     def _allowed_tools(self, run: ComputerRun) -> List[str]:
         """Narrow the tool catalogue for conservative single-action runs."""
         if not run.simple_task:
-            return list(TOOL_NAMES)
+            return [name for name in TOOL_NAMES if name != "history"]
         if run.action_count == 0 and not run.seen_width:
             return ["screenshot"]
         return ["click", "type", "key", "scroll"]
@@ -866,6 +866,8 @@ turn acts.  It is never written into the facts, so no later request
                     continue
 
                 terminal = await self._perform(run, command)
+                if command.history:
+                    run.history_text = command.history[:12000]
                 if command.type not in ("screenshot", "history", "done", "error") and run.last_action.get("status") == "SUCCESS":
                     run.action_count += 1
                 if turn is not None:
