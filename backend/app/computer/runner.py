@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -513,6 +514,19 @@ class ComputerRun:
         }
 
 
+def _simple_single_action(task: str) -> bool:
+    """Recognize a conservative one-action user request."""
+    text = " ".join(str(task or "").strip().lower().split())
+    if not text or len(text) > 240:
+        return False
+    if any(token in text for token in (
+        " and ", " then ", " after ", " before ", " verify", " check ",
+        " confirm", " make sure", " tell me", " report", " until ",
+    )):
+        return False
+    return bool(re.match(r"^(click|press|type|scroll|hit)\b", text))
+
+
 class ComputerRunner:
     def __init__(
         self,
@@ -554,7 +568,8 @@ class ComputerRunner:
         """
         task_id = uuid.uuid4().hex
         run = ComputerRun(
-            task_id=task_id, task=task, thread_id=thread_id, started_at=time.time()
+            task_id=task_id, task=task, thread_id=thread_id, started_at=time.time(),
+            simple_task=_simple_single_action(task),
         )
         if provider:
             run.provider = provider
@@ -689,6 +704,14 @@ class ComputerRunner:
         )
         return messages
 
+    def _allowed_tools(self, run: ComputerRun) -> List[str]:
+        """Narrow the tool catalogue for conservative single-action runs."""
+        if not run.simple_task:
+            return list(TOOL_NAMES)
+        if run.action_count == 0 and not run.seen_width:
+            return ["screenshot"]
+        return ["click", "type", "key", "scroll"]
+
     async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int]]:
         """One model call: text, tool calls, usage and the wire summary.
 
@@ -714,7 +737,7 @@ class ComputerRunner:
             calls: List[ToolCall] = []
             try:
                 async def drain() -> None:
-                    async for event in provider.stream(messages, computer_tools(), model):
+                    async for event in provider.stream(messages, computer_tools(self._allowed_tools(run)), model):
                         if isinstance(event, TextDelta):
                             parts.append(event.content)
                         elif isinstance(event, ToolCallEvent):
@@ -889,9 +912,16 @@ turn acts.  It is never written into the facts, so no later request
                     continue
 
                 terminal = await self._perform(run, command)
+                if command.type not in ("screenshot", "history", "done", "error"):
+                    run.action_count += 1
                 if turn is not None:
                     self._record_execution(turn, command, run, started, terminal)
                 if terminal:
+                    return
+
+                if run.simple_task and run.last_action.get("status") == "SUCCESS":
+                    run.status = STATUS_DONE
+                    run.message = "Task complete."
                     return
 
                 if run.last_action.get("status") == "SUCCESS":
@@ -944,6 +974,7 @@ turn acts.  It is never written into the facts, so no later request
                 turn.error = str(exc)
             return None
         run.pending_image = image
+        run.screenshot_count += 1
         run.pending_width = width
         run.pending_height = height
         run.pending_screenshot_call_id = (turn.tool_call_id if turn else "") or "screenshot"
@@ -1258,6 +1289,13 @@ turn acts.  It is never written into the facts, so no later request
                                 "the model never issued a usable call"):
                     continue
                 return None, error
+
+            if run.simple_task and command.type not in ("screenshot", "done", "error") and run.action_count >= 1:
+                refusal = "simple task already has its one allowed action; finish the task"
+                turn.tool_error = refusal
+                run.status = STATUS_ERROR
+                run.message = refusal
+                return None, refusal
 
             turn.parse_ok = True
             turn.command = command.to_json()
