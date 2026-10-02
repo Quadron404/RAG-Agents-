@@ -70,16 +70,15 @@ STATE_CHANGING_TOOLS = frozenset({"navigate", "search", "click", "type", "key", 
 MAX_HISTORY_NOTE_LENGTH = 200
 
 
-def computer_tools() -> List[Dict[str, Any]]:
-    """The tool schemas, in OpenAI function-calling form.
+def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Return only the tool schemas the current request needs.
 
-    Deliberately small.  Each schema is the name, one line saying when to use
-    it, and the arguments it needs -- no worked examples and no prose.  A tool
-    description is sent on every request, so every sentence in here is a
-    recurring cost, and the reasoning belongs in the reply rather than in the
-    catalogue.
+    The full tool catalogue is unnecessary on every turn.  The runner narrows
+    it for simple tasks so the model has fewer choices and the provider receives
+    fewer recurring input tokens.  No new capability is created here: filtering
+    only removes schemas from the request.
     """
-    return [
+    schemas = [
         {
             "name": "screenshot",
             "description": "Get the current VM screen. Call only when you need to see it.",
@@ -105,7 +104,7 @@ def computer_tools() -> List[Dict[str, Any]]:
         },
         {
             "name": "click",
-            "description": "Click at a pixel of the screenshot you last received.",
+            "description": "Click at a pixel of the latest screenshot.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -126,7 +125,7 @@ def computer_tools() -> List[Dict[str, Any]]:
         },
         {
             "name": "key",
-            "description": "Press a key, e.g. ENTER, TAB, ESC or CTRL+L.",
+            "description": "Press a key such as ENTER, TAB, ESC or CTRL+L.",
             "parameters": {
                 "type": "object",
                 "properties": {"key": {"type": "string"}},
@@ -144,7 +143,7 @@ def computer_tools() -> List[Dict[str, Any]]:
         },
         {
             "name": "history",
-            "description": "Record one short line about what you just did. Text only.",
+            "description": "Add an optional note about something you noticed.",
             "parameters": {
                 "type": "object",
                 "properties": {"note": {"type": "string"}},
@@ -170,6 +169,10 @@ def computer_tools() -> List[Dict[str, Any]]:
             },
         },
     ]
+    if allowed_names is None:
+        return schemas
+    allowed = set(allowed_names)
+    return [schema for schema in schemas if schema["name"] in allowed]
 
 
 def parse_arguments(raw: Any) -> Optional[Dict[str, Any]]:
