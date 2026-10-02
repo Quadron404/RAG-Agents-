@@ -4,7 +4,7 @@ import json
 import re
 from typing import Callable, List, Optional
 
-from ..providers.base import LLMMessage, TextDelta
+from ..providers.base import LLMMessage, TextDelta, stream_model
 from ..providers.router import Router
 from ..tools.executor import Executor
 from ..tools.registry import commander_tools, worker_tools
@@ -98,7 +98,7 @@ class Commander:
             LLMMessage("user", self._render_reports(user_text, reports)),
         ]
         final_text = ""
-        async for ev in provider_c.stream(
+        async for ev in stream_model(provider_c,
             [LLMMessage("system", SYNTH_PROMPT)] + synth_messages,
             [t.schema() for t in commander_tools()],
             model_c,
@@ -113,7 +113,7 @@ class Commander:
         provider, model = self.router.resolve("commander")
         try:
             raw = ""
-            async for ev in provider.stream(
+            async for ev in stream_model(provider,
                 [LLMMessage("system", PLAN_PROMPT), LLMMessage("user", user_text)],
                 [],
                 model,
