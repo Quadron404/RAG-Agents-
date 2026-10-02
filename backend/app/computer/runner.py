@@ -194,6 +194,9 @@ class ComputerTurnTrace:
     provider_error_raw: str = ""
     retry_after: Optional[float] = None
     retry_attempts: int = 0
+    simple_task: bool = False
+    action_count: int = 0
+    screenshot_count: int = 0
     http_attempts: List[Dict[str, Any]] = field(default_factory=list)
 
     # -- F. what the machine did about it
@@ -912,7 +915,7 @@ turn acts.  It is never written into the facts, so no later request
                     continue
 
                 terminal = await self._perform(run, command)
-                if command.type not in ("screenshot", "history", "done", "error"):
+                if command.type not in ("screenshot", "history", "done", "error") and run.last_action.get("status") == "SUCCESS":
                     run.action_count += 1
                 if turn is not None:
                     self._record_execution(turn, command, run, started, terminal)
