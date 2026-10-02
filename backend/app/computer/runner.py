@@ -1070,7 +1070,7 @@ turn acts.  It is never written into the facts, so no later request
                 attempt=attempt,
                 allowed_types=list(ALLOWED_TYPES),
                 screenshot_types=list(SCREENSHOT_ACTIONS),
-                tools_offered=list(TOOL_NAMES),
+                tools_offered=self._allowed_tools(run),
                 json_only=False,
                 # The reason this request exists decides whether it carries an
                 # image, so it is recorded before the call rather than inferred
@@ -1252,6 +1252,13 @@ turn acts.  It is never written into the facts, so no later request
                 return None, refusal
 
             call = calls[0]
+            allowed_now = self._allowed_tools(run)
+            if call.name not in allowed_now:
+                refusal = f"{call.name} is not allowed for this task state; allowed now: {', '.join(allowed_now)}"
+                turn.tool_error = refusal
+                if self._refuse(run, turn, raw, refusal, f"{call.name}:{call.arguments}", attempt, "the model selected a tool that is not allowed now"):
+                    continue
+                return None, refusal
             turn.tool_call_id = call.id
             turn.tool_call = {"name": call.name, "arguments": call.arguments}
             signature = f"{call.name}:{call.arguments}"
