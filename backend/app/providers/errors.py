@@ -39,6 +39,8 @@ class ProviderHTTPError(RuntimeError):
         #: The provider's own error text, verbatim and unredacted of meaning.
         self.body = body or ""
         self.retry_after = retry_after
+        if self.status == 429 and self.retry_after is None:
+            self.retry_after = _retry_after_from_body(self.body)
 
         super().__init__(self.message)
 
@@ -103,6 +105,25 @@ class ProviderHTTPError(RuntimeError):
             "retryable": self.retryable,
             "reached": self.reached,
         }
+
+
+def _retry_after_from_body(body: str) -> Optional[float]:
+    """Extract a provider reset delay when it is only present in the body."""
+    import re
+    text = " ".join(str(body or "").split())
+    patterns = (
+        r"try\s+again\s+in\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+        r"wait\s+(?:for\s+)?([0-9]+(?:\.[0-9]+)?)\s*s",
+        r"retry\s+after\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            try:
+                return max(0.0, float(match.group(1)))
+            except ValueError:
+                pass
+    return None
 
 
 def _from_json(parsed: object) -> str:
