@@ -1177,7 +1177,7 @@ class ComputerRunner:
             turn.tool_call_id = call.id
             turn.tool_call = {"name": call.name, "arguments": call.arguments}
             args = parse_arguments(call.arguments)
-            if not args and (call.arguments or "").strip():
+            if args is None:
                 refusal = f"the arguments of {call.name}() were not valid JSON"
                 turn.tool_error = refusal
                 self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)

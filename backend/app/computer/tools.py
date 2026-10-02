@@ -172,24 +172,40 @@ def computer_tools() -> List[Dict[str, Any]]:
     ]
 
 
-def parse_arguments(raw: Any) -> Dict[str, Any]:
-    """The tool call's arguments as a dict.
+def parse_arguments(raw: Any) -> Optional[Dict[str, Any]]:
+    """The tool call's arguments as a dict, or None when they are not one.
 
-    A model that sends malformed JSON for its arguments is a normal enough
-    failure that it gets a refusal rather than an exception, because the
-    alternative is a traceback where the model's actual mistake used to be.
+    None and {} are deliberately different answers, because the caller has to
+    be able to tell them apart.  A call to a tool that takes no arguments
+    arrives as the string "{}", which is a perfectly valid object and the
+    commonest reply there is; treating it as a parse failure refuses the one
+    call that had nothing to get wrong, and a caller cannot recover the
+    difference afterwards because both cases came back as the same empty dict.
+
+    So this returns a dict whenever the arguments are a JSON object -- including
+    an empty one -- and None only when they are not an object at all: malformed
+    text, a bare array, a number, a string.  A model that gets this wrong gets a
+    refusal naming the tool, rather than a traceback in place of its own
+    mistake.
     """
     import json
 
     if isinstance(raw, dict):
         return raw
-    if not isinstance(raw, str) or not raw.strip():
+    # An endpoint that omits the field entirely sends nothing, which for a tool
+    # with no parameters means the same thing as "{}", and for a tool with
+    # parameters is caught by the argument validation further down.
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
         return {}
+    if not isinstance(raw, str):
+        return None
     try:
         value = json.loads(raw)
     except (ValueError, TypeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+        return None
+    # Valid JSON that is not an object: still unusable as arguments, and
+    # reported as such rather than silently becoming no arguments at all.
+    return value if isinstance(value, dict) else None
 
 
 def _finite_number(value: Any) -> Optional[float]:
