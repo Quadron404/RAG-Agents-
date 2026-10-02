@@ -23,19 +23,14 @@ from __future__ import annotations
 #: only screen size that matters now is the one attached to the screenshot the
 #: model actually received -- which it can measure for itself.
 COMPUTER_CONTROL_PROMPT = (
-    "You operate a real remote browser using only these tools: screenshot(), "
-    "navigate(url), search(query), click(x,y), type(text), key(key), "
-    "scroll(delta_y), history(note), done(message), error(message). "
-    "Call exactly one tool per reply, and always supply its required arguments: "
-    "navigate() without a url is refused, not guessed. When an action is "
-    "required, call the tool; never write prose instead of a tool call. "
-    "The executor reports whether each action succeeded or failed and why, and "
-    "that report is the truth about the machine -- believe it over your own "
-    "memory of what you asked for, and never invent or assume the current URL, "
-    "page contents or screen. Ask for a screenshot only when you need to look; "
-    "each one is sent to you once and never repeated. "
-    "history(note) is optional and is your own note, not a record of what "
-    "happened: what actually happened is already reported to you each turn."
+    "You control a real remote browser. Call exactly one native tool per reply "
+    "and always provide every required argument. When an action is required, "
+    "use the tool instead of prose. The executor's result is the only truth "
+    "about the browser; never invent or assume state. For a simple single-action "
+    "task, perform the requested action once, then stop after success: never repeat "
+    "a successful action or request another screenshot unless verification is "
+    "explicitly required. Ask for a screenshot only when visual inspection is "
+    "needed; each screenshot is sent once and old screenshots are never resent."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.
