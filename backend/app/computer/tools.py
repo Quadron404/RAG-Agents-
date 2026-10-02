@@ -218,10 +218,15 @@ def tool_to_command(
     if name not in TOOL_NAMES:
         return None, f"{name!r} is not a tool; the tools are {', '.join(TOOL_NAMES)}"
 
+    history = args.get("history")
+    if not isinstance(history, str):
+        return None, f'{name} requires a string "history" containing the complete History.txt'
+    history = history.strip()[:MAX_HISTORY_NOTE_LENGTH]
+
     if name == "screenshot":
         # Carried as a command so it lands in the event log and the trace like
         # every other call, but it has no executor and cannot move anything.
-        return Command(type="screenshot"), ""
+        return Command(type="screenshot", history=history), ""
 
     if name == "navigate":
         url = args.get("url")
@@ -237,7 +242,7 @@ def tool_to_command(
             return None, f"only http and https urls are allowed, not {parsed.scheme or 'no'} scheme"
         if not parsed.netloc:
             return None, "url has no host"
-        return Command(type="navigate", url=url), ""
+        return Command(type="navigate", url=url, history=history), ""
 
     if name == "search":
         query = args.get("query")
@@ -246,7 +251,7 @@ def tool_to_command(
         query = query.strip()
         if len(query) > MAX_QUERY_LENGTH:
             return None, f"query is longer than {MAX_QUERY_LENGTH} characters"
-        return Command(type="search", query=query), ""
+        return Command(type="search", query=query, history=history), ""
 
     if name in ("click", "move"):
         x = _finite_number(args.get("x"))
@@ -262,7 +267,7 @@ def tool_to_command(
                 f"{bounds.width}x{bounds.height} screenshot; take a screenshot "
                 f"and use coordinates from it"
             )
-        return Command(type=name, x=x, y=y), ""
+        return Command(type=name, x=x, y=y, history=history), ""
 
     if name == "type":
         text = args.get("text")
@@ -272,13 +277,13 @@ def tool_to_command(
             return None, "type text may not contain a null byte"
         if len(text) > MAX_TEXT_LENGTH:
             return None, f"text is longer than {MAX_TEXT_LENGTH} characters"
-        return Command(type="type", text=text), ""
+        return Command(type="type", text=text, history=history), ""
 
     if name == "key":
         combo, error = normalize_key(args.get("key"))
         if error:
             return None, error
-        return Command(type="key", key=combo), ""
+        return Command(type="key", key=combo, history=history), ""
 
     if name == "scroll":
         delta = _finite_number(args.get("delta_y"))
@@ -288,7 +293,7 @@ def tool_to_command(
 
         if abs(delta) > MAX_SCROLL_DELTA:
             return None, f"delta_y must be between -{MAX_SCROLL_DELTA} and {MAX_SCROLL_DELTA}"
-        return Command(type="scroll", delta_y=int(delta)), ""
+        return Command(type="scroll", delta_y=int(delta), history=history), ""
 
     if name == "history":
         note = args.get("note")
@@ -306,7 +311,7 @@ def tool_to_command(
     message = message.strip()
     if len(message) > MAX_MESSAGE_LENGTH:
         return None, f"message is longer than {MAX_MESSAGE_LENGTH} characters"
-    return Command(type=name, message=message), ""
+    return Command(type=name, message=message, history=history), ""
 
 
 __all__ = [
