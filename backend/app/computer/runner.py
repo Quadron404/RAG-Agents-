@@ -363,6 +363,10 @@ class ComputerRun:
     #: only the last one.  Reset per request, not per run: a retry budget is
     #: about one request.
     http_attempts: List[Dict[str, Any]] = field(default_factory=list)
+    #: Conservative task classification and counters used to bound simple one-action requests.
+    simple_task: bool = False
+    action_count: int = 0
+    screenshot_count: int = 0
 
     def public(self) -> Dict[str, Any]:
         """What the browser is allowed to see.
