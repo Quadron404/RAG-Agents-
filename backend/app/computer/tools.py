@@ -53,7 +53,6 @@ TOOL_NAMES = (
     "type",
     "key",
     "scroll",
-    "history",
     "done",
     "error",
 )
@@ -67,7 +66,7 @@ STATE_CHANGING_TOOLS = frozenset({"navigate", "search", "click", "type", "key", 
 #: One line of history, bounded.  Long enough to say what happened and short
 #: enough that a dozen of them are still cheaper than one screenshot, which is
 #: the comparison the whole design rests on.
-MAX_HISTORY_NOTE_LENGTH = 200
+MAX_HISTORY_NOTE_LENGTH = 12000
 
 
 def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -78,86 +77,62 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
     fewer recurring input tokens.  No new capability is created here: filtering
     only removes schemas from the request.
     """
+    def with_history(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
+        props = dict(properties)
+        props["history"] = {
+            "type": "string",
+            "description": (
+                "Complete current History.txt in plain text. Rewrite the whole "
+                "history on every call. Include all important prior facts plus "
+                "this turn. Never include screenshots, base64, or JSON."
+            ),
+        }
+        return {
+            "type": "object",
+            "properties": props,
+            "required": [*required, "history"],
+        }
+
     schemas = [
         {
             "name": "screenshot",
             "description": "Get the current VM screen. Call only when you need to see it.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": with_history({}, []),
         },
         {
             "name": "navigate",
             "description": "Open a URL in the real remote browser.",
-            "parameters": {
-                "type": "object",
-                "properties": {"url": {"type": "string", "description": "http(s) URL"}},
-                "required": ["url"],
-            },
+            "parameters": with_history({"url": {"type": "string", "description": "http(s) URL"}}, ["url"]),
         },
         {
             "name": "search",
             "description": "Open the browser's search engine for a query.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-            },
+            "parameters": with_history({"query": {"type": "string"}}, ["query"]),
         },
         {
             "name": "click",
             "description": "Click at a pixel of the latest screenshot.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "integer"},
-                    "y": {"type": "integer"},
-                },
-                "required": ["x", "y"],
-            },
+            "parameters": with_history({"x": {"type": "integer"}, "y": {"type": "integer"}}, ["x", "y"]),
         },
         {
             "name": "type",
             "description": "Type text into whatever is focused.",
-            "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-            },
+            "parameters": with_history({"text": {"type": "string"}}, ["text"]),
         },
         {
             "name": "key",
             "description": "Press a key such as ENTER, TAB, ESC or CTRL+L.",
-            "parameters": {
-                "type": "object",
-                "properties": {"key": {"type": "string"}},
-                "required": ["key"],
-            },
+            "parameters": with_history({"key": {"type": "string"}}, ["key"]),
         },
         {
             "name": "scroll",
             "description": "Scroll the page. Positive is down.",
-            "parameters": {
-                "type": "object",
-                "properties": {"delta_y": {"type": "integer"}},
-                "required": ["delta_y"],
-            },
-        },
-        {
-            "name": "history",
-            "description": "Add an optional note about something you noticed.",
-            "parameters": {
-                "type": "object",
-                "properties": {"note": {"type": "string"}},
-                "required": ["note"],
-            },
+            "parameters": with_history({"delta_y": {"type": "integer"}}, ["delta_y"]),
         },
         {
             "name": "done",
             "description": "Finish: the task is complete.",
-            "parameters": {
-                "type": "object",
-                "properties": {"message": {"type": "string"}},
-                "required": ["message"],
-            },
+            "parameters": with_history({"message": {"type": "string"}}, ["message"]),
         },
         {
             "name": "error",
