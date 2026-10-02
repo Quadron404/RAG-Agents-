@@ -360,8 +360,8 @@ class ComputerRun:
             "step": self.step,
             "message": self.message,
             "url": self.last_url,
-            "steps": len(run.events),
-            "turns": len(run.trace),
+            "steps": len(self.events),
+            "turns": len(self.trace),
             "running": self.status in (STATUS_OBSERVING, STATUS_CONTROLLING),
             "done": self.status in (STATUS_DONE, STATUS_ERROR),
             # What the run has cost so far, and how much of it involved an
