@@ -139,7 +139,7 @@ class Settings:
         default_factory=lambda: float(_get("COMPUTER_RETRY_MAX_SECONDS", "30"))
     )
     computer_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS", "1400")))
-    computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "900")))
+    computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "0")))
 
     # --- How much a single model call is allowed to say ------------------------
     # Computer control is a loop of one-tool decisions, so the only thing a
