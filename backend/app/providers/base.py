@@ -73,12 +73,10 @@ MODEL_CALL_GAP_SECONDS = 10.0
 
 
 class _ModelCallGate:
-    """Serialize external model calls and enforce a hard 10s post-call gap.
+    """Serialize model calls with a hard 10s gap between normal calls.
 
-    The lock is held for the complete provider stream, not merely for opening
-    the HTTP connection. Therefore two model calls can never overlap, and the
-    next call cannot start until ten seconds after the previous call finished
-    (successful, failed, or rate-limited).
+    A 429 keeps ownership of the gate until the provider's reset time. This
+    means a newer message can never overtake a stalled request.
     """
 
     def __init__(self) -> None:
@@ -86,23 +84,19 @@ class _ModelCallGate:
         self._lock = asyncio.Lock()
         self._next_allowed = 0.0
 
-    async def __aenter__(self):
+    async def acquire(self) -> None:
         import asyncio
         await self._lock.acquire()
-        try:
-            wait = self._next_allowed - asyncio.get_running_loop().time()
-            if wait > 0:
-                await asyncio.sleep(wait)
-            return self
-        except Exception:
-            self._lock.release()
-            raise
+        wait = self._next_allowed - asyncio.get_running_loop().time()
+        if wait > 0:
+            await asyncio.sleep(wait)
 
-    async def __aexit__(self, exc_type, exc, tb):
+    def finish_success(self) -> None:
         import asyncio
         self._next_allowed = asyncio.get_running_loop().time() + MODEL_CALL_GAP_SECONDS
+
+    def release(self) -> None:
         self._lock.release()
-        return False
 
 
 _MODEL_CALL_GATE = _ModelCallGate()
@@ -116,33 +110,47 @@ async def stream_model(
     *,
     on_rate_limit: Optional[Callable[[Exception], object]] = None,
 ) -> AsyncIterator[LLMEvent]:
-    """Run one provider request under the global 10s gate.
+    """Run one logical model request with normal pacing and exact 429 recovery.
 
-    Every attempt is the same logical request. A 429 does not release the gate
-    for another message: the stalled request keeps ownership, waits the full
-    ten-second interval, then retries itself. This prevents message B from
-    overtaking stalled message A.
+    Successful/completed calls are separated by 10 seconds. A 429 does NOT use
+    that 10-second gap: the same request stays stalled and is retried exactly
+    when the provider says the limit resets. There is no control-loop timeout
+    around this wait.
     """
     from inspect import isawaitable
     from .errors import ProviderHTTPError
     import asyncio
 
-    async with _MODEL_CALL_GATE:
+    await _MODEL_CALL_GATE.acquire()
+    locked = True
+    try:
         while True:
             try:
                 async for event in provider.stream(messages, tools, model):
                     yield event
+                _MODEL_CALL_GATE.finish_success()
+                _MODEL_CALL_GATE.release()
+                locked = False
                 return
             except ProviderHTTPError as exc:
                 if exc.status != 429:
+                    _MODEL_CALL_GATE.release()
+                    locked = False
                     raise
                 if on_rate_limit is not None:
                     note = on_rate_limit(exc)
                     if isawaitable(note):
                         await note
-                # Keep the global gate held while waiting. The exact same
-                # request is retried; no newer message can enter ahead of it.
-                await asyncio.sleep(MODEL_CALL_GAP_SECONDS)
+                # Keep the gate locked. Retry the identical logical request at
+                # the provider's advertised reset time, not after another
+                # artificial 10s gap.
+                wait = exc.retry_after if exc.retry_after is not None else MODEL_CALL_GAP_SECONDS
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                continue
+    finally:
+        if locked:
+            _MODEL_CALL_GATE.release()
 
 
 def tool_schema_openai(tool: ToolSchema) -> ToolSchema:
