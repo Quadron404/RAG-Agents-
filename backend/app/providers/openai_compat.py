@@ -148,18 +148,22 @@ class OpenAICompatProvider(Provider):
                     ]
                 out.append(msg)
             elif m.role == "tool":
-                parts = []
-                if m.content:
-                    parts.append({"type": "text", "text": m.content})
-                for img in m.images or []:
-                    if img:
-                        parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{image_mime(img)};base64,{img}", "detail": "high"},
-                            }
-                        )
-                content = parts if parts else ""
+                # Always a string, never a content-part list.  Groq validates
+                # this field strictly and answers a list with
+                # `messages[3].content must be a string`, which fails the whole
+                # request rather than the message -- so a screenshot that had
+                # been attached to its own tool result made every capture a
+                # 400.  The image rides on the user turn instead, and the result
+                # says in words what the frame is.
+                content = m.content or ""
+                if not isinstance(content, str):
+                    # A caller that attached parts to a tool result gets text out
+                    # rather than a rejected request, with the images dropped
+                    # rather than silently duplicated onto another turn.
+                    content = " ".join(
+                        str(part.get("text", "")) for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ).strip() or "ok"
                 out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": content})
         return out
 

@@ -3096,29 +3096,99 @@ class TestOneScreenshotCostsOneImage(unittest.TestCase):
         self.assertEqual(runner.computer.screens, 0)
         self.assertEqual(provider.image_parts_seen, 0)
 
-    def test_the_image_is_the_tool_result_of_the_call_that_asked_for_it(self):
+    def test_the_image_rides_on_the_user_turn_and_the_tool_result_is_text_only(self):
         run, provider, _ = self._run(
             [("screenshot", "{}"), ("click", '{"x": 10, "y": 20}'), ("done", '{"message": "ok"}')]
         )
         carrying = provider.requests_with_images[0]
-        # Only the tool result holds the frame.  A user turn holding it as well
-        # is the duplicate this class exists to catch, and the run would still
-        # pass every behavioural test while paying for it twice.
-        self.assertEqual([m.role for m in carrying if m.images], ["tool"])
+        # The frame goes on the user turn.  Putting it on the tool result as
+        # well is the duplicate this class exists to catch: the run would still
+        # pass every behavioural test while paying for the frame twice.
+        self.assertEqual([m.role for m in carrying if m.images], ["user"])
+        # The assistant call and the tool result still explain where the frame
+        # came from, in words, and the tool result carries no image at all.
+        assistant = [m for m in carrying if m.role == "assistant"]
+        self.assertEqual(len(assistant), 1)
+        self.assertEqual(assistant[0].tool_calls[0].name, "screenshot")
+        tool_messages = [m for m in carrying if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0].images, [])
+        self.assertIn("screenshot", tool_messages[0].content)
 
-        # And it serialises as exactly one image part through the real adapter.
+    def test_every_tool_message_serialises_its_content_as_a_string(self):
+        # Groq validates this field strictly and rejects the whole request with
+        # `messages[3].content must be a string` when a tool result's content is
+        # a content-part list.  It is the one field in the request where a
+        # plausible-looking serialisation makes a whole feature fail, and the
+        # failure names a message index rather than a cause.
         from app.providers.openai_compat import OpenAICompatProvider
 
-        wire = OpenAICompatProvider._wire_messages(provider, carrying)
-        parts = [
+        run, provider, _ = self._run(
+            [("screenshot", "{}"), ("click", '{"x": 10, "y": 20}'), ("done", '{"message": "ok"}')]
+        )
+        for messages in provider.requests_with_images + [
+            [m for call in getattr(provider, "all_requests", []) for m in call] or []
+        ]:
+            wire = OpenAICompatProvider._wire_messages(provider, messages)
+            for message in wire:
+                if message.get("role") == "tool":
+                    self.assertIsInstance(message["content"], str)
+
+        # Directly, on the shape that broke: a tool result with no content at
+        # all, and one that was handed parts by a caller.
+        from app.providers.base import LLMMessage
+
+        provider2 = OpenAICompatProvider("groq", "gsk-test", "https://api.groq.com/openai/v1")
+        for content in ("", "1280x800 screenshot", [{"type": "text", "text": "1280x800"}]):
+            with self.subTest(content=content):
+                wire = provider2._wire_messages(
+                    [LLMMessage(role="tool", tool_call_id="c1", name="screenshot", content=content)]
+                )
+                self.assertIsInstance(wire[0]["content"], str)
+                self.assertEqual(wire[0]["role"], "tool")
+
+    def test_a_groq_shaped_screenshot_request_survives_serialization(self):
+        # The exact request the loop builds after a screenshot, put through the
+        # real Groq adapter and then checked the way Groq checks it.  Asserting
+        # the loop's internals would pass while the endpoint still refused.
+        from app.computer.runner import ComputerRunner
+        from app.providers.base import ToolCall
+        from app.providers.groq import GroqProvider
+        from app.computer.tools import parse_arguments, tool_to_command
+
+        runner, provider, _ = self._run(
+            [("screenshot", "{}"), ("click", '{"x": 10, "y": 20}'), ("done", '{"message": "ok"}')]
+        )
+        messages = provider.requests_with_images[0]
+        self.assertEqual(len(messages), 4, messages and [m.role for m in messages])
+
+        groq = GroqProvider("gsk-test", "https://api.groq.com/openai/v1")
+        wire = groq._wire_messages(messages)
+        self.assertEqual([m["role"] for m in wire], ["system", "user", "assistant", "tool"])
+
+        # Groq's complaint, checked here rather than discovered live.
+        for index, message in enumerate(wire):
+            if message["role"] == "tool":
+                self.assertIsInstance(
+                    message["content"], str,
+                    f"messages[{index}].content must be a string",
+                )
+        # The assistant turn must still declare the call the tool result answers.
+        self.assertEqual(wire[2]["tool_calls"][0]["function"]["name"], "screenshot")
+        self.assertEqual(wire[3]["tool_call_id"], wire[2]["tool_calls"][0]["id"])
+        # And exactly one image, on the user turn.
+        images = [
             part
             for message in wire
             if isinstance(message.get("content"), list)
             for part in message["content"]
             if part.get("type") == "image_url"
         ]
-        self.assertEqual(len(parts), 1)
-        self.assertTrue(parts[0]["image_url"]["url"].startswith("data:image/"))
+        self.assertEqual(len(images), 1)
+        # The cost controls the redesign depends on are still on the body.
+        body = groq
+        self.assertEqual(body.max_completion_tokens, 256)
+        self.assertEqual(body.reasoning_effort, "none")
 
 
 if __name__ == "__main__":

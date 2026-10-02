@@ -641,21 +641,20 @@ class ComputerRunner:
     ) -> List[LLMMessage]:
         """The one request shape that carries an image.
 
-        The screenshot has to arrive as the *result* of the `screenshot` call
-        that asked for it, not as an unattached part in a fresh conversation:
-        providers reject an image with no corresponding tool result, and a model
-        that is shown an image with no explanation of where it came from has no
-        reason to treat it as current.  So this is the single place the loop
-        assembles a tool-result exchange, and it is discarded the moment the
-        model acts on it.
+        The screenshot rides on the *user* turn, and the assistant call and tool
+        result that explain it stay text-only.  The tool result is not an
+        arbitrary choice to move the image: Groq rejects the request outright
+        with ``messages[3].content must be a string`` when a tool message's
+        content is a content-part list, which is the only way this codebase
+        could express an image on a tool result.  So the image goes on the user
+        turn, which every OpenAI-compatible endpoint accepts, and the tool
+        result says in words what the frame is.
+
+        Exactly one image, on exactly one message.  An earlier version put it on
+        both the user turn and the tool result, and every capture was billed
+        twice on the single request that carries it.
         """
-        # None, not `image`: the frame belongs to the tool result below and
-        # nowhere else.  Passing it here as well put the same screenshot on the
-        # request twice -- once as an unattached user-turn part and once as the
-        # tool result -- so every capture was billed twice on the one request
-        # that carries it.  The size the model needs still arrives, in the tool
-        # result's own text.
-        messages = self._request(run, None, "")
+        messages = self._request(run, image, "")
         call_id = run.pending_screenshot_call_id or "screenshot"
         messages.append(
             LLMMessage(
@@ -670,7 +669,6 @@ class ComputerRunner:
                 tool_call_id=call_id,
                 name="screenshot",
                 content=f"{run.pending_width}x{run.pending_height} screenshot of the real VM screen",
-                images=[image],
             )
         )
         return messages
