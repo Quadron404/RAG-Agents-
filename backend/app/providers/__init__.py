@@ -41,6 +41,8 @@ def build_providers(settings: Settings) -> Dict[str, object]:
             "openrouter",
             settings.openrouter_api_key,
             settings.openrouter_base_url,
+            max_completion_tokens=settings.computer_max_completion_tokens,
+            reasoning_effort=settings.computer_reasoning_effort,
         )
     # Mistral, the other computer-control provider.  Registered the same way
     # from the same Settings object, so "which providers can drive the
@@ -49,6 +51,8 @@ def build_providers(settings: Settings) -> Dict[str, object]:
         providers["mistral"] = MistralProvider(
             settings.mistral_api_key,
             settings.mistral_base_url,
+            max_completion_tokens=settings.computer_max_completion_tokens,
+            reasoning_effort=settings.computer_reasoning_effort,
         )
     # Groq, the third computer-control provider.  Registered the same way from
     # the same Settings object for the same reason: one list decides which
@@ -58,5 +62,11 @@ def build_providers(settings: Settings) -> Dict[str, object]:
         providers["groq"] = GroqProvider(
             settings.groq_api_key,
             settings.groq_base_url,
+            # The ceiling is the shared setting; `reasoning_effort` falls back
+            # to Groq's own "none" because that is the one endpoint whose
+            # reasoning budget this loop is built to suppress, and every other
+            # provider is left as it was.
+            max_completion_tokens=settings.computer_max_completion_tokens,
+            reasoning_effort=settings.computer_reasoning_effort or "none",
         )
     return providers

@@ -53,6 +53,16 @@ class Provider:
     #: serialisation is what decides, and only the serialiser knows.
     last_wire: Optional[Dict[str, object]] = None
 
+    #: Token counts the API reported for the last request, as ``{prompt,
+    #: completion}``.  ``{}`` when the provider sends none.
+    #:
+    #: This is the only honest measure of what a request cost.  Counting
+    #: characters locally is an estimate of a number the vendor already told us,
+    #: and an estimate cannot answer the question a control loop actually needs
+    #: answered: whether the request that carried a screenshot was worth more
+    #: than the one that did not.
+    last_usage: Optional[Dict[str, int]] = None
+
     async def stream(
         self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
     ) -> AsyncIterator[LLMEvent]:

@@ -1,197 +1,67 @@
-"""The computer-control prompt, and the JSON contract it is held to.
+"""The computer-control prompt.
 
-The prompt is a module constant rather than a string built at the call site so
-that there is exactly one of it, and so a test can assert it is attached to
-every request without duplicating the text.
+One paragraph, and deliberately so.  The prompt is re-sent on every request of
+every run, so every word in it is a recurring cost -- and the previous version of
+this file was a hundred and fifty lines that said the same thing nine or ten
+times over.  What it bought was nothing the tool schemas do not already say: each
+tool's own description is where its arguments and its limits live, and the model
+reads those every turn anyway.
+
+What the prompt has to carry is what a schema cannot.  That the screen costs far
+more than text and should be asked for rather than assumed; that history is
+written by the model and is the only memory of the run; and that neither may be
+invented.  Those three sentences are the whole contract.
 """
 
 from __future__ import annotations
 
-COMPUTER_CONTROL_PROMPT = """You are the Computer Control model for RAG Agents.
+#: The whole prompt.  Kept as one string with no format placeholders on purpose:
+#: a templated prompt invites per-run interpolation of a screen size, and the
+#: only screen size that matters now is the one attached to the screenshot the
+#: model actually received -- which it can measure for itself.
+COMPUTER_CONTROL_PROMPT = (
+    "You operate a real remote browser using only these tools: screenshot(), "
+    "navigate(url), search(query), click(x,y), type(text), key(key), "
+    "scroll(delta_y), history(note), done(message), error(message); screenshot() "
+    "returns the current VM screen only when needed, history(note) appends one "
+    "short text-only state line after every state-changing action, never resend "
+    "old screenshots, never invent state, and use only the latest screenshot when "
+    "visual inspection is required."
+)
 
-You are operating a real remote browser.
+#: Added to the user turn when the model has taken a screenshot, and only then.
+#:
+#: The size has to be stated because a coordinate is only meaningful in the grid
+#: the image was measured in, and this way the number travels with the image
+#: instead of living in a prompt that is describing every screen size the model
+#: might ever see.  Sent once per screenshot rather than once per turn.
+SCREENSHOT_NOTE = (
+    "Latest screenshot: {width}x{height} pixels, coordinates measured from its "
+    "top-left corner. This is the only current image; older ones are gone. If you "
+    "need the screen again, call screenshot()."
+)
 
-Your job is to operate the user's REAL remote browser by returning strict JSON commands.
+#: Asked for when a call was refused.  Names the refusal because a model told
+#: only "that failed" repeats the same call; a model told what was wrong with it
+#: changes it.
+REFUSAL_NOTE = "Refused: {error}"
 
-You receive:
-1. The complete conversation history.
-2. The current task.
-3. The current computer-control state.
-4. The latest screenshot of the REAL remote Google Chrome browser.
-
-You do not control the user's local computer.
-You never see the RAG Agents interface, and neither does the browser.
-The only thing you can do is return one JSON object.
-
-IMPORTANT:
-The screenshot is the actual browser running on the remote computer.
-Coordinates refer to the pixel grid of the LATEST screenshot you were sent.
-
-COORDINATE SYSTEM:
-{screenshot_contract}
-
-You do not control the browser directly. The system executes every command you
-return, on the real remote machine, and then sends you a new screenshot.
-
-COMPUTER CONTROL PROTOCOL:
-
-FIRST COMPUTER ACTION:
-Your first output MUST be exactly one JSON object of:
-
-{{"type":"navigate","url":"https://example.com"}}
-
-OR:
-
-{{"type":"search","query":"something to search"}}
-
-You have not seen a screenshot yet, so there is nothing to click. The system will
-perform that navigation/search and then send you the first screenshot.
-
-If the task cannot be done on this browser at all, reply
-{{"type":"error","message":"..."}} instead of navigating anywhere.
-
-AFTER THE FIRST ACTION:
-You are looking at a screenshot of a real browser. Choose the next action.
-
-ONCE YOU HAVE A SCREENSHOT, YOU ACT ON THE SCREENSHOT -- NOT ON THE WORDS:
-After the initial navigation/search, you must inspect the supplied browser
-screenshot. The screenshot is the only evidence you have about what is on the
-screen. If something is visible in it, the correct response is a coordinate.
-
-To click something visible, return ONLY JSON in this exact form:
-{{"type":"click","x":123,"y":456}}
-
-Do NOT search for the text describing the target. A button that is visible in
-the screenshot is clicked with a click command; searching for its label is a
-different action, it goes to a search engine instead of the page in front of
-you, and it loses the thing you were asked to interact with.
-
-Do NOT perform another search unless the next action genuinely requires
-searching. Returning a second navigate or search when the page is already open
-and the target is already on screen is a failure, not caution.
-
-Coordinates refer to the supplied screenshot. A point (x, y) is a pixel in that
-image, measured from its top-left corner.
-
-Do NOT output normal conversational text.
-Do NOT return a natural-language description of the action.
-Do not write "I will click the button" or "Search for ..." or any other
-sentence. Your entire reply is one JSON object and nothing else -- no
-preamble, no explanation, no Markdown code fence around it.
-
-CLICK -- uses the REAL remote mouse:
-
-{{"type":"click","x":123,"y":456}}
-
-x and y are pixels in the latest screenshot. The system moves the real cursor
-there and clicks, then sends you a new screenshot.
-
-TYPE -- uses the REAL remote keyboard:
-
-{{"type":"type","text":"some text"}}
-
-Types into whatever is focused in the remote browser, exactly as a person would.
-Type the text and nothing else. Use this to fill a search box or an address bar
-after you have clicked it.
-
-KEY -- uses the REAL remote keyboard:
-
-{{"type":"key","key":"ENTER"}}
-
-Valid keys: ENTER, RETURN, TAB, ESC, ESCAPE, SPACE, BACKSPACE, DELETE, INSERT,
-HOME, END, UP, DOWN, LEFT, RIGHT, ARROWUP, ARROWDOWN, ARROWLEFT, ARROWRIGHT,
-PAGEUP, PAGEDOWN, PRIOR, NEXT, F1-F12, and a single letter or digit.
-Combine up to two modifiers with a key: CTRL+L, CTRL+A, CTRL+C, CTRL+V, ALT+F4,
-CTRL+SHIFT+T. Modifiers: CTRL, ALT, SHIFT, META.
-
-SCROLL -- scrolls the REAL remote page:
-
-{{"type":"scroll","delta_y":600}}
-
-Positive scrolls down, negative scrolls up. Use between -5000 and 5000.
-
-MOVE -- moves the REAL remote cursor without clicking:
-
-{{"type":"move","x":700,"y":450}}
-
-Useful for putting the cursor on a target you can see, when you want to check
-where it is before committing to a click.
-
-NAVIGATE and SEARCH again at any time, whenever the task needs a different page.
-
-TASK COMPLETION:
-When the task is complete, output:
-
-{{"type":"done","message":"Task complete."}}
-
-If you cannot safely continue, output:
-
-{{"type":"error","message":"Reason."}}
-
-STRICT RULES:
-- Output JSON only. One object. Nothing else.
-- Never output Markdown.
-- Never output explanations outside JSON.
-- Never output multiple commands.
-- Never guess a coordinate.
-- Never use coordinates from an old screenshot.
-- Always wait for the new screenshot after an action, and choose your next
-  action from THAT screenshot. Do not queue a second coordinate before you have
-  seen what the first one did.
-- A click is a real click on a real machine: it lands wherever the page has
-  moved to. If the page has not settled, you will click the wrong thing.
-- Never claim an action succeeded unless the next screenshot provides evidence.
-- Treat the latest screenshot as the authoritative visual state.
-- Do not describe what you would do; return the actual JSON command.
-- Do not click or move until the current screenshot shows a visible target.
-- Do not type into a field you have not seen in a screenshot.
-- Stop with "done" only when the task has actually been completed.
-- Stop with "error" when safe progress is impossible.
-- The only allowed "type" values are: navigate, search, click, type, key, scroll,
-  move, done, error."""
+#: Stated once, after a refusal, so the model can recover in the same run.
+#: Deliberately not appended to every request: it is a recovery aid, and sending
+#: it unconditionally is paying for advice nobody asked for.
+RETRY_NOTE = "Call one tool now."
 
 
-def screenshot_contract(width: int, height: int) -> str:
-    """The coordinate contract, stated in the size actually captured.
+def screenshot_note(width: int, height: int) -> str:
+    return SCREENSHOT_NOTE.format(width=width, height=height)
 
-    Built from the real screenshot dimensions rather than a hardcoded 1365x768,
-    because a fixed number here would be a lie the moment the display is a
-    different size, and a model told the wrong grid is exactly how clicks end up
-    landing off-target.  On the configured display this is the 1365x768 case.
+
+def build_prompt() -> str:
+    """The prompt. No arguments, because it does not vary.
+
+    `width`/`height` used to be interpolated here for every turn.  That is what
+    made the old prompt expensive, and it was also wrong in a way that mattered:
+    it described the size of the screen as though the model had it, on turns
+    where no image was attached at all.
     """
-    return (
-        f"The screenshot is {width}x{height} pixels. Coordinates are measured from "
-        f"its top-left corner. x increases right, y increases down. Return "
-        f"coordinates in the screenshot's original pixel coordinate system. Choose "
-        f"the center of the visible target whenever possible. Never reuse "
-        f"coordinates from an earlier screenshot.\n"
-        f"The screenshot is the whole remote screen, including the browser tab "
-        f"strip and address bar, so those are part of the same grid and can be "
-        f"clicked directly. A point (x, y) is executed at exactly (x, y) on the "
-        f"real display: nothing is scaled, offset or converted between what you "
-        f"see and where the pointer goes."
-    )
-
-
-def build_prompt(width: int, height: int) -> str:
-    """The full prompt for a run against a screen of this size.
-
-    The JSON braces are doubled because this is a .format() template; the literal
-    prompt keeps single braces so it reads as the JSON it is asking for.
-    """
-    return COMPUTER_CONTROL_PROMPT.format(screenshot_contract=screenshot_contract(width, height))
-
-
-# Appended to the original prompt when a response could not be parsed.  It names
-# the specific failure, because "invalid JSON" with no detail produces a second
-# invalid response more often than a third one.
-FORMAT_CORRECTION = """
-
-FORMAT CORRECTION:
-Your previous reply could not be used, so nothing was executed.
-
-Reply again with exactly one JSON object and nothing else. No markdown, no code
-fence, no commentary before or after. The object must have a "type" of
-"navigate", "search", "click", "type", "key", "scroll", "move", "done" or
-"error".
-"""
+    return COMPUTER_CONTROL_PROMPT

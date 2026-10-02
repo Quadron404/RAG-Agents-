@@ -141,6 +141,32 @@ class Settings:
     computer_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS", "1400")))
     computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "900")))
 
+    # --- How much a single model call is allowed to say ------------------------
+    # Computer control is a loop of one-tool decisions, so the only thing a
+    # call has to return is `{"name": ..., "arguments": {...}}`.  A thousand
+    # tokens of budget for that is two orders of magnitude more than the work
+    # needs, and on a reasoning model the unspent budget is not free: the model
+    # is free to spend it thinking out loud, which is the single largest
+    # avoidable cost in a loop that makes forty calls.
+    computer_max_completion_tokens: int = field(
+        default_factory=lambda: int(_get("COMPUTER_MAX_COMPLETION_TOKENS", "256"))
+    )
+    #: "none" is a request, not a preference: it tells the provider not to emit
+    #: a reasoning prefix.  Some models spend more tokens on thinking about a
+    #: click than on everything else the run does.  Empty by default rather than
+    #: "none" because the field is rejected outright by endpoints that do not
+    #: implement it, and only Groq is relied upon to; Mistral and OpenRouter are
+    #: left exactly as they were unless an operator opts in.
+    computer_reasoning_effort: str = field(default_factory=lambda: _get("COMPUTER_REASONING_EFFORT", ""))
+    #: How many history lines ride along on each request.  The point of the
+    #: history is to replace the transcript, and a transcript that runs away in
+    #: length is the thing being replaced.  Twenty lines is roughly a screen of
+    #: text, which is more than a short task needs and far less than a long one
+    #: can produce, so it is a ceiling rather than a target.
+    computer_max_history_lines: int = field(
+        default_factory=lambda: int(_get("COMPUTER_MAX_HISTORY_LINES", "20"))
+    )
+
     # --- The remote computer (GitHub Codespace) ----------------------------
     # There is no hypervisor any more.  The "computer" is the Codespace
     # itself: a real Linux box running real Google Chrome on a real X display.

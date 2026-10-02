@@ -79,11 +79,32 @@ def _retry_after(resp: "httpx.Response"):
 
 
 class OpenAICompatProvider(Provider):
-    def __init__(self, name: str, api_key: str, base_url: str, timeout: float = 180.0):
+    def __init__(
+        self,
+        name: str,
+        api_key: str,
+        base_url: str,
+        timeout: float = 180.0,
+        max_completion_tokens: int = 0,
+        reasoning_effort: str = "",
+    ):
         self.name = name
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # Both are optional body fields rather than hardcoded values, because
+        # they are not interchangeable across the OpenAI-compatible endpoints:
+        # some reject an unknown body key outright, and one that does is a
+        # provider that cannot be used at all.  Left unset they are simply not
+        # sent, which is what the endpoints that do not know them expect.
+        self.max_completion_tokens = int(max_completion_tokens or 0)
+        self.reasoning_effort = str(reasoning_effort or "").strip()
+        #: Which body key carries the ceiling.  `max_completion_tokens` is the
+        #: OpenAI spelling and the one Groq and OpenRouter expect, but Mistral
+        #: documents the older `max_tokens` and treats the newer name as unknown
+        #: on some deployments.  So the field name is a property of the endpoint
+        #: rather than something written into the body at random.
+        self.token_limit_field = "max_completion_tokens"
 
     def _wire_messages(self, messages: List[LLMMessage]) -> list:
         out = []
@@ -148,7 +169,32 @@ class OpenAICompatProvider(Provider):
         url = f"{self.base_url}/chat/completions"
         body = {"model": model, "messages": self._wire_messages(messages), "stream": True}
         if tools:
-            body["tools"] = tools
+            # Converted here rather than by the caller, because the loop hands
+            # every provider the same provider-neutral schema and each endpoint
+            # wants a different envelope around it.  Building the envelope at the
+            # call site would mean a second copy of it per provider, and a tool
+            # list sent in the wrong shape is rejected as a 400 rather than
+            # ignored -- so the mistake shows up as the feature not existing.
+            body["tools"] = [tool_schema_openai(t) for t in tools]
+        if self.max_completion_tokens > 0:
+            # A control loop emits one short tool call per turn.  A generous
+            # ceiling here does not make the model verbose -- it makes a verbose
+            # turn *affordable*, and on a per-token provider that is the
+            # difference between a run that fits in a budget and one that does
+            # not.
+            body[self.token_limit_field] = self.max_completion_tokens
+        if self.reasoning_effort:
+            # Reasoning tokens are billed but never visible to the caller, so a
+            # thinking model asked to emit one small JSON object can spend more
+            # on deliberation than on the answer.  Forcing the cheapest mode is
+            # what makes "tiny output" a property of the request rather than a
+            # hope about the model's mood.
+            body["reasoning_effort"] = self.reasoning_effort
+        # Ask for the token counts to come back on the stream.  Without this the
+        # final chunk is a `[DONE]` and nothing ever learns what a request cost,
+        # which is the one number that decides whether the screenshot belongs in
+        # the request at all.
+        body["stream_options"] = {"include_usage": True}
         # Recorded from the body that is about to go out, before it is sent, so
         # the inspector shows what the API was actually given.  Headers and the
         # key are not part of it, and the base64 is not copied into the summary.
@@ -157,6 +203,8 @@ class OpenAICompatProvider(Provider):
         timeout = httpx.Timeout(self.timeout, connect=15.0)
         acc: dict = {}
         order: list = []
+        usage: Dict[str, int] = {}
+        self.last_usage = {}
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, json=body, headers=headers) as resp:
                 if resp.status_code >= 400:
@@ -184,6 +232,17 @@ class OpenAICompatProvider(Provider):
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # The usage frame carries no choices, so it has to be read
+                    # before the `if not chunk.get("choices")` skip below --
+                    # otherwise the one chunk that says what the request cost is
+                    # the one chunk that gets discarded.
+                    reported = chunk.get("usage")
+                    if isinstance(reported, dict):
+                        usage = {
+                            "prompt_tokens": int(reported.get("prompt_tokens") or 0),
+                            "completion_tokens": int(reported.get("completion_tokens") or 0),
+                            "total_tokens": int(reported.get("total_tokens") or 0),
+                        }
                     if not chunk.get("choices"):
                         continue
                     delta = chunk["choices"][0].get("delta", {})
@@ -202,6 +261,10 @@ class OpenAICompatProvider(Provider):
                             acc[idx]["name"] += fn["name"]
                         if fn.get("arguments"):
                             acc[idx]["args"] += fn["arguments"]
+        # Published after the stream is drained rather than inside it: a caller
+        # that abandons the iterator mid-response must not read a half-filled
+        # count as if it were the price of the whole request.
+        self.last_usage = dict(usage)
         for idx in order:
             a = acc[idx]
             yield ToolCallEvent(

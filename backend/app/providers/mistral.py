@@ -28,8 +28,16 @@ class MistralProvider(OpenAICompatProvider):
     the request valid on the endpoint that is actually being called.
     """
 
-    def __init__(self, api_key: str, base_url: str = "https://api.mistral.ai/v1", timeout: float = 180.0):
-        super().__init__("mistral", api_key, base_url, timeout=timeout)
+    def __init__(self, api_key: str, base_url: str = "https://api.mistral.ai/v1", timeout: float = 180.0,
+                 max_completion_tokens: int = 0, reasoning_effort: str = ""):
+        super().__init__(
+            "mistral", api_key, base_url, timeout=timeout,
+            max_completion_tokens=max_completion_tokens, reasoning_effort=reasoning_effort,
+        )
+        # Same ceiling, Mistral's name for it.  Sending OpenAI's spelling to a
+        # Mistral endpoint that does not recognise it fails the whole request,
+        # which would mean a cost control could take a provider offline.
+        self.token_limit_field = "max_tokens"
 
     @property
     def default_model(self) -> str:
@@ -37,14 +45,29 @@ class MistralProvider(OpenAICompatProvider):
 
     def _wire_messages(self, messages: List[LLMMessage]) -> list:
         wire = super()._wire_messages(messages)
+        out: list = []
         for message in wire:
             content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for part in content:
-                if part.get("type") == "image_url":
-                    part["image_url"].pop("detail", None)
-        return wire
+            if isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "image_url":
+                        part["image_url"].pop("detail", None)
+            # Mistral's tool result is a string: it accepts a screenshot in a
+            # user turn but not inside the tool message that reports one.  So an
+            # image riding on a tool result is lifted into the next user turn and
+            # the tool result keeps its text.  The call still has its own tool
+            # result, which is what the endpoint validates against -- the image
+            # simply arrives one message later than OpenAI would deliver it.
+            if message.get("role") == "tool" and isinstance(content, list):
+                images = [p for p in content if p.get("type") == "image_url"]
+                if images:
+                    words = [p["text"] for p in content if p.get("type") == "text"]
+                    message = dict(message, content=" ".join(words) or "ok")
+                    out.append(message)
+                    out.append({"role": "user", "content": images})
+                    continue
+            out.append(message)
+        return out
 
 
 __all__ = ["MistralProvider", "DEFAULT_MISTRAL_MODEL"]
