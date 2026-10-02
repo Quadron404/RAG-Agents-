@@ -792,7 +792,8 @@ def _display_geometry() -> tuple:
     try:
         r = _xdotool("getdisplaygeometry", timeout=10)
         if r.returncode == 0:
-            nums = r.stdout.decode("ascii", "replace").split()
+            raw = r.stdout
+            nums = (raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)).split()
             if len(nums) == 2 and all(n.isdigit() for n in nums):
                 actual = (int(nums[0]), int(nums[1]))
                 if actual != requested:
@@ -864,7 +865,8 @@ def _pointer_position() -> tuple:
     try:
         r = _xdotool("getmouselocation", "--shell", timeout=10)
         if r.returncode == 0:
-            text = r.stdout.decode("ascii", "replace")
+            raw = r.stdout
+            text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)
             x = y = None
             for line in text.splitlines():
                 if line.startswith("X="):
@@ -893,7 +895,8 @@ def _focus_window_under_cursor() -> bool:
         win = _xdotool("getwindowundercursor", timeout=10)
         if win.returncode != 0:
             return False
-        wid = win.stdout.decode("ascii", "replace").strip()
+        raw = win.stdout
+        wid = (raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)).strip()
         if not wid.isdigit():
             return False
         act = _xdotool("windowactivate", "--sync", wid, timeout=10)
@@ -1572,44 +1575,41 @@ def _capture_display(draw_mouse: bool = True) -> dict:
 
 
 def _computer_click(x: int, y: int) -> dict:
-    """Move the real pointer to (x, y) and left-click, in ONE xdotool call.
+    """Move to the requested display pixel, activate Chrome, then left-click.
 
-    This used to be two calls -- `mousemove --sync x y` and then `click 1` --
-    which is the most likely reason clicks were landing next to their target.
-    Two processes means two round trips to the X server with a gap in between, and
-    anything that moves the pointer during that gap (the window manager warping
-    it, a real mouse device, a repaint) puts the click somewhere other than where
-    the move left it.  xdotool accepts several commands in one invocation and
-    applies them in order against one connection, so `mousemove --sync x y click
-    1` has no gap at all: the button goes down at the position the pointer was
-    just moved to.
-
-    `--sync` matters too: without it mousemove only asks X to move the pointer
-    and returns before the move has happened, so the click is queued against the
-    old position.
-
-    The pointer is then read back, so the reply says where the click actually
-    landed rather than where it was asked to.
+    The click path is intentionally explicit: synchronous pointer move, window
+    activation, then the button press. This avoids the case where Xvfb/Openbox
+    leaves the browser unfocused while a synthetic event is sent. The pointer is
+    read back afterwards for diagnostics.
     """
     if not _x_running():
         return {"ok": False, "error": "the X display is not running"}
     disp_w, disp_h = _display_geometry()
     if not (0 <= x < disp_w and 0 <= y < disp_h):
-        # Refused, never clamped: a clamped click is a click on the edge of the
-        # screen wearing the coordinates of something in the middle of it.
         return {
             "ok": False,
             "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display",
         }
     try:
-        r = _xdotool("mousemove", "--sync", str(x), str(y), "click", "1")
+        moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
+    except FileNotFoundError:
+        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+    except Exception as exc:
+        return {"ok": False, "error": f"could not move pointer for click: {exc}"}
+    if moved.returncode != 0:
+        return {"ok": False, "error": (moved.stderr or "pointer move failed").strip()[:200]}
+
+    _focus_window_under_cursor()
+
+    try:
+        pressed = _xdotool("click", "--clearmodifiers", "1", timeout=10)
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
     except Exception as exc:
         return {"ok": False, "error": f"could not click: {exc}"}
-    if r.returncode != 0:
-        return {"ok": False, "error": (r.stderr or "click failed").strip()[:200]}
-    # Give the WM a moment to warp or confine the pointer, then read it back.
+    if pressed.returncode != 0:
+        return {"ok": False, "error": (pressed.stderr or "click failed").strip()[:200]}
+
     time.sleep(0.05)
     ax, ay = _pointer_position()
     landed = (ax == x and ay == y)
