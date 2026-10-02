@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Dict, List, Optional, Union
+from typing import AsyncIterator, Callable, Dict, List, Optional, Union
 
 
 @dataclass
@@ -67,6 +67,80 @@ class Provider:
         self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
     ) -> AsyncIterator[LLMEvent]:
         raise NotImplementedError
+
+
+MODEL_CALL_GAP_SECONDS = 10.0
+
+
+class _ModelCallGate:
+    """Serialize external model calls and enforce a hard 10s post-call gap.
+
+    The lock is held for the complete provider stream, not merely for opening
+    the HTTP connection. Therefore two model calls can never overlap, and the
+    next call cannot start until ten seconds after the previous call finished
+    (successful, failed, or rate-limited).
+    """
+
+    def __init__(self) -> None:
+        import asyncio
+        self._lock = asyncio.Lock()
+        self._next_allowed = 0.0
+
+    async def __aenter__(self):
+        import asyncio
+        await self._lock.acquire()
+        try:
+            wait = self._next_allowed - asyncio.get_running_loop().time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            return self
+        except Exception:
+            self._lock.release()
+            raise
+
+    async def __aexit__(self, exc_type, exc, tb):
+        import asyncio
+        self._next_allowed = asyncio.get_running_loop().time() + MODEL_CALL_GAP_SECONDS
+        self._lock.release()
+        return False
+
+
+_MODEL_CALL_GATE = _ModelCallGate()
+
+
+async def stream_model(
+    provider: "Provider",
+    messages: List[LLMMessage],
+    tools: List[ToolSchema],
+    model: str,
+    *,
+    on_rate_limit: Optional[Callable[[Exception], object]] = None,
+) -> AsyncIterator[LLMEvent]:
+    """Run one provider request under the global 10s gate.
+
+    HTTP 429 is special: the current request is *stalled*, not failed. The same
+    exact request is retried only after the mandatory ten-second gate expires.
+    No newer request gets to overtake it in a serialized higher-level run.
+    """
+    from inspect import isawaitable
+    from .errors import ProviderHTTPError
+
+    while True:
+        try:
+            async with _MODEL_CALL_GATE:
+                async for event in provider.stream(messages, tools, model):
+                    yield event
+            return
+        except ProviderHTTPError as exc:
+            if exc.status != 429:
+                raise
+            if on_rate_limit is not None:
+                note = on_rate_limit(exc)
+                if isawaitable(note):
+                    await note
+            # Do not sleep here. Exiting the gate already starts the exact
+            # ten-second timer. Re-entering the gate waits for its expiry.
+            continue
 
 
 def tool_schema_openai(tool: ToolSchema) -> ToolSchema:
