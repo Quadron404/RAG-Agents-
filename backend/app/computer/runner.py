@@ -494,7 +494,7 @@ class ComputerRun:
             # cost after the prompt itself -- and unlike the images it replaced,
             # it grows by one bounded line per action rather than by a whole
             # frame.
-            "history": list(self.notes),
+            "history": self.history_text,
             # Token accounting, so "the loop got cheaper" is a number rather
             # than an impression.  `usage_reported` is false when no provider
             # sent counts, and the totals are then absent rather than zero.
