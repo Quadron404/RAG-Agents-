@@ -843,28 +843,6 @@ turn acts.  It is never written into the facts, so no later request
                     run.step -= 1  # reading the screen is not a step of the task
                     continue
 
-                if command.type == "history":
-                    # Optional bookkeeping, kept because a model noticing
-                    # something the executor cannot see is worth keeping -- but
-                    # it is the model's own line, it is not fact, and it no
-                    # longer gates anything.  Nothing has happened, so nothing
-                    # goes in `run.facts`.
-                    run.notes.append(command.text)
-                    turn.tool_result = command.text
-                    turn.execution = {
-                        "accepted": True,
-                        "executed": True,
-                        "outcome": "recorded",
-                        "command": command.to_json(),
-                        "result": "ok",
-                        "duration_ms": round((time.time() - started) * 1000, 1),
-                        "terminal": False,
-                        "history_line": command.text,
-                    }
-                    run.step -= 1  # bookkeeping is not a step of the task
-                    run.message = f"noted: {command.text}"
-                    continue
-
                 terminal = await self._perform(run, command)
                 if command.history:
                     run.history_text = command.history[:12000]
