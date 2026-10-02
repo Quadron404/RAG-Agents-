@@ -2990,5 +2990,136 @@ class TestTheTraceEndpoint(unittest.TestCase):
         self.assertIn("error", self._get("/ai/computer/does-not-exist/trace"))
 
 
+class TestOneScreenshotCostsOneImage(unittest.TestCase):
+    """One screenshot() must put exactly one image on the wire.
+
+    The bug this guards against is quiet and expensive.  A screenshot can reach
+    the model two ways at once -- as an unattached part of the user turn and as
+    the result of the ``screenshot`` call that asked for it -- and when it does,
+    nothing fails.  The run still navigates, still clicks, still finishes, and
+    the trace still reports one screenshot.  Only the bill shows it, doubled, on
+    exactly the requests that were supposed to be cheap.
+
+    So this counts image parts across every request of a real run.  Asserting
+    that "a screenshot happened" is not enough: that was already true while it
+    was being sent twice.
+    """
+
+    class CountingProvider:
+        """Emits native tool calls and counts the image parts it is handed.
+
+        Self-contained rather than reusing the module's scripted double, because
+        the claim is about what goes on the wire and a double that shares
+        machinery with the code under test can agree with it by construction.
+        """
+
+        def __init__(self, script):
+            self.name = "openrouter"
+            self.api_key = "sk-or-test-key"
+            self.last_wire = {}
+            self.last_usage = {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}
+            self.images_per_request = []
+            self.image_parts_seen = 0
+            self.requests_with_images = []
+            # One call per request.  Every state-changing call is followed by
+            # the history line the loop demands before anything else may run.
+            self.script = []
+            for name, arguments in script:
+                self.script.append((name, arguments))
+                if name in STATE_CHANGING_TOOLS:
+                    self.script.append(("history", json.dumps({"note": name + " done"})))
+
+        async def stream(self, messages, tools, model):
+            on_wire = sum(len(m.images or []) for m in messages)
+            self.images_per_request.append(on_wire)
+            self.image_parts_seen += on_wire
+            if on_wire:
+                self.requests_with_images.append(list(messages))
+            if not self.script:
+                yield TextDelta("nothing left to do")
+                yield Done()
+                return
+            name, arguments = self.script.pop(0)
+            yield ToolCallEvent(ToolCall("call_" + name, name, arguments))
+            yield Done()
+
+    def _run(self, script):
+        from app.computer.runner import ComputerRunner
+        from app.config import load_settings
+        from app.providers.router import Router
+
+        settings = load_settings()
+        settings.computer_max_steps = 8
+        settings.computer_max_json_retries = 2
+        settings.computer_settle_ms = 0
+        settings.computer_settle_ms_click = 0
+        settings.computer_model = "test/vision"
+        settings.computer_provider = "openrouter"
+        settings.workspace_base_url = "http://127.0.0.1:9"
+        provider = self.CountingProvider(script)
+        runner = ComputerRunner(settings, Router({"openrouter": provider}, settings), db=None)
+        runner.computer = FakeComputer(SCREEN)
+        run = asyncio.run(_finish(runner, "look at the page"))
+        return run, provider, runner
+
+    def test_one_screenshot_puts_exactly_one_image_on_the_wire(self):
+        run, provider, runner = self._run(
+            [("screenshot", "{}"), ("click", '{"x": 10, "y": 20}'), ("done", '{"message": "ok"}')]
+        )
+        self.assertEqual(run.status, "done", run.message)
+        self.assertEqual(runner.computer.screens, 1, "the run should have captured once")
+        self.assertEqual(provider.image_parts_seen, 1)
+        # And it was one request carrying it, not two requests carrying the same
+        # frame or one request carrying it twice.
+        self.assertEqual([n for n in provider.images_per_request if n], [1])
+
+    def test_two_screenshots_put_exactly_two_images_on_the_wire(self):
+        run, provider, runner = self._run(
+            [
+                ("screenshot", "{}"),
+                ("click", '{"x": 10, "y": 20}'),
+                ("screenshot", "{}"),
+                ("click", '{"x": 11, "y": 21}'),
+                ("done", '{"message": "ok"}'),
+            ]
+        )
+        self.assertEqual(run.status, "done", run.message)
+        self.assertEqual(runner.computer.screens, 2)
+        self.assertEqual(provider.image_parts_seen, 2)
+        self.assertEqual([n for n in provider.images_per_request if n], [1, 1])
+
+    def test_no_screenshot_means_no_images_at_all(self):
+        run, provider, runner = self._run(
+            [("navigate", '{"url": "https://example.test"}'), ("done", '{"message": "ok"}')]
+        )
+        self.assertEqual(run.status, "done", run.message)
+        self.assertEqual(runner.computer.screens, 0)
+        self.assertEqual(provider.image_parts_seen, 0)
+
+    def test_the_image_is_the_tool_result_of_the_call_that_asked_for_it(self):
+        run, provider, _ = self._run(
+            [("screenshot", "{}"), ("click", '{"x": 10, "y": 20}'), ("done", '{"message": "ok"}')]
+        )
+        carrying = provider.requests_with_images[0]
+        # Only the tool result holds the frame.  A user turn holding it as well
+        # is the duplicate this class exists to catch, and the run would still
+        # pass every behavioural test while paying for it twice.
+        self.assertEqual([m.role for m in carrying if m.images], ["tool"])
+
+        # And it serialises as exactly one image part through the real adapter.
+        from app.providers.openai_compat import OpenAICompatProvider
+
+        wire = OpenAICompatProvider._wire_messages(provider, carrying)
+        parts = [
+            part
+            for message in wire
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+            if part.get("type") == "image_url"
+        ]
+        self.assertEqual(len(parts), 1)
+        self.assertTrue(parts[0]["image_url"]["url"].startswith("data:image/"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

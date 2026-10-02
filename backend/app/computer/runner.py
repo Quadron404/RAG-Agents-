@@ -649,7 +649,13 @@ class ComputerRunner:
         assembles a tool-result exchange, and it is discarded the moment the
         model acts on it.
         """
-        messages = self._request(run, image, "")
+        # None, not `image`: the frame belongs to the tool result below and
+        # nowhere else.  Passing it here as well put the same screenshot on the
+        # request twice -- once as an unattached user-turn part and once as the
+        # tool result -- so every capture was billed twice on the one request
+        # that carries it.  The size the model needs still arrives, in the tool
+        # result's own text.
+        messages = self._request(run, None, "")
         call_id = run.pending_screenshot_call_id or "screenshot"
         messages.append(
             LLMMessage(
