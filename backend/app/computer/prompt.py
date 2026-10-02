@@ -1,16 +1,19 @@
 """The computer-control prompt.
 
-One paragraph, and deliberately so.  The prompt is re-sent on every request of
-every run, so every word in it is a recurring cost -- and the previous version of
-this file was a hundred and fifty lines that said the same thing nine or ten
-times over.  What it bought was nothing the tool schemas do not already say: each
-tool's own description is where its arguments and its limits live, and the model
-reads those every turn anyway.
+Deliberately short.  The prompt is re-sent on every request of every run, so every
+word in it is a recurring cost -- and the previous version of this file was a
+hundred and fifty lines that said the same thing nine or ten times over.  What it
+bought was nothing the tool schemas do not already say: each tool's own
+description is where its arguments and its limits live, and the model reads those
+every turn anyway.
 
-What the prompt has to carry is what a schema cannot.  That the screen costs far
-more than text and should be asked for rather than assumed; that history is
-written by the model and is the only memory of the run; and that neither may be
-invented.  Those three sentences are the whole contract.
+What the prompt has to carry is what a schema cannot, and there is one more thing
+to it now.  A schema says what a tool accepts.  It cannot say who decides what
+happened -- and a model that has just been told its own `history` lines are the
+run's memory will eventually narrate a navigation that timed out as one that
+worked.  So the prompt states the division of authority explicitly: the model
+decides what to do, the executor reports what occurred, and the executor's report
+is the truth.
 """
 
 from __future__ import annotations
@@ -22,11 +25,17 @@ from __future__ import annotations
 COMPUTER_CONTROL_PROMPT = (
     "You operate a real remote browser using only these tools: screenshot(), "
     "navigate(url), search(query), click(x,y), type(text), key(key), "
-    "scroll(delta_y), history(note), done(message), error(message); screenshot() "
-    "returns the current VM screen only when needed, history(note) appends one "
-    "short text-only state line after every state-changing action, never resend "
-    "old screenshots, never invent state, and use only the latest screenshot when "
-    "visual inspection is required."
+    "scroll(delta_y), history(note), done(message), error(message). "
+    "Call exactly one tool per reply, and always supply its required arguments: "
+    "navigate() without a url is refused, not guessed. When an action is "
+    "required, call the tool; never write prose instead of a tool call. "
+    "The executor reports whether each action succeeded or failed and why, and "
+    "that report is the truth about the machine -- believe it over your own "
+    "memory of what you asked for, and never invent or assume the current URL, "
+    "page contents or screen. Ask for a screenshot only when you need to look; "
+    "each one is sent to you once and never repeated. "
+    "history(note) is optional and is your own note, not a record of what "
+    "happened: what actually happened is already reported to you each turn."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.

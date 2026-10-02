@@ -34,6 +34,7 @@ from app.computer.commands import (  # noqa: E402
 )
 from app.computer.controller import ComputerError  # noqa: E402
 from app.computer.prompt import build_prompt  # noqa: E402
+from app.computer.runner import STATUS_DONE, STATUS_ERROR  # noqa: E402
 from app.computer.tools import STATE_CHANGING_TOOLS, TOOL_NAMES  # noqa: E402
 from app.providers.base import (  # noqa: E402
     Done,
@@ -81,16 +82,6 @@ def _to_tool_call(reply: str):
     name, fields = entry
     args = {f: payload[f] for f in fields if f in payload}
     return ToolCall("call_" + name, name, json.dumps(args))
-
-
-def _note_for(call: ToolCall) -> str:
-    """The line the model is made to write about an action it is about to take."""
-    try:
-        args = json.loads(call.arguments or "{}")
-    except ValueError:
-        args = {}
-    value = next(iter(args.values()), "")
-    return f"{call.name} {value}".strip()
 
 
 class TestJsonExtraction(unittest.TestCase):
@@ -298,15 +289,54 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
         "You operate a real remote browser using only these tools: "
         "screenshot(), navigate(url), search(query), click(x,y), type(text), "
         "key(key), scroll(delta_y), history(note), done(message), "
-        "error(message); screenshot() returns the current VM screen only when "
-        "needed, history(note) appends one short text-only state line after "
-        "every state-changing action, never resend old screenshots, never "
-        "invent state, and use only the latest screenshot when visual "
-        "inspection is required."
+        "error(message). "
+        "Call exactly one tool per reply, and always supply its required "
+        "arguments: navigate() without a url is refused, not guessed. When an "
+        "action is required, call the tool; never write prose instead of a tool "
+        "call. "
+        "The executor reports whether each action succeeded or failed and why, "
+        "and that report is the truth about the machine -- believe it over your "
+        "own memory of what you asked for, and never invent or assume the "
+        "current URL, page contents or screen. Ask for a screenshot only when "
+        "you need to look; each one is sent to you once and never repeated. "
+        "history(note) is optional and is your own note, not a record of what "
+        "happened: what actually happened is already reported to you each turn."
+    )
+
+    #: The five things the prompt has to say, quoted from the specification.  They
+    #: are the rules a tool schema cannot carry, and each one costs a real
+    #: behaviour if it is dropped, so each is asserted on its own rather than
+    #: only through the whole-string comparison above.
+    REQUIRED_RULES = (
+        "Call exactly one tool per reply",
+        "always supply its required arguments",
+        "never write prose instead of a tool call",
+        "that report is the truth about the machine",
+        "never invent or assume the current URL",
+        "each one is sent to you once and never repeated",
+        "history(note) is optional",
     )
 
     def test_the_prompt_is_sent_exactly_as_written(self):
         self.assertEqual(build_prompt(), self.REQUIRED)
+
+    def test_the_prompt_states_every_required_rule(self):
+        prompt = build_prompt()
+        for rule in self.REQUIRED_RULES:
+            with self.subTest(rule=rule):
+                self.assertIn(rule, prompt)
+
+    def test_the_prompt_says_the_executor_is_the_truth(self):
+        # The single most important sentence in the file.  A model that believes
+        # its own history is the record of the machine will narrate a timed-out
+        # navigation as a successful one and build the rest of the task on it.
+        prompt = build_prompt()
+        self.assertIn("The executor reports whether each action succeeded or failed", prompt)
+        self.assertIn("believe it over your own memory of what you asked for", prompt)
+        # The old prompt asserted the opposite: that the model's own line was the
+        # run's memory.  That inversion must not come back.
+        self.assertNotIn("is the only memory", prompt)
+        self.assertNotIn("one short text-only state line", prompt)
 
     def test_the_prompt_names_every_tool(self):
         prompt = build_prompt()
@@ -354,15 +384,18 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
 
     def test_the_prompt_forbids_reinventing_and_resending(self):
         prompt = build_prompt()
-        self.assertIn("never invent state", prompt)
-        self.assertIn("never resend old screenshots", prompt)
-        self.assertIn("only when needed", prompt)
-        self.assertIn("one short text-only state line", prompt)
+        self.assertIn("never invent or assume the current URL", prompt)
+        self.assertIn("each one is sent to you once and never repeated", prompt)
+        self.assertIn("Ask for a screenshot only when you need to look", prompt)
+        self.assertIn("history(note) is optional", prompt)
 
     def test_the_prompt_is_small_enough_to_stop_mattering(self):
         # The cost argument, asserted so it cannot regress silently: this is
-        # the entire per-request instruction text.
-        self.assertLess(len(build_prompt()), 600)
+        # the entire per-request instruction text.  It grew when the prompt took
+        # over the division of authority, and the ceiling moved with it -- but
+        # only just, because the previous version of this file cost five
+        # thousand characters a request.
+        self.assertLess(len(build_prompt()), 900)
 
 
 class TestUserMessageImages(unittest.TestCase):
@@ -430,7 +463,14 @@ class FakeProvider:
         #: tests that the protocol is native, so "the tools were offered" is a
         #: claim about the wire rather than about the runner's own bookkeeping.
         self.tools_offered: List[List[str]] = []
-        self._held: str = ""
+        #: When set, this reply is delivered on every subsequent request instead
+        #: of the script advancing.  It is how the tests for a model that ignores
+        #: its refusals reproduce the `invalid → refusal → invalid` loop that used
+        #: to run to the step limit.
+        self.repeat: str = ""
+        #: Every reply this provider actually sent, so a test can assert what
+        #: the model was asked for more than once.
+        self.sent: List[str] = []
 
     async def stream(self, messages, tools, model):
         self.calls.append(list(messages))
@@ -447,23 +487,13 @@ class FakeProvider:
             {"model": model, "messages": OpenAICompatProvider._wire_messages(self, messages), "stream": True},
             messages,
         )
-        if self._held:
-            reply, self._held = self._held, ""
+        if self.repeat:
+            reply = self.repeat
         else:
             reply = self.replies.pop(0) if self.replies else '{"type":"done","message":"end"}'
+        self.sent.append(reply)
 
         call = _to_tool_call(reply)
-        if call is not None and call.name in STATE_CHANGING_TOOLS:
-            # The protocol the loop now enforces: nothing changes state until the
-            # model has said, in one line of text, what it changed.  The scripts
-            # predate that rule and were written as action after action, so the
-            # double narrates the action it is about to take and holds the action
-            # itself for the next request.  The order and content of the executed
-            # actions is unchanged -- only the narration between them is new, and
-            # that is what the loop refuses to run without.
-            self._held = reply
-            yield ToolCallEvent(ToolCall("call_hist", "history", json.dumps({"note": _note_for(call)})))
-            return
         if call is None:
             yield TextDelta(reply)
         else:
@@ -527,11 +557,16 @@ class FakeComputer:
         # Set to a string to make that one action fail, the way a real refusal
         # from the agent arrives.
         self.fail_on: tuple = ()
+        #: The URL the browser is actually on.  `navigate` moves it when it
+        #: succeeds and leaves it alone when it fails, so a run that reports a URL
+        #: it never reached cannot be written by accident.
+        self.url: str = "https://current.test/page"
 
     async def navigate(self, url):
         self.actions.append(("navigate", url))
         if self.fail_on == ("navigate",):
             raise ComputerError("navigation failed")
+        self.url = url
 
     async def search(self, query):
         self.actions.append(("search", query))
@@ -595,7 +630,7 @@ class FakeComputer:
         return f"SCREENSHOT-{self.screens}", width, height
 
     async def state(self):
-        return {"ok": True, "url": "https://current.test/page"}
+        return {"ok": True, "url": self.url}
 
 
 def make_runner(replies, bounds=SCREEN, **settings_overrides):
@@ -3189,6 +3224,327 @@ class TestOneScreenshotCostsOneImage(unittest.TestCase):
         body = groq
         self.assertEqual(body.max_completion_tokens, 256)
         self.assertEqual(body.reasoning_effort, "none")
+
+
+class TestTheModelDecidesAndTheExecutorReports(unittest.TestCase):
+    """The division of authority, enforced rather than requested.
+
+    The model chooses what to do.  The executor decides what happened, records
+    it, and tells the model.  Everything here is a case where those two can come
+    apart, and where an earlier version of this loop let the model's account of
+    its own actions stand in for the machine's:
+
+    - a call missing a required argument used to be accepted as an empty object,
+    - a refused call was retried unchanged until the step limit,
+    - a failed action had to be followed by a `history()` line before the next one
+      was allowed, which cost a whole model turn per action and recorded the
+      model's claim rather than the executor's evidence,
+    - and `Current URL` was refreshed after failures, so a navigation that timed
+      out was reported as though it had landed.
+    """
+
+    def _refusals(self, run):
+        return [e for e in run.events if e.result == "refused"]
+
+    def _user_text(self, messages):
+        """The user turn of a request.  Index 0 is the system prompt, which is
+        the same every time and says nothing about this run's state."""
+        return next(m.content for m in messages if m.role == "user")
+
+    # -- 1. required arguments -------------------------------------------
+
+    def test_a_call_missing_a_required_argument_is_refused_and_not_run(self):
+        # `navigate()` with no url: the single most common malformed call,
+        # because it looks like a complete tool call.
+        runner, provider = make_runner([
+            '{"type":"navigate"}',
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertNotIn(
+            ("navigate", ""), runner.computer.actions,
+            "a navigate with no url reached the machine",
+        )
+        self.assertIn(("navigate", "https://example.com"), runner.computer.actions)
+        refusals = self._refusals(run)
+        self.assertTrue(refusals, "the empty-argument navigate was not refused")
+        self.assertIn("url", refusals[0].error)
+
+    def test_a_refusal_is_given_once_and_the_correction_is_accepted(self):
+        # The point of refusing is to let the model fix it.  One refusal, then the
+        # corrected call runs: not a refusal, then the same bad call, then the
+        # correct one.
+        runner, provider = make_runner([
+            '{"type":"navigate"}',
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(len(self._refusals(run)), 1, "the bad call was refused more than once")
+        self.assertEqual(run.status, STATUS_DONE)
+
+    # -- 2 and 11. no blind retries, no refusal loops -------------------
+
+    def test_the_same_invalid_call_twice_stops_the_run(self):
+        # A model that does not read the error must not be able to spend the step
+        # budget discovering that.  The second identical refusal ends the run.
+        runner, provider = make_runner([
+            '{"type":"done","message":"ok"}',
+        ])
+        provider.repeat = '{"type":"navigate"}'
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.status, STATUS_ERROR)
+        self.assertIn("url", run.message)
+        # Two refusals, and no more: the loop must not have asked again after the
+        # second one arrived unchanged.
+        self.assertEqual(len(self._refusals(run)), 2)
+
+    def test_a_repeated_screenshot_spiral_is_bounded(self):
+        # `screenshot()` gives the step back -- reading the screen is not progress
+        # -- so it cannot bound the loop on its own.  A model that asks for one
+        # frame after another used to hold the step counter at zero forever.
+        runner, provider = make_runner([], max_steps=4)
+        provider.repeat = '{"type":"screenshot"}'
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.status, STATUS_ERROR)
+        self.assertIn("without advancing", run.message)
+        self.assertLessEqual(len(provider.calls), 4 * 4)
+
+    # -- 3 and 7. no forced history --------------------------------------
+
+    def test_a_failed_action_does_not_demand_a_history_call(self):
+        # The old loop refused every tool except `history` after a state change.
+        # A *failed* change had the same obligation, which is the worst version of
+        # it: the model was made to write down something that had not happened.
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"search","query":"kittens"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertIn(
+            ("search", "kittens"), runner.computer.actions,
+            "the action after a failure was blocked behind a history() call",
+        )
+        self.assertNotIn("history", [a[0] for a in runner.computer.actions])
+
+    def test_a_run_of_actions_needs_no_bookkeeping_turns(self):
+        # Requirement 10: one action is one model request.  Three actions plus a
+        # finish is four requests, not seven.
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"click","x":100,"y":100}',
+            '{"type":"scroll","delta_y":300}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.seen = True
+        runner.computer._bounds = Bounds(width=1280, height=800)
+        run = asyncio.run(_finish(runner, "go"))
+        self.assertEqual(len(provider.calls), 4, "bookkeeping cost an extra model request")
+
+    def test_history_is_optional_and_never_gates_anything(self):
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"history","note":"I think that worked"}',
+            '{"type":"search","query":"kittens"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertIn(("search", "kittens"), runner.computer.actions)
+        self.assertEqual(run.status, STATUS_DONE)
+
+    # -- 4 and 12. the executor is the only source of fact ---------------
+
+    def test_a_failed_action_is_recorded_as_failed_by_the_executor(self):
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertTrue(
+            any("FAILED" in f and "navigation failed" in f for f in run.facts),
+            f"the failure was not recorded as fact: {run.facts}",
+        )
+        self.assertFalse(
+            any("SUCCESS" in f and "navigate" in f for f in run.facts),
+            f"a failed action was recorded as successful: {run.facts}",
+        )
+
+    def test_model_written_history_is_never_recorded_as_fact(self):
+        # The model may still call `history()`, but a line it writes is its own
+        # note.  Treating it as fact is how a run ends up believing it navigated
+        # when the machine refused.
+        runner, _ = make_runner([
+            '{"type":"history","note":"navigate https://example.com → SUCCESS"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.facts, [], "a model-authored line became an executor fact")
+        self.assertIn("navigate https://example.com → SUCCESS", run.notes)
+
+    def test_the_compact_memory_is_executor_written_and_text_only(self):
+        runner, _ = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.facts, ["navigate https://example.com → SUCCESS"])
+        for line in run.facts:
+            self.assertIsInstance(line, str)
+            self.assertNotIn("base64", line)
+            self.assertLess(len(line), 120, "a fact grew into a transcript")
+
+    def test_a_successful_click_is_factored_with_its_coordinates(self):
+        runner, _ = make_runner([
+            '{"type":"screenshot"}',
+            '{"type":"click","x":540,"y":420}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertTrue(
+            any(f.startswith("click (540,420) → SUCCESS") for f in run.facts),
+            f"the click was not recorded in the requested form: {run.facts}",
+        )
+
+    # -- 5. the model is told what actually happened -------------------
+
+    def test_a_failure_is_reported_to_the_model_with_the_real_error(self):
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        run = asyncio.run(_finish(runner, "go"))
+
+        text = self._user_text(provider.calls[1])
+        self.assertIn("Last action: navigate → FAILED: navigation failed", text)
+        self.assertIn("What actually happened so far:", text)
+
+    def test_a_success_is_reported_to_the_model_too(self):
+        # Reporting only failures would leave the model unable to tell a
+        # completed action from one that was never attempted.
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+        self.assertIn("Last action: navigate → SUCCESS", self._user_text(provider.calls[1]))
+
+    # -- 6. no invented url --------------------------------------------
+
+    def test_a_failed_navigation_does_not_change_the_reported_url(self):
+        # The URL is only refreshed after the machine has said it worked.  A
+        # navigation that timed out did not land, and reporting its target as
+        # current is how a run acts on a page it never reached.
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://good.test"}',
+            '{"type":"navigate","url":"https://bad.test"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        # Fail only the second attempt, so there is a real URL to protect.
+        real_navigate = runner.computer.navigate
+        runner.computer.fail_on = ()
+
+        async def navigate(url):
+            if url == "https://bad.test":
+                runner.computer.actions.append(("navigate", url))
+                raise ComputerError("connection timeout")
+            await real_navigate(url)
+
+        runner.computer.navigate = navigate
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.last_url, "https://good.test", "a failed navigation rewrote the URL")
+        self.assertNotIn("Current URL: https://bad.test", self._user_text(provider.calls[2]))
+
+    def test_a_url_is_only_ever_reported_after_a_verified_read(self):
+        # The first navigation fails, so nothing has been read successfully yet
+        # and no URL may be claimed at all.
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        runner.computer.fail_on = ("navigate",)
+        run = asyncio.run(_finish(runner, "go"))
+
+        self.assertEqual(run.last_url, "")
+        self.assertNotIn("Current URL:", self._user_text(provider.calls[1]))
+
+    def test_a_successful_navigation_does_change_the_reported_url(self):
+        runner, provider = make_runner([
+            '{"type":"navigate","url":"https://example.com"}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+        self.assertEqual(run.last_url, "https://example.com")
+        self.assertIn("Current URL: https://example.com", self._user_text(provider.calls[1]))
+
+    # -- 9 and 13. screenshots, once, never repeated --------------------
+
+    def test_an_old_screenshot_is_never_resent(self):
+        runner, provider = make_runner([
+            '{"type":"screenshot"}',
+            '{"type":"click","x":10,"y":10}',
+            '{"type":"screenshot"}',
+            '{"type":"click","x":20,"y":20}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+
+        with_image = [c for c in provider.calls if any(getattr(m, "images", None) for m in c)]
+        self.assertEqual(len(with_image), 2, "a frame was sent on a request that had none")
+        frames = [
+            next(m.images[0] for m in c if getattr(m, "images", None))
+            for c in with_image
+        ]
+        self.assertNotEqual(frames[0], frames[1], "the same frame was sent twice")
+
+    # -- 14. provider compatibility ------------------------------------
+
+    def test_a_recovered_run_still_serialises_for_groq(self):
+        # Recovery must not produce a shape the adapters reject.  A run that was
+        # corrected after a refusal, and that carries a screenshot, has to end up
+        # with string-only tool messages.
+        from app.providers.base import summarize_wire
+        from app.providers.groq import GroqProvider
+        from app.providers.openai_compat import OpenAICompatProvider
+
+        runner, provider = make_runner([
+            '{"type":"navigate"}',
+            '{"type":"screenshot"}',
+            '{"type":"click","x":10,"y":10}',
+            '{"type":"done","message":"ok"}',
+        ])
+        run = asyncio.run(_finish(runner, "go"))
+        self.assertEqual(run.status, STATUS_DONE)
+
+        groq = GroqProvider("gsk-test", "llama-3.3-70b-versatile")
+        self.assertEqual(groq.max_completion_tokens, 256)
+        for messages in provider.calls:
+            body = {"model": groq.default_model,
+                    "messages": OpenAICompatProvider._wire_messages(provider, messages)}
+            for message in body["messages"]:
+                if message["role"] == "tool":
+                    self.assertIsInstance(
+                        message["content"], str,
+                        "a recovered run produced a tool message Groq would reject",
+                    )
+            summarize_wire({**body, "stream": True}, messages)
 
 
 if __name__ == "__main__":

@@ -309,20 +309,34 @@ class ComputerRun:
     #: The compact text history, one short line per state-changing action,
     #: written by the model through `history(note)` and never by this module.
     #:
-    #: This is the run's entire memory.  It replaces the old full-conversation
-    #: resend, and it is text-only by construction: nothing in this loop can put
-    #: an image here, so "the history contains no screenshots" is a property of
-    #: the data structure rather than a promise in a comment.
+    #: This is the run's memory, and it is written by the *executor*, not by the
+    #: model.  Each line is a fact the machine produced, in the form
+    #: ``navigate https://x.com → FAILED: connection timeout`` or
+    #: ``click (540,420) → SUCCESS``.  Text-only by construction: nothing in this
+    #: loop can put an image here, so "the history contains no screenshots" is a
+    #: property of the data structure rather than a promise in a comment.
+    #:
+    #: It used to be the model's own account of what it had done, which meant a
+    #: run could believe it had navigated when the machine had refused, and spend
+    #: the rest of its steps building on that.
+    facts: List[str] = field(default_factory=list)
+    #: The model's optional `history()` lines.  Kept, because a model noticing
+    #: something the executor cannot see is worth keeping -- but they are never
+    #: proof that anything happened, never gate the next action, and never
+    #: appear as fact in the run report.
     notes: List[str] = field(default_factory=list)
-    #: Set when a state-changing action has run and the model has not yet
-    #: recorded it.  While true, the next call is refused unless it is
-    #: `history` -- the run must not be able to act twice on the strength of one
-    #: line of memory.
-    needs_history: bool = False
+    #: What the executor actually did with the most recent action, and what it
+    #: actually reported back.  This is the single source of truth the next
+    #: request is told about, so the model learns what happened from the machine
+    #: rather than from its own memory of what it asked for.
+    last_action: Dict[str, Any] = field(default_factory=dict)
+    #: The signature of the last call this loop refused, so that an identical
+    #: refusal is recognised rather than paid for a second time.
+    last_refused: str = ""
     #: The screenshot the model asked for, held for exactly one request.
     #:
     #: Set by `screenshot()` and cleared by the request that carries it.  It
-    #: cannot be attached twice, and it is never written into `notes`, so no
+    #: cannot be attached twice, and it is never written into `facts`, so no
     #: later request can inherit an image the loop has already shown.
     pending_image: str = ""
     pending_width: int = 0
@@ -594,31 +608,33 @@ class ComputerRunner:
         image: Optional[str],
         note: str,
     ) -> List[LLMMessage]:
-        """Build the messages for one request: prompt, task, text history.
+        """Build the messages for one request: prompt, task, verified state.
 
         Two messages, always, in this order.  That is the entire context:
 
         - the system prompt, which does not vary, and
-        - the user's task plus the compact history, as text.
+        - the user's task plus what the executor has actually done, as text.
 
         There is no third message carrying the previous exchange, no transcript
         of tool calls, and no screenshot unless `image` is set -- and `image` is
         set for exactly one request: the one immediately after the model asked
-        for it.  Everything the loop used to resend (the prior assistant turns,
-        the per-action state blocks, the frame captured last turn) is either
-        gone or has been replaced by one short text line.
+        for it.
 
-        The refusal note rides on the same user turn rather than as a message of
-        its own, because two consecutive user messages are a hard error on some
-        OpenAI-compatible endpoints, and because a correction the model reads
-        next to the state is more useful than one buried in a transcript.
+        Everything the loop puts here is a fact the machine produced.  The URL is
+        only ever present because `state()` was asked and answered, and the last
+        action is reported with the result the executor returned, because a model
+        told only what it asked for cannot tell the difference between a click
+        that landed and one the agent refused.
         """
-        history_block = "\n".join(f"- {note_line}" for note_line in run.notes)
         parts = [f"Task: {run.task}"]
         if run.last_url:
+            # Only ever set from a verified state read, never from a call the
+            # model made or wished it had made.
             parts.append(f"Current URL: {run.last_url}")
-        if history_block:
-            parts.append("What you have done so far:\n" + history_block)
+        if run.facts:
+            parts.append("What actually happened so far:\n" + "\n".join(run.facts))
+        if run.last_action:
+            parts.append("Last action: " + _result_line(run.last_action))
         if image:
             # Only the current screenshot, stated with its own size so the
             # coordinates that follow are measured in this image's grid.
@@ -787,21 +803,44 @@ class ComputerRunner:
            the model looked at them or not.
         2. A screenshot lives for exactly one request.  It is attached to the
            turn that follows the call that asked for it, and dropped after that
-           turn acts.  It is never written into the history, so no later request
+turn acts.  It is never written into the facts, so no later request
            can inherit it.
-        3. A state-changing action obliges the model to write one line of text
-           about it before the next action.  That line is the only memory the
-           run carries, and it is the model's own words rather than a
-           description this module invented.
+        3. Every action is followed by what the executor reported, and the run
+           remembers that.  The model is never obliged to write a line about an
+           action before it may take the next one: that obligation cost a whole
+           model turn per action, and the line it produced was the model's claim
+           rather than the machine's evidence.  The executor records the fact
+           itself, so one action is one request.
         """
+
         run.status = STATUS_OBSERVING
         run.message = "Deciding what to do"
+
+        # `run.step` is the task's step budget, and reading the screen or writing
+        # a note deliberately gives a step back -- neither advances the task.  So
+        # on its own it cannot bound the loop: a model that asks for one
+        # screenshot after another would hold `run.step` at zero and spin here
+        # forever, asking for frames it never acts on.  This counts turns
+        # instead, including the free ones, so the loop always terminates.
+        # The budget is generous because a legitimate run interleaves actions
+        # with the screenshots they need, and tight enough that a spiral is a
+        # visible stop rather than an unbounded bill.
+        max_turns = max(8, self.settings.computer_max_steps * 4)
+        turns = 0
 
         try:
             while run.step < self.settings.computer_max_steps:
                 if run.cancelled:
                     run.status = STATUS_ERROR
                     run.message = "Stopped"
+                    return
+                turns += 1
+                if turns > max_turns:
+                    run.status = STATUS_ERROR
+                    run.message = (
+                        f"stopped after {max_turns} turns without advancing: the model "
+                        f"kept calling tools that did not move the task forward"
+                    )
                     return
 
                 run.status = STATUS_OBSERVING
@@ -828,10 +867,12 @@ class ComputerRunner:
                     continue
 
                 if command.type == "history":
-                    # The model's own line, stored verbatim apart from
-                    # whitespace.  This is the only writer of `run.notes`.
+                    # Optional bookkeeping, kept because a model noticing
+                    # something the executor cannot see is worth keeping -- but
+                    # it is the model's own line, it is not fact, and it no
+                    # longer gates anything.  Nothing has happened, so nothing
+                    # goes in `run.facts`.
                     run.notes.append(command.text)
-                    run.needs_history = False
                     turn.tool_result = command.text
                     turn.execution = {
                         "accepted": True,
@@ -853,19 +894,19 @@ class ComputerRunner:
                 if terminal:
                     return
 
-                # The action happened, so the model owes the run one line about
-                # it.  While this is true every other tool is refused, which is
-                # what stops a run from taking a second action on the strength
-                # of memory that was never written.
-                if command.type in STATE_CHANGING_TOOLS:
-                    run.needs_history = True
-                    run.message = "Waiting for the model to note what it did"
-
-                try:
-                    state = await self.computer.state()
-                    run.last_url = str(state.get("url") or run.last_url)
-                except ComputerError:
-                    pass
+                if run.last_action.get("status") == "SUCCESS":
+                    # Read the machine back only after it said yes.  On a
+                    # failure the previous URL is still the truthful one: a
+                    # navigation that timed out did not land, and reporting its
+                    # target as current is how a run ends up acting on a page it
+                    # never reached.
+                    try:
+                        state = await self.computer.state()
+                        verified = str(state.get("url") or "").strip()
+                        if verified:
+                            run.last_url = verified
+                    except ComputerError:
+                        pass
 
             run.status = STATUS_ERROR
             run.message = (
@@ -968,10 +1009,13 @@ class ComputerRunner:
         }
 
     async def _next_command(self, run: ComputerRun):
-        """Ask for one tool call, correcting a refusal at most twice.
+        """Ask for one tool call, refusing a bad one a bounded number of times.
 
         Returns ``(command, error)``.  A ``None`` command means the run has
-        already been given a terminal status and the caller must stop.
+        already been given a terminal status and the caller must stop.  The
+        bounds are in `_refuse`: a retry counter for a model that is correcting
+        itself, and a call-signature check for one that is not reading the error
+        at all.
         """
         refusal = ""
         for attempt in range(self.settings.computer_max_json_retries + 2):
@@ -998,8 +1042,8 @@ class ComputerRunner:
                 # image, so it is recorded before the call rather than inferred
                 # afterwards from whatever was attached.
                 reason="screenshot_result" if run.pending_image else "step",
-                history_lines=list(run.notes),
-                history_chars=sum(len(n) for n in run.notes),
+                history_lines=list(run.facts),
+                history_chars=sum(len(n) for n in run.facts),
             )
             run.trace.append(turn)
             self._trim_trace(run)
@@ -1153,13 +1197,11 @@ class ComputerRunner:
 
             if not calls:
                 refusal = "no tool was called; call exactly one tool now"
-                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
                 turn.parse_error = refusal
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model stopped calling tools: {refusal}"
-                    return None, refusal
-                continue
+                if self._refuse(run, turn, raw, refusal, "<no-call>", attempt,
+                                "the model stopped calling tools"):
+                    continue
+                return None, refusal
 
             if len(calls) > 1:
                 # Sequential by contract.  Two calls in one reply means the model
@@ -1169,44 +1211,24 @@ class ComputerRunner:
                     f"{len(calls)} tool calls in one reply; call one tool at a time "
                     f"so each action is seen before the next"
                 )
-                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
                 turn.parse_error = refusal
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model would not act one step at a time: {refusal}"
-                    return None, refusal
-                continue
+                if self._refuse(run, turn, raw, refusal, "<multi-call>", attempt,
+                                "the model would not act one step at a time"):
+                    continue
+                return None, refusal
 
             call = calls[0]
             turn.tool_call_id = call.id
             turn.tool_call = {"name": call.name, "arguments": call.arguments}
+            signature = f"{call.name}:{call.arguments}"
             args = parse_arguments(call.arguments)
             if args is None:
                 refusal = f"the arguments of {call.name}() were not valid JSON"
                 turn.tool_error = refusal
-                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model sent unusable arguments: {refusal}"
-                    return None, refusal
-                continue
-
-            if run.needs_history and call.name != "history":
-                # The run acted and nothing was recorded.  Refusing here is what
-                # keeps the compact history a faithful account rather than a
-                # partial one: without it the model can click twice on the
-                # strength of a line it never wrote.
-                refusal = (
-                    f"the last action has not been recorded; call history(note) "
-                    f"describing what you just did before {call.name}()"
-                )
-                turn.tool_error = refusal
-                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model would not record its actions: {refusal}"
-                    return None, refusal
-                continue
+                if self._refuse(run, turn, raw, refusal, signature, attempt,
+                                "the model sent unusable arguments"):
+                    continue
+                return None, refusal
 
             if call.name == "click" and not run.seen_width:
                 # A click needs a frame to be a coordinate in.  Refusing it is
@@ -1218,12 +1240,10 @@ class ComputerRunner:
                     "it before clicking"
                 )
                 turn.tool_error = refusal
-                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model would not look before clicking: {refusal}"
-                    return None, refusal
-                continue
+                if self._refuse(run, turn, raw, refusal, signature, attempt,
+                                "the model would not look before clicking"):
+                    continue
+                return None, refusal
 
             bounds = (
                 Bounds(width=run.seen_width, height=run.seen_height)
@@ -1233,23 +1253,65 @@ class ComputerRunner:
             command, error = tool_to_command(call.name, args, bounds)
             if command is None:
                 turn.tool_error = error
-                self._record(run, {"type": "invalid"}, raw, "refused", error=error)
                 refusal = error
-                if attempt >= self.settings.computer_max_json_retries:
-                    run.status = STATUS_ERROR
-                    run.message = f"the model never issued a usable call: {error}"
-                    return None, error
-                continue
+                if self._refuse(run, turn, raw, error, signature, attempt,
+                                "the model never issued a usable call"):
+                    continue
+                return None, error
 
             turn.parse_ok = True
             turn.command = command.to_json()
             turn.tool_result = command.to_json()
             refusal = ""
+            run.last_refused = ""
             return command, ""
 
         run.status = STATUS_ERROR
         run.message = "the model never issued a usable call"
         return None, ""
+
+    def _refuse(
+        self,
+        run: ComputerRun,
+        turn: ComputerTurnTrace,
+        raw: str,
+        error: str,
+        signature: str,
+        attempt: int,
+        give_up: str,
+    ) -> bool:
+        """Refuse one unusable call.  Returns True when the model should try again.
+
+        A refusal is given once, with the reason, and then the model is asked for
+        a corrected call -- it is never the same call again.  Two separate bounds
+        enforce that, and both are needed:
+
+        - The retry counter bounds a model that is correcting itself, alternating
+          between two bad calls, or drifting.
+        - The signature check bounds a model that is not reading the error at
+          all.  When the identical unusable call comes back a second time, asking
+          a third time cannot help: it only spends tokens to arrive at the same
+          place.  So it stops immediately, and says what has to change.
+
+        The second is what stops
+        ``invalid → refusal → invalid → refusal → invalid`` from running to the
+        step limit, and it fires two attempts earlier than the counter would.
+        """
+        self._record(run, {"type": "invalid"}, raw, "refused", error=error)
+        if signature and signature == run.last_refused:
+            turn.parse_error = (
+                f"{error} (the same unusable call was refused twice, so the run "
+                f"stopped instead of spending another request on it)"
+            )
+            run.status = STATUS_ERROR
+            run.message = f"{give_up}: {error}"
+            return False
+        run.last_refused = signature
+        if attempt >= self.settings.computer_max_json_retries:
+            run.status = STATUS_ERROR
+            run.message = f"{give_up}: {error}"
+            return False
+        return True
 
     def _trim_trace(self, run: ComputerRun) -> None:
         """Keep the screenshots of the most recent turns only.
@@ -1269,16 +1331,24 @@ class ComputerRunner:
     async def _perform(self, run: ComputerRun, command: Command) -> bool:
         """Execute one command.  The only place a command reaches the machine.
 
+        This is the only writer of `run.last_action` and `run.facts`, which is
+        the whole point: the run's memory of what happened is produced here, by
+        the code that can see whether it happened, and not by the model that
+        asked.  A caller cannot learn that an action succeeded except by reading
+        what this method recorded.
+
         Returns True when the run has reached a terminal state.
         """
         if command.type == "done":
             run.status = STATUS_DONE
             run.message = command.message or "Task complete."
+            run.last_action = {"tool": "done", "status": "SUCCESS", "detail": ""}
             self._record(run, command.to_json(), "", run.message)
             return True
         if command.type == "error":
             run.status = STATUS_ERROR
             run.message = command.message or "The model reported it could not continue."
+            run.last_action = {"tool": "error", "status": "SUCCESS", "detail": ""}
             self._record(run, command.to_json(), "", "stopped")
             return True
 
@@ -1320,16 +1390,33 @@ class ComputerRunner:
             # The action was refused or failed.  Reported as a normal event so
             # the model sees the evidence and can recover, rather than the run
             # dying on a transient click that landed on a moving page.
-            self._record(run, command.to_json(), "", "failed", error=str(exc))
-            run.message = str(exc)
+            detail = str(exc)
+            run.last_action = {"tool": command.type, "status": "FAILED", "detail": detail}
+            self._remember(run, command, "FAILED", detail)
+            self._record(run, command.to_json(), "", "failed", error=detail)
+            run.message = detail
             # The refusal is reported here and the caller in `_loop` turns the
             # recorded event into the turn's execution block, so it cannot be
             # lost just because it failed.
             return False
 
-
+        run.last_action = {"tool": command.type, "status": "SUCCESS", "detail": ""}
+        self._remember(run, command, "SUCCESS", "")
         self._record(run, command.to_json(), "", "ok", trace=trace)
         return False
+
+    def _remember(self, run: ComputerRun, command: Command, status: str, detail: str) -> None:
+        """Write one executor-produced fact, and nothing else.
+
+        The line is built from the command the executor was handed and the
+        status it returned, so it cannot drift from what was actually attempted.
+        `navigate https://x.com → FAILED: connection timeout` is the whole
+        memory the next request gets of that action.
+        """
+        line = f"{_fact_line(command)} → {status}"
+        if detail:
+            line += f": {detail}"
+        run.facts.append(line)
 
     def _record(
         self,
@@ -1377,6 +1464,56 @@ class ComputerRunner:
         except Exception:
             # A log write failing must not change what happened on screen.
             pass
+
+
+def _fact_line(command: Command) -> str:
+    """One action as the executor saw it, in as few tokens as are still exact.
+
+    Only the arguments that identify the action appear, because this line is the
+    run's memory and a run of twenty actions must not grow a transcript.  Typed
+    text is clipped so a pasted paragraph cannot dominate every later request.
+    """
+    kind = command.type
+    if kind == "navigate":
+        return f"navigate {command.url}"
+    if kind == "search":
+        return f"search {command.query!r}"
+    if kind == "click":
+        return f"click ({_coord(command.x)},{_coord(command.y)})"
+    if kind == "move":
+        return f"move ({_coord(command.x)},{_coord(command.y)})"
+    if kind == "type":
+        return f"type {command.text[:40]!r}"
+    if kind == "key":
+        return f"key {command.key}"
+    if kind == "scroll":
+        return f"scroll {command.delta_y}"
+    return kind
+
+
+def _coord(value: float) -> str:
+    """A coordinate in the form the model chose it, not in binary-float form.
+
+    A click at (540, 420) is written `540.0,420.0` by Python, which is two extra
+    characters on every line of the run's memory and reads like a different
+    number from the one the model used.  Integral coordinates print as integers;
+    a genuinely fractional one keeps its fraction, because dropping it would
+    round a coordinate the model actually chose.
+    """
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def _result_line(action: Dict[str, Any]) -> str:
+    """The executor's verdict on the last action, as the model is told.
+
+    This is what the model reads instead of its own memory of asking.  The
+    detail is the error the machine raised, verbatim, so a refused click reads
+    as refused rather than as something the model has to infer from silence.
+    """
+    tool = str(action.get("tool") or "?")
+    status = str(action.get("status") or "SUCCESS")
+    detail = str(action.get("detail") or "").strip()
+    return f"{tool} → {status}" + (f": {detail}" if detail else "")
 
 
 def _pointer_trace(kind: str, model_x: float, model_y: float, result: Dict[str, Any]) -> Dict[str, Any]:
