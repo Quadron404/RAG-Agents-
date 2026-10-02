@@ -10,6 +10,7 @@ from ..providers.base import (
     TextDelta,
     ToolCall,
     ToolCallEvent,
+    stream_model,
 )
 from ..tools.base import Tool
 from ..tools.executor import Executor
@@ -68,7 +69,7 @@ async def run_agent_loop(
     for _ in range(max_iters):
         tool_calls: List[ToolCall] = []
         turn_text = ""
-        async for ev in provider.stream(
+        async for ev in stream_model(provider,
             [m for m in messages], [t.schema() for t in stream_tools], model
         ):
             if isinstance(ev, TextDelta):
