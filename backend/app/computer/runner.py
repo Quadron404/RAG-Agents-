@@ -737,56 +737,32 @@ class ComputerRunner:
         provider, model = self.router.resolve("computer", provider_name=run.provider or None)
 
         attempts: List[Dict[str, Any]] = []
-        last: Optional[ProviderHTTPError] = None
+        parts: List[str] = []
+        calls: List[ToolCall] = []
+        try:
+            async def drain() -> None:
+                async for event in stream_model(
+                    provider,
+                    messages,
+                    computer_tools(self._allowed_tools(run)),
+                    model,
+                ):
+                    if isinstance(event, TextDelta):
+                        parts.append(event.content)
+                    elif isinstance(event, ToolCallEvent):
+                        calls.append(event.call)
 
-        for attempt in range(1, self.settings.computer_max_http_attempts + 1):
-            parts: List[str] = []
-            calls: List[ToolCall] = []
-            try:
-                async def drain() -> None:
-                    async for event in provider.stream(messages, computer_tools(self._allowed_tools(run)), model):
-                        if isinstance(event, TextDelta):
-                            parts.append(event.content)
-                        elif isinstance(event, ToolCallEvent):
-                            calls.append(event.call)
+            await asyncio.wait_for(drain(), timeout=120.0)
+        except ProviderHTTPError as exc:
+            attempts.append({"attempt": 1, **exc.to_dict()})
+            run.http_attempts = attempts
+            raise
+        except (ProviderUnavailable, asyncio.TimeoutError):
+            raise
+        except Exception:
+            raise
 
-                await asyncio.wait_for(drain(), timeout=120.0)
-            except ProviderHTTPError as exc:
-                # The provider answered and refused.  This is not "could not be
-                # reached", and the difference decides whether the reader goes
-                # looking at a rate limit or at their API key.
-                last = exc
-                attempts.append({"attempt": attempt, **exc.to_dict()})
-                run.http_attempts = attempts
-                if not exc.retryable or attempt >= self.settings.computer_max_http_attempts:
-                    raise
-                # Bounded exponential backoff with jitter, and the provider's
-                # own Retry-After wins when it sent one: it knows its quota,
-                # we only know a shape.  The jitter is what stops every worker
-                # in the fleet retrying on the same schedule and re-creating
-                # the limit that caused it.
-                delay = _backoff_delay(
-                    attempt=attempt,
-                    retry_after=exc.retry_after,
-                    base=self.settings.computer_retry_base_seconds,
-                    cap=self.settings.computer_retry_max_seconds,
-                )
-                run.message = (
-                    f"Provider reached — HTTP {exc.status}"
-                    f"{' ' + exc.reason if exc.reason else ''}; retrying in {delay:.1f}s"
-                    f" (attempt {attempt + 1} of {self.settings.computer_max_http_attempts})"
-                )
-                await asyncio.sleep(delay)
-                continue
-            except (ProviderUnavailable, asyncio.TimeoutError):
-                raise
-            except Exception:
-                # A transport-level failure: DNS, TLS, a refused connection, a
-                # timeout.  Retrying cannot fix those quickly and hammering a
-                # broken endpoint helps nobody, so they go straight out.
-                raise
-
-            wire = getattr(provider, "last_wire", None) or {}
+        wire = getattr(provider, "last_wire", None) or {}
             run.http_attempts = attempts
             usage = getattr(provider, "last_usage", None) or {}
             raw = "".join(parts)
