@@ -118,29 +118,31 @@ async def stream_model(
 ) -> AsyncIterator[LLMEvent]:
     """Run one provider request under the global 10s gate.
 
-    HTTP 429 is special: the current request is *stalled*, not failed. The same
-    exact request is retried only after the mandatory ten-second gate expires.
-    No newer request gets to overtake it in a serialized higher-level run.
+    Every attempt is the same logical request. A 429 does not release the gate
+    for another message: the stalled request keeps ownership, waits the full
+    ten-second interval, then retries itself. This prevents message B from
+    overtaking stalled message A.
     """
     from inspect import isawaitable
     from .errors import ProviderHTTPError
+    import asyncio
 
-    while True:
-        try:
-            async with _MODEL_CALL_GATE:
+    async with _MODEL_CALL_GATE:
+        while True:
+            try:
                 async for event in provider.stream(messages, tools, model):
                     yield event
-            return
-        except ProviderHTTPError as exc:
-            if exc.status != 429:
-                raise
-            if on_rate_limit is not None:
-                note = on_rate_limit(exc)
-                if isawaitable(note):
-                    await note
-            # Do not sleep here. Exiting the gate already starts the exact
-            # ten-second timer. Re-entering the gate waits for its expiry.
-            continue
+                return
+            except ProviderHTTPError as exc:
+                if exc.status != 429:
+                    raise
+                if on_rate_limit is not None:
+                    note = on_rate_limit(exc)
+                    if isawaitable(note):
+                        await note
+                # Keep the global gate held while waiting. The exact same
+                # request is retried; no newer message can enter ahead of it.
+                await asyncio.sleep(MODEL_CALL_GAP_SECONDS)
 
 
 def tool_schema_openai(tool: ToolSchema) -> ToolSchema:
