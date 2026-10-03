@@ -61,6 +61,7 @@ STATUS_IDLE = "idle"
 STATUS_OBSERVING = "observing"
 STATUS_CONTROLLING = "controlling"
 STATUS_DONE = "done"
+STATUS_STOPPED = "stopped"
 STATUS_ERROR = "error"
 
 
@@ -385,7 +386,8 @@ class ComputerRun:
             "steps": len(self.events),
             "turns": len(self.trace),
             "running": self.status in (STATUS_OBSERVING, STATUS_CONTROLLING),
-            "done": self.status in (STATUS_DONE, STATUS_ERROR),
+            "done": self.status in (STATUS_DONE, STATUS_STOPPED, STATUS_ERROR),
+            "stopped": self.status == STATUS_STOPPED,
             # What the run has cost so far, and how much of it involved an
             # image.  A run that finished in four requests is the whole point of
             # the redesign, and this is where that becomes visible to the user
@@ -404,6 +406,8 @@ class ComputerRun:
         failed; `trace_report` then omits the key entirely, because an empty
         object is truthy in JavaScript and would read as a failure.
         """
+        if self.status != STATUS_ERROR:
+            return {}
         for turn in reversed(self.trace):
             if not turn.error:
                 continue
@@ -734,19 +738,44 @@ class ComputerRunner:
         parts: List[str] = []
         calls: List[ToolCall] = []
 
+        async def on_rate_limit(exc: Exception) -> None:
+            status = int(getattr(exc, "status", 429) or 429)
+            retry_after = getattr(exc, "retry_after", None)
+            run.http_attempts.append(
+                {
+                    "attempt": len(run.http_attempts) + 1,
+                    "http_status": status,
+                    "http_reason": str(getattr(exc, "reason", "") or ""),
+                    "provider_error": str(getattr(exc, "provider_detail", "") or ""),
+                    "provider_error_raw": str(getattr(exc, "body", "") or ""),
+                    "retry_after": retry_after,
+                    "retryable": True,
+                }
+            )
+            if retry_after is None:
+                run.message = "Provider rate limit hit — waiting for retry window."
+            else:
+                run.message = (
+                    f"Provider rate limit hit — retrying in {max(0.0, float(retry_after)):.1f}s."
+                )
+
         async def drain() -> None:
             async for event in stream_model(
                 provider,
                 messages,
                 computer_tools(self._allowed_tools(run)),
                 model,
+                on_rate_limit=on_rate_limit,
             ):
                 if isinstance(event, TextDelta):
                     parts.append(event.content)
                 elif isinstance(event, ToolCallEvent):
                     calls.append(event.call)
 
-        await asyncio.wait_for(drain(), timeout=120.0)
+        # There is intentionally no fixed wall-clock timeout here.  A 429 owns
+        # the model-call gate until the provider reset time and must not be
+        # converted into TimeoutError while it is sleeping.
+        await drain()
 
         wire = getattr(provider, "last_wire", None) or {}
         usage = getattr(provider, "last_usage", None) or {}
@@ -877,8 +906,12 @@ turn acts.  It is never written into the facts, so no later request
                 f"stopped after {self.settings.computer_max_steps} steps without finishing"
             )
         except asyncio.CancelledError:
-            run.status = STATUS_ERROR
-            run.message = "Stopped"
+            if run.cancelled:
+                run.status = STATUS_STOPPED
+                run.message = "AI has stopped."
+            else:
+                run.status = STATUS_ERROR
+                run.message = "Stopped"
         except Exception as exc:  # a background task must never die silently
             run.status = STATUS_ERROR
             run.message = f"computer control failed: {exc}"
@@ -947,7 +980,7 @@ turn acts.  It is never written into the facts, so no later request
         acted = bool(last_event) and (result == "ok" or terminal)
         if command.type == "done" and terminal:
             outcome = "done"
-        elif command.type == "error" and terminal:
+        elif command.type in ("error", "stop") and terminal:
             outcome = "stopped"
         elif result == "ok":
             outcome = "executed"
@@ -1328,6 +1361,12 @@ turn acts.  It is never written into the facts, so no later request
             run.status = STATUS_ERROR
             run.message = command.message or "The model reported it could not continue."
             run.last_action = {"tool": "error", "status": "SUCCESS", "detail": ""}
+            self._record(run, command.to_json(), "", "stopped")
+            return True
+        if command.type == "stop":
+            run.status = STATUS_STOPPED
+            run.message = command.message or "AI has stopped."
+            run.last_action = {"tool": "stop", "status": "SUCCESS", "detail": ""}
             self._record(run, command.to_json(), "", "stopped")
             return True
 
