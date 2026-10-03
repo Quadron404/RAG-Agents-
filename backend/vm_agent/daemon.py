@@ -1167,6 +1167,10 @@ def _ensure_vnc() -> None:
         "-repeat",             # autorepeat for held keys
         "-noxdamage",          # Xvfb has no damage extension worth using
         "-nolookup",           # no name lookup on every client connect
+        "-speeds", "lan",      # do not use WAN-safe conservative polling for the local relay
+        "-wait", "5",          # push framebuffer changes promptly
+        "-defer", "0",         # do not defer visible pointer/page updates
+        "-threads",            # keep RFB encoding off the control thread
         "-quiet",
     ]
     if VNC_PASSWORD:
@@ -1589,45 +1593,44 @@ def _capture_display(draw_mouse: bool = True) -> dict:
 
 
 def _computer_click(x: int, y: int) -> dict:
-    """Move to the requested display pixel, activate Chrome, then left-click.
+    """Move and click the exact X-display pixel immediately.
 
-    The click path is intentionally explicit: synchronous pointer move, window
-    activation, then the button press. This avoids the case where Xvfb/Openbox
-    leaves the browser unfocused while a synthetic event is sent. The pointer is
-    read back afterwards for diagnostics.
+    The server-side action is deliberately synchronous and minimal:
+      1. move the real X pointer to (x, y) and wait for X to confirm it,
+      2. verify the pointer is exactly there,
+      3. send the left-button event immediately in the same X session,
+      4. return without an artificial UI/page sleep.
+
+    No browser/window activation happens here. Activating a window can move the
+    pointer through WM focus policy and adds latency between the model's chosen
+    coordinate and the actual click. The Chrome window is the visible desktop
+    target; X pointer coordinates are therefore the authoritative coordinate
+    system.
     """
     if not _x_running():
         return {"ok": False, "error": "the X display is not running"}
+
     disp_w, disp_h = _display_geometry()
     if not (0 <= x < disp_w and 0 <= y < disp_h):
         return {
             "ok": False,
             "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display",
         }
+
     try:
         moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
     except Exception as exc:
         return {"ok": False, "error": f"could not move pointer for click: {exc}"}
+
     if moved.returncode != 0:
-        return {"ok": False, "error": (moved.stderr or "pointer move failed").strip()[:200]}
+        return {
+            "ok": False,
+            "error": (moved.stderr or "pointer move failed").strip()[:200],
+        }
 
-    before_focus = _window_under_cursor_id()
-    focus_ok = _focus_window_under_cursor()
-
-    # Window activation can warp the pointer. Verify and restore the exact
-    # requested pixel after focus, then do the final move+click in one xdotool
-    # process so no second process can move the pointer between them.
     px, py = _pointer_position()
-    if (px, py) != (x, y):
-        moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
-        if moved.returncode != 0:
-            return {
-                "ok": False,
-                "error": (moved.stderr or "pointer re-position failed").strip()[:200],
-            }
-        px, py = _pointer_position()
     if (px, py) != (x, y):
         return {
             "ok": False,
@@ -1638,31 +1641,34 @@ def _computer_click(x: int, y: int) -> dict:
             "display_height": disp_h,
             "window_under_cursor": _window_under_cursor_id(),
             "active_window": _active_window_id(),
-            "focus_ok": focus_ok,
             "move_verified": False,
         }
 
+    # The pointer is already at the requested pixel. Send the button event now;
+    # no sleep, focus dance, screenshot or browser round-trip is inserted here.
     try:
         pressed = _xdotool(
-            "mousemove", "--sync", str(x), str(y),
-            "click", "--clearmodifiers", "1", timeout=10
+            "click", "--clearmodifiers", "1",
+            timeout=10,
         )
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
     except Exception as exc:
         return {"ok": False, "error": f"could not click: {exc}"}
+
     if pressed.returncode != 0:
         return {"ok": False, "error": (pressed.stderr or "click failed").strip()[:200]}
 
-    time.sleep(0.05)
     ax, ay = _pointer_position()
     landed = (ax == x and ay == y)
     active_after = _active_window_id()
     under_after = _window_under_cursor_id()
+    clicked_at = time.time()
+
     _log(
         f"CLICK screen={disp_w}x{disp_h} model=({x},{y}) "
-        f"pre_window={before_focus} active={active_after} under={under_after} "
-        f"actual=({ax},{ay}) {'LANDED' if landed else 'DRIFTED'}"
+        f"actual=({ax},{ay}) active={active_after} under={under_after} "
+        f"{'LANDED' if landed else 'DRIFTED'}"
     )
     return {
         "ok": True,
@@ -1675,9 +1681,9 @@ def _computer_click(x: int, y: int) -> dict:
         "display_height": disp_h,
         "window_under_cursor": under_after,
         "active_window": active_after,
-        "focus_ok": focus_ok,
         "move_verified": True,
-        "before_focus_window": before_focus,
+        "clicked_at": clicked_at,
+        "execution": "immediate_xdotool",
     }
 
 
