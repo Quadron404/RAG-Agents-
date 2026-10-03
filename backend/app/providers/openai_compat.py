@@ -180,6 +180,14 @@ class OpenAICompatProvider(Provider):
             # list sent in the wrong shape is rejected as a 400 rather than
             # ignored -- so the mistake shows up as the feature not existing.
             body["tools"] = [tool_schema_openai(t) for t in tools]
+            # OpenRouter/Groq computer models should not spend a turn replying
+            # with prose or an empty delta when the contract requires one native
+            # tool call.  Requiring a tool call removes an otherwise expensive
+            # protocol-retry request.  Mistral is left on its default behavior
+            # because its compatible deployments differ in tool-choice support.
+            if str(self.name).strip().lower() in {"openrouter", "groq"}:
+                body["tool_choice"] = "required"
+                body["parallel_tool_calls"] = False
         if self.max_completion_tokens > 0:
             # A control loop emits one short tool call per turn.  A generous
             # ceiling here does not make the model verbose -- it makes a verbose
