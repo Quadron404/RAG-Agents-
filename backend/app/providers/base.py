@@ -87,9 +87,13 @@ class _ModelCallGate:
     async def acquire(self) -> None:
         import asyncio
         await self._lock.acquire()
-        wait = self._next_allowed - asyncio.get_running_loop().time()
-        if wait > 0:
-            await asyncio.sleep(wait)
+        try:
+            wait = self._next_allowed - asyncio.get_running_loop().time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+        except BaseException:
+            self._lock.release()
+            raise
 
     def finish_success(self) -> None:
         import asyncio
@@ -134,6 +138,7 @@ async def stream_model(
                 return
             except ProviderHTTPError as exc:
                 if exc.status != 429:
+                    _MODEL_CALL_GATE.finish_success()
                     _MODEL_CALL_GATE.release()
                     locked = False
                     raise
@@ -148,6 +153,15 @@ async def stream_model(
                 if wait > 0:
                     await asyncio.sleep(wait)
                 continue
+            except asyncio.CancelledError:
+                _MODEL_CALL_GATE.release()
+                locked = False
+                raise
+            except Exception:
+                _MODEL_CALL_GATE.finish_success()
+                _MODEL_CALL_GATE.release()
+                locked = False
+                raise
     finally:
         if locked:
             _MODEL_CALL_GATE.release()
