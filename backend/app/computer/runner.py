@@ -721,7 +721,7 @@ class ComputerRunner:
             return [name for name in TOOL_NAMES if name != "history"]
         if run.action_count == 0 and not run.seen_width:
             return ["screenshot"]
-        return ["click", "type", "key", "scroll"]
+        return ["click", "type", "key", "scroll", "stop"]
 
     async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int]]:
         """Make exactly one logical model request.
