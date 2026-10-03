@@ -657,8 +657,9 @@ class ComputerRunner:
             # Only ever set from a verified state read, never from a call the
             # model made or wished it had made.
             parts.append(f"Current URL: {run.last_url}")
-        if run.history_text:
-            parts.append("History.txt (latest complete version; use only this):\n" + run.history_text)
+        history_text = "\n".join(run.facts)[:12000]
+        if history_text:
+            parts.append("History.txt (latest complete version; use only this):\n" + history_text)
         if run.last_action:
             parts.append("Last action: " + _result_line(run.last_action))
         if image:
@@ -873,8 +874,6 @@ turn acts.  It is never written into the facts, so no later request
                     continue
 
                 terminal = await self._perform(run, command)
-                if command.history:
-                    run.history_text = command.history[:12000]
                 if command.type not in ("screenshot", "history", "done", "error") and run.last_action.get("status") == "SUCCESS":
                     run.action_count += 1
                 if turn is not None:
@@ -1186,12 +1185,14 @@ turn acts.  It is never written into the facts, so no later request
             if turn.images_sent:
                 run.requests_with_images += 1
 
-            # The image has now been sent.  Cleared immediately, before the call
-            # is validated, because from this point the model has seen it and the
-            # next request must not carry it again: the whole token argument is
-            # that a screenshot is spent once.
-            run.pending_image = ""
-            run.pending_screenshot_call_id = ""
+            # Keep the image alive through a no-tool/malformed-tool recovery once.
+            # This avoids the wasteful failure pattern:
+            # screenshot -> empty response -> screenshot again -> click.
+            # A recovery gets the same frame rather than asking the model to pay for
+            # a second screenshot capture and an extra request.
+            if not calls and attempt >= 1:
+                run.pending_image = ""
+                run.pending_screenshot_call_id = ""
 
             if not calls:
                 refusal = "no tool was called; call exactly one tool now"
@@ -1274,6 +1275,11 @@ turn acts.  It is never written into the facts, so no later request
             turn.parse_ok = True
             turn.command = command.to_json()
             turn.tool_result = command.to_json()
+            # The image is spent exactly once after we have accepted a real
+            # command. Empty/malformed recovery is the only path allowed to reuse
+            # it, and only for one retry.
+            run.pending_image = ""
+            run.pending_screenshot_call_id = ""
             refusal = ""
             run.last_refused = ""
             return command, ""
