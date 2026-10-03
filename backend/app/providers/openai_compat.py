@@ -228,7 +228,7 @@ class OpenAICompatProvider(Provider):
         self.last_usage = {}
         async with httpx.AsyncClient(timeout=timeout) as client:
             if not use_stream:
-                resp = await client.post("POST", url, json=body, headers=headers)
+                resp = await client.post(url, json=body, headers=headers)
                 if resp.status_code >= 400:
                     detail = await _error_body(resp)
                     raise ProviderHTTPError(
