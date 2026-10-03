@@ -213,6 +213,18 @@ export default function ComputerChat() {
               </span>
             </div>
 
+            {trace.status === "stopped" && (
+              <div className="ccchat__stopbox" role="status" aria-live="polite">
+                <div className="ccchat__stopbox-title">
+                  <span className="ccchat__stopbox-dot" aria-hidden="true" />
+                  AI has stopped
+                </div>
+                <div className="ccchat__stopbox-text">
+                  {trace.message || "No more API calls will be made for this task."}
+                </div>
+              </div>
+            )}
+
             {/* The run's outcome, stated at the top as well as at the failing
                 request below.  A run that died on its last turn is otherwise
                 only readable by scrolling to the end of a long transcript, and
