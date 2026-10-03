@@ -1194,6 +1194,14 @@ turn acts.  It is never written into the facts, so no later request
                 run.pending_image = ""
                 run.pending_screenshot_call_id = ""
 
+            if not calls and not raw.strip():
+                refusal = "the model returned an empty response (no text and no tool call)"
+                turn.parse_error = refusal
+                if self._refuse(run, turn, raw, refusal, "<empty-response>", attempt,
+                                "the model returned an empty response"):
+                    continue
+                return None, refusal
+
             if not calls:
                 refusal = "no tool was called; call exactly one tool now"
                 turn.parse_error = refusal

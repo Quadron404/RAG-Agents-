@@ -264,24 +264,20 @@ def tool_to_command(
         # {"x":"0.7449","y":"0.4085"} even when the schema says "number".
         # Convert that common representation once, locally, instead of paying
         # for another model request just to re-express the same click.
-        if (
-            bounds is not None
-            and 0.0 <= x <= 1.0
-            and 0.0 <= y <= 1.0
-            and (x < 1.0 or y < 1.0)
-        ):
-            x = round(x * max(bounds.width - 1, 1))
-            y = round(y * max(bounds.height - 1, 1))
-        if bounds is not None and not bounds.contains(x, y):
+        ix, iy = int(round(x)), int(round(y))
+        if bounds is not None and 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and (x < 1.0 or y < 1.0):
+            ix = int(round(x * float(bounds.width)))
+            iy = int(round(y * float(bounds.height)))
+        if bounds is not None and not bounds.contains(ix, iy):
             # Refused against the size of the screenshot the model was shown,
             # not against a configured screen size: a coordinate is only
             # meaningful in the grid it was read from.
             return None, (
-                f"{name} at ({int(x)}, {int(y)}) is outside the "
+                f"{name} at ({ix}, {iy}) is outside the "
                 f"{bounds.width}x{bounds.height} screenshot; take a screenshot "
                 f"and use coordinates from it"
             )
-        return Command(type=name, x=x, y=y), ""
+        return Command(type=name, x=float(ix), y=float(iy)), ""
 
     if name == "type":
         text = args.get("text")
