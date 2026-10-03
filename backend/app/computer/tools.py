@@ -78,67 +78,58 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
     fewer recurring input tokens.  No new capability is created here: filtering
     only removes schemas from the request.
     """
-    def with_history(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
-        props = dict(properties)
-        props["history"] = {
-            "type": "string",
-            "description": (
-                "Complete current History.txt in plain text. Rewrite the whole "
-                "history on every call. Include all important prior facts plus "
-                "this turn. Never include screenshots, base64, or JSON."
-            ),
-        }
+    def object_schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
         return {
             "type": "object",
-            "properties": props,
-            "required": [*required, "history"],
+            "properties": dict(properties),
+            "required": list(required),
         }
 
     schemas = [
         {
             "name": "screenshot",
             "description": "Get the current VM screen. Call only when you need to see it.",
-            "parameters": with_history({}, []),
+            "parameters": object_schema({}, []),
         },
         {
             "name": "navigate",
             "description": "Open a URL in the real remote browser.",
-            "parameters": with_history({"url": {"type": "string", "description": "http(s) URL"}}, ["url"]),
+            "parameters": object_schema({"url": {"type": "string", "description": "http(s) URL"}}, ["url"]),
         },
         {
             "name": "search",
             "description": "Open the browser's search engine for a query.",
-            "parameters": with_history({"query": {"type": "string"}}, ["query"]),
+            "parameters": object_schema({"query": {"type": "string"}}, ["query"]),
         },
         {
             "name": "click",
-            "description": "Click at a pixel of the latest screenshot.",
-            "parameters": with_history({"x": {"type": "integer"}, "y": {"type": "integer"}}, ["x", "y"]),
+            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot.",
+            "parameters": object_schema({"x": {"type": "number"}, "y": {"type": "number"}}, ["x", "y"]),
         },
         {
             "name": "type",
             "description": "Type text into whatever is focused.",
-            "parameters": with_history({"text": {"type": "string"}}, ["text"]),
+            "parameters": object_schema({"text": {"type": "string"}}, ["text"]),
         },
         {
             "name": "key",
             "description": "Press a key such as ENTER, TAB, ESC or CTRL+L.",
-            "parameters": with_history({"key": {"type": "string"}}, ["key"]),
+            "parameters": object_schema({"key": {"type": "string"}}, ["key"]),
         },
         {
             "name": "scroll",
             "description": "Scroll the page. Positive is down.",
-            "parameters": with_history({"delta_y": {"type": "integer"}}, ["delta_y"]),
+            "parameters": object_schema({"delta_y": {"type": "integer"}}, ["delta_y"]),
         },
         {
             "name": "done",
             "description": "Finish: the task is complete.",
-            "parameters": with_history({"message": {"type": "string"}}, ["message"]),
+            "parameters": object_schema({"message": {"type": "string"}}, ["message"]),
         },
         {
             "name": "stop",
             "description": "Terminal stop. Use when the work is complete or no more model decisions are needed. No further API calls are made for this task.",
-            "parameters": with_history({"message": {"type": "string"}}, ["message"]),
+            "parameters": object_schema({"message": {"type": "string"}}, ["message"]),
         },
         {
             "name": "error",
@@ -224,15 +215,12 @@ def tool_to_command(
     if name not in TOOL_NAMES:
         return None, f"{name!r} is not a tool; the tools are {', '.join(TOOL_NAMES)}"
 
-    history = args.get("history")
-    if not isinstance(history, str):
-        return None, f'{name} requires a string "history" containing the complete History.txt'
-    history = history.strip()[:MAX_HISTORY_NOTE_LENGTH]
-
+    # History is request context, not a tool argument. Older clients may still
+    # send it, so accepting and ignoring it here keeps the wire backward-compatible.
     if name == "screenshot":
         # Carried as a command so it lands in the event log and the trace like
         # every other call, but it has no executor and cannot move anything.
-        return Command(type="screenshot", history=history), ""
+        return Command(type="screenshot"), ""
 
     if name == "navigate":
         url = args.get("url")
@@ -248,7 +236,7 @@ def tool_to_command(
             return None, f"only http and https urls are allowed, not {parsed.scheme or 'no'} scheme"
         if not parsed.netloc:
             return None, "url has no host"
-        return Command(type="navigate", url=url, history=history), ""
+        return Command(type="navigate", url=url), ""
 
     if name == "search":
         query = args.get("query")
@@ -257,13 +245,25 @@ def tool_to_command(
         query = query.strip()
         if len(query) > MAX_QUERY_LENGTH:
             return None, f"query is longer than {MAX_QUERY_LENGTH} characters"
-        return Command(type="search", query=query, history=history), ""
+        return Command(type="search", query=query), ""
 
     if name in ("click", "move"):
         x = _finite_number(args.get("x"))
         y = _finite_number(args.get("y"))
         if x is None or y is None:
             return None, f"{name} requires numeric x and y"
+        # Some OpenAI-compatible models emit normalized coordinates such as
+        # {"x":"0.7449","y":"0.4085"} even when the schema says "number".
+        # Convert that common representation once, locally, instead of paying
+        # for another model request just to re-express the same click.
+        if (
+            bounds is not None
+            and 0.0 <= x <= 1.0
+            and 0.0 <= y <= 1.0
+            and (x < 1.0 or y < 1.0)
+        ):
+            x = round(x * max(bounds.width - 1, 1))
+            y = round(y * max(bounds.height - 1, 1))
         if bounds is not None and not bounds.contains(x, y):
             # Refused against the size of the screenshot the model was shown,
             # not against a configured screen size: a coordinate is only
@@ -273,7 +273,7 @@ def tool_to_command(
                 f"{bounds.width}x{bounds.height} screenshot; take a screenshot "
                 f"and use coordinates from it"
             )
-        return Command(type=name, x=x, y=y, history=history), ""
+        return Command(type=name, x=x, y=y), ""
 
     if name == "type":
         text = args.get("text")
@@ -283,13 +283,13 @@ def tool_to_command(
             return None, "type text may not contain a null byte"
         if len(text) > MAX_TEXT_LENGTH:
             return None, f"text is longer than {MAX_TEXT_LENGTH} characters"
-        return Command(type="type", text=text, history=history), ""
+        return Command(type="type", text=text), ""
 
     if name == "key":
         combo, error = normalize_key(args.get("key"))
         if error:
             return None, error
-        return Command(type="key", key=combo, history=history), ""
+        return Command(type="key", key=combo), ""
 
     if name == "scroll":
         delta = _finite_number(args.get("delta_y"))
@@ -299,7 +299,7 @@ def tool_to_command(
 
         if abs(delta) > MAX_SCROLL_DELTA:
             return None, f"delta_y must be between -{MAX_SCROLL_DELTA} and {MAX_SCROLL_DELTA}"
-        return Command(type="scroll", delta_y=int(delta), history=history), ""
+        return Command(type="scroll", delta_y=int(delta)), ""
 
     if name == "history":
         note = args.get("note")
@@ -317,7 +317,7 @@ def tool_to_command(
     message = message.strip()
     if len(message) > MAX_MESSAGE_LENGTH:
         return None, f"message is longer than {MAX_MESSAGE_LENGTH} characters"
-    return Command(type=name, message=message, history=history), ""
+    return Command(type=name, message=message), ""
 
 
 __all__ = [
