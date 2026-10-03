@@ -120,7 +120,9 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "click failed"))
         _trace_click("CLICK", x, y, result)
-        await self._settle(self.settle_ms_click)
+        # The agent already delivered the synchronous X event. Do not add an
+        # application-level settle delay after a click: the live desktop and
+        # the next control step should see it immediately.
         return result
 
     async def type_text(self, text: str) -> Dict[str, Any]:
@@ -161,7 +163,7 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "pointer move failed"))
         _trace_click("MOVE", x, y, result)
-        await self._settle(self.settle_ms_click)
+        # Pointer movement is already an X event; no artificial delay.
         return result
 
     async def screenshot(self) -> Tuple[Optional[str], int, int]:
