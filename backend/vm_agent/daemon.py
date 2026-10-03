@@ -880,25 +880,38 @@ def _pointer_position() -> tuple:
     return (None, None)
 
 
-def _focus_window_under_cursor() -> bool:
-    """Give the keyboard focus to the window the pointer is over.
-
-    Keystrokes go to whatever has input focus, not to whatever is on top.  A
-    click sets focus through the window manager, but not when the click lands on
-    a part of the page that is not focusable, and not at all on the very first
-    action of a run.  Typing then goes to the wrong window and appears to do
-    nothing, which reads as "keyboard control is broken".
-    """
-    if not DESKTOP_WM or DESKTOP_WM.lower() == "none":
-        return False  # no WM means no window focus to hand around
+def _window_under_cursor_id() -> Optional[str]:
     try:
         win = _xdotool("getwindowundercursor", timeout=10)
         if win.returncode != 0:
-            return False
+            return None
         raw = win.stdout
         wid = (raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)).strip()
-        if not wid.isdigit():
-            return False
+        return wid if wid.isdigit() else None
+    except Exception:
+        return None
+
+
+def _active_window_id() -> Optional[str]:
+    try:
+        win = _xdotool("getactivewindow", timeout=10)
+        if win.returncode != 0:
+            return None
+        raw = win.stdout
+        wid = (raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)).strip()
+        return wid if wid.isdigit() else None
+    except Exception:
+        return None
+
+
+def _focus_window_under_cursor() -> bool:
+    """Focus the target under the pointer without changing pointer coordinates."""
+    if not DESKTOP_WM or DESKTOP_WM.lower() == "none":
+        return False
+    wid = _window_under_cursor_id()
+    if not wid:
+        return False
+    try:
         act = _xdotool("windowactivate", "--sync", wid, timeout=10)
         if act.returncode != 0:
             foc = _xdotool("windowfocus", "--sync", wid, timeout=10)
@@ -1518,10 +1531,11 @@ def _capture_display(draw_mouse: bool = True) -> dict:
     # the fastest way to make the agent unresponsive for no benefit, and only
     # ever one agent is driving it.
     with _CAPTURE_LOCK:
+        disp_w, disp_h = _display_geometry()
         cmd = [
             "ffmpeg", "-loglevel", "error", "-nostdin",
             "-f", "x11grab",
-            "-video_size", DESKTOP_SIZE,
+            "-video_size", f"{disp_w}x{disp_h}",
             "-draw_mouse", "1" if draw_mouse else "0",
             "-i", DESKTOP_DISPLAY,
             "-frames:v", "1",
@@ -1599,10 +1613,40 @@ def _computer_click(x: int, y: int) -> dict:
     if moved.returncode != 0:
         return {"ok": False, "error": (moved.stderr or "pointer move failed").strip()[:200]}
 
-    _focus_window_under_cursor()
+    before_focus = _window_under_cursor_id()
+    focus_ok = _focus_window_under_cursor()
+
+    # Window activation can warp the pointer. Verify and restore the exact
+    # requested pixel after focus, then do the final move+click in one xdotool
+    # process so no second process can move the pointer between them.
+    px, py = _pointer_position()
+    if (px, py) != (x, y):
+        moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
+        if moved.returncode != 0:
+            return {
+                "ok": False,
+                "error": (moved.stderr or "pointer re-position failed").strip()[:200],
+            }
+        px, py = _pointer_position()
+    if (px, py) != (x, y):
+        return {
+            "ok": False,
+            "error": f"pointer did not reach ({x},{y}); X reports ({px},{py})",
+            "actual_x": px,
+            "actual_y": py,
+            "display_width": disp_w,
+            "display_height": disp_h,
+            "window_under_cursor": _window_under_cursor_id(),
+            "active_window": _active_window_id(),
+            "focus_ok": focus_ok,
+            "move_verified": False,
+        }
 
     try:
-        pressed = _xdotool("click", "--clearmodifiers", "1", timeout=10)
+        pressed = _xdotool(
+            "mousemove", "--sync", str(x), str(y),
+            "click", "--clearmodifiers", "1", timeout=10
+        )
     except FileNotFoundError:
         return {"ok": False, "error": "xdotool is not installed on the remote computer"}
     except Exception as exc:
@@ -1613,8 +1657,11 @@ def _computer_click(x: int, y: int) -> dict:
     time.sleep(0.05)
     ax, ay = _pointer_position()
     landed = (ax == x and ay == y)
+    active_after = _active_window_id()
+    under_after = _window_under_cursor_id()
     _log(
-        f"CLICK screen={disp_w}x{disp_h} model=({x},{y}) executed=({x},{y}) "
+        f"CLICK screen={disp_w}x{disp_h} model=({x},{y}) "
+        f"pre_window={before_focus} active={active_after} under={under_after} "
         f"actual=({ax},{ay}) {'LANDED' if landed else 'DRIFTED'}"
     )
     return {
@@ -1626,6 +1673,11 @@ def _computer_click(x: int, y: int) -> dict:
         "landed": landed,
         "display_width": disp_w,
         "display_height": disp_h,
+        "window_under_cursor": under_after,
+        "active_window": active_after,
+        "focus_ok": focus_ok,
+        "move_verified": True,
+        "before_focus_window": before_focus,
     }
 
 
