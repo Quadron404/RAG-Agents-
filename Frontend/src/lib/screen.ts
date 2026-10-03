@@ -205,7 +205,7 @@ export async function restartRemoteBrowser(): Promise<void> {
  * no coordinates, no model output, and never the API key, because this is the
  * half of computer control that lives in the browser.
  */
-export type ComputerStatus = "idle" | "observing" | "controlling" | "done" | "error";
+export type ComputerStatus = "idle" | "observing" | "controlling" | "done" | "stopped" | "error";
 
 export interface ComputerRun {
   task_id: string;
