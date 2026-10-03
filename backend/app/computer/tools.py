@@ -54,6 +54,7 @@ TOOL_NAMES = (
     "key",
     "scroll",
     "done",
+    "stop",
     "error",
 )
 
@@ -132,6 +133,11 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         {
             "name": "done",
             "description": "Finish: the task is complete.",
+            "parameters": with_history({"message": {"type": "string"}}, ["message"]),
+        },
+        {
+            "name": "stop",
+            "description": "Terminal stop. Use when the work is complete or no more model decisions are needed. No further API calls are made for this task.",
             "parameters": with_history({"message": {"type": "string"}}, ["message"]),
         },
         {
