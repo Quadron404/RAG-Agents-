@@ -191,9 +191,17 @@ def _finite_number(value: Any) -> Optional[float]:
     """
     import math
 
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
         return None
-    number = float(value)
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
     if math.isnan(number) or math.isinf(number):
         return None
     return number
