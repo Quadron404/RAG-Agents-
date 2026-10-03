@@ -108,20 +108,31 @@ class ProviderHTTPError(RuntimeError):
 
 
 def _retry_after_from_body(body: str) -> Optional[float]:
-    """Extract a provider reset delay when it is only present in the body."""
+    """Extract compound provider reset delays such as 18m10.3s."""
     import re
     text = " ".join(str(body or "").split())
     patterns = (
-        r"try\s+again\s+in\s+([0-9]+(?:\.[0-9]+)?)\s*s",
-        r"wait\s+(?:for\s+)?([0-9]+(?:\.[0-9]+)?)\s*s",
-        r"retry\s+after\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+        r"(?:try\s+again\s+in|wait\s+(?:for\s+)?)\s*"
+        r"(?:(?P<h>[0-9]+(?:\.[0-9]+)?)\s*h\s*)?"
+        r"(?:(?P<m>[0-9]+(?:\.[0-9]+)?)\s*m\s*)?"
+        r"(?:(?P<s>[0-9]+(?:\.[0-9]+)?)\s*s)\b",
+        r"retry\s+after\s+"
+        r"(?:(?P<h2>[0-9]+(?:\.[0-9]+)?)\s*h\s*)?"
+        r"(?:(?P<m2>[0-9]+(?:\.[0-9]+)?)\s*m\s*)?"
+        r"(?:(?P<s2>[0-9]+(?:\.[0-9]+)?)\s*s)\b",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             try:
-                return max(0.0, float(match.group(1)))
-            except ValueError:
+                g = match.groupdict()
+                return max(
+                    0.0,
+                    float(g.get("h") or g.get("h2") or 0) * 3600
+                    + float(g.get("m") or g.get("m2") or 0) * 60
+                    + float(g.get("s") or g.get("s2") or 0),
+                )
+            except (TypeError, ValueError):
                 pass
     return None
 
