@@ -39,6 +39,7 @@ ALLOWED_TYPES = (
     "scroll",
     "move",
     "done",
+    "stop",
     "error",
 )
 
@@ -67,6 +68,7 @@ SCREENSHOT_ACTIONS = (
     "scroll",
     "move",
     "done",
+    "stop",
     "error",
 )
 
@@ -323,6 +325,12 @@ def parse_command(
             f"the first command must be navigate or search, not {kind!r}: "
             "there is no screenshot yet, so there is no coordinate to click"
         )
+
+    if kind == "stop":
+        message = data.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return None, 'stop requires a non-empty string "message"'
+        return Command(type="stop", message=message.strip()), ""
 
     if kind == "navigate":
         url = data.get("url")
