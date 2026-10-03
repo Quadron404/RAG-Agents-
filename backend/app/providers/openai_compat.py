@@ -171,7 +171,15 @@ class OpenAICompatProvider(Provider):
         self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
     ) -> AsyncIterator[LLMEvent]:
         url = f"{self.base_url}/chat/completions"
-        body = {"model": model, "messages": self._wire_messages(messages), "stream": True}
+        # Groq computer-control calls use a complete response. The tool call
+        # is tiny, and a complete response avoids an empty/partial SSE turn.
+        use_stream = str(self.name).strip().lower() not in {"groq"}
+        body = {
+            "model": model,
+            "messages": self._wire_messages(messages),
+            "stream": use_stream,
+            "temperature": 0.0,
+        }
         if tools:
             # Converted here rather than by the caller, because the loop hands
             # every provider the same provider-neutral schema and each endpoint
@@ -206,7 +214,8 @@ class OpenAICompatProvider(Provider):
         # final chunk is a `[DONE]` and nothing ever learns what a request cost,
         # which is the one number that decides whether the screenshot belongs in
         # the request at all.
-        body["stream_options"] = {"include_usage": True}
+        if use_stream:
+            body["stream_options"] = {"include_usage": True}
         # Recorded from the body that is about to go out, before it is sent, so
         # the inspector shows what the API was actually given.  Headers and the
         # key are not part of it, and the base64 is not copied into the summary.
@@ -218,6 +227,52 @@ class OpenAICompatProvider(Provider):
         usage: Dict[str, int] = {}
         self.last_usage = {}
         async with httpx.AsyncClient(timeout=timeout) as client:
+            if not use_stream:
+                resp = await client.post("POST", url, json=body, headers=headers)
+                if resp.status_code >= 400:
+                    detail = await _error_body(resp)
+                    raise ProviderHTTPError(
+                        provider=self.name,
+                        model=model,
+                        status=resp.status_code,
+                        reason=_reason(resp),
+                        body=detail,
+                        retry_after=_retry_after(resp),
+                    )
+                try:
+                    payload = resp.json()
+                except Exception as exc:
+                    raise RuntimeError(f"provider returned invalid JSON: {exc}")
+                reported = payload.get("usage")
+                if isinstance(reported, dict):
+                    usage = {
+                        "prompt_tokens": int(reported.get("prompt_tokens") or 0),
+                        "completion_tokens": int(reported.get("completion_tokens") or 0),
+                        "total_tokens": int(reported.get("total_tokens") or 0),
+                    }
+                choices = payload.get("choices") or []
+                first = choices[0] if choices and isinstance(choices[0], dict) else {}
+                message = first.get("message") if isinstance(first, dict) else {}
+                if not isinstance(message, dict):
+                    message = {}
+                content = message.get("content")
+                if content:
+                    yield TextDelta(str(content))
+                for tc in message.get("tool_calls") or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    fn = tc.get("function") or {}
+                    yield ToolCallEvent(
+                        ToolCall(
+                            id=str(tc.get("id") or "call_0"),
+                            name=str(fn.get("name") or ""),
+                            arguments=str(fn.get("arguments") or "{}"),
+                        )
+                    )
+                self.last_usage = dict(usage)
+                yield Done(stop_reason=str(first.get("finish_reason") or "stop"))
+                return
+
             async with client.stream("POST", url, json=body, headers=headers) as resp:
                 if resp.status_code >= 400:
                     # Read the body before raising.  A streamed response has to
