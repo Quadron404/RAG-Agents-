@@ -65,15 +65,26 @@ SCREENSHOT_NOTE = (
     "need the screen again, call screenshot()."
 )
 
-#: Asked for when a call was refused.  Names the refusal because a model told
-#: only "that failed" repeats the same call; a model told what was wrong with it
-#: changes it.
-REFUSAL_NOTE = "Refused: {error}"
-
-#: Stated once, after a refusal, so the model can recover in the same run.
-#: Deliberately not appended to every request: it is a recovery aid, and sending
-#: it unconditionally is paying for advice nobody asked for.
-RETRY_NOTE = "Call one tool now."
+#: Asked for when a call was refused.  Carries the whole recovery instruction,
+#: because this string is the only channel the refusal has.
+#:
+#: A model told only "that failed" repeats the same call; a model told what was
+#: wrong with it changes it.  So the reason is quoted verbatim rather than
+#: summarised -- it names the coordinate, the bound it broke and every other
+#: specific the validator had -- and it is followed by the two things the model
+#: must do with it: nothing was executed, so its picture of the screen is still
+#: current, and the next reply has to be a different call.
+#:
+#: Sent on the user turn, which is where the screenshot it talks about is, and
+#: only on a request that follows a refusal.  It used to be one word ("Refused:")
+#: followed by a separate "Call one tool now." appended to whatever message
+#: happened to be last -- which on a screenshot request was the tool result, so
+#: the reason reached a model that could not see it and the tool result stopped
+#: being one.
+REFUSAL_NOTE = (
+    "Your previous reply was refused and nothing was executed: {error}\n"
+    "Reply now with one corrected tool call. Do not repeat the refused call."
+)
 
 
 def screenshot_note(width: int, height: int) -> str:

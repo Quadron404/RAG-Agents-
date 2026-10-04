@@ -313,10 +313,20 @@ def tool_to_command(
             # Refused against the size of the screenshot the model was shown,
             # not against a configured screen size: a coordinate is only
             # meaningful in the grid it was read from.
+            #
+            # The bounds are spelled out as ranges rather than left as "outside
+            # the screenshot", because the model has to pick a different point
+            # from that same image and a difference is only actionable if it is
+            # told what the valid values are.  It is not told to take a
+            # screenshot: the one that proved the point is attached to this very
+            # request and survives the refusal, so asking for another spends a
+            # request to deliver the frame that is already in the message.
             return None, (
                 f"{name} at ({ix}, {iy}) is outside the "
-                f"{bounds.width}x{bounds.height} screenshot; take a screenshot "
-                f"and use coordinates from it"
+                f"{bounds.width}x{bounds.height} screenshot and was not performed; "
+                f"valid coordinates are x from 0 to {int(bounds.width) - 1} and y "
+                f"from 0 to {int(bounds.height) - 1}, read off the screenshot in "
+                f"this message"
             )
         return Command(type=name, x=float(ix), y=float(iy)), ""
 

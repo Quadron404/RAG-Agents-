@@ -362,10 +362,15 @@ def parse_command(
         if bounds is None:
             return None, f"internal: a {kind} was parsed without screenshot bounds"
         if not bounds.contains(x, y):
+            # Same wording as the native-tool refusal in `tools.py`, on purpose:
+            # the two validators can refuse the same click, and a model told two
+            # different things about one mistake reads the difference as a new
+            # problem instead of as the error it is.
             return None, (
                 f"({x:g}, {y:g}) is outside the {bounds.width}x{bounds.height} "
-                f"screenshot; coordinates must come from the latest screenshot, "
-                f"and {kind} was not performed"
+                f"screenshot and {kind} was not performed; valid coordinates are "
+                f"x from 0 to {int(bounds.width) - 1} and y from 0 to "
+                f"{int(bounds.height) - 1}, read off the latest screenshot"
             )
         return Command(type=kind, x=x, y=y), ""
 

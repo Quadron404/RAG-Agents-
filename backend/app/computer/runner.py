@@ -80,7 +80,7 @@ from ..providers.router import (
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
 from .history import extract_history, history_block
-from .prompt import REFUSAL_NOTE, RETRY_NOTE, build_prompt, screenshot_note
+from .prompt import REFUSAL_NOTE, build_prompt, screenshot_note
 from .tools import (
     HISTORY_ARGUMENT,
     STATE_CHANGING_TOOLS,
@@ -980,6 +980,7 @@ class ComputerRunner:
         self,
         run: ComputerRun,
         image: str,
+        note: str = "",
     ) -> List[LLMMessage]:
         """The one request shape that carries an image.
 
@@ -995,8 +996,18 @@ class ComputerRunner:
         Exactly one image, on exactly one message.  An earlier version put it on
         both the user turn and the tool result, and every capture was billed
         twice on the single request that carries it.
+
+        `note` is the refusal being recovered from, and it goes to the user turn
+        through `_request` like any other.  It used to be hardcoded to the empty
+        string here, which made this the one request shape in the loop that could
+        not say why the previous call had been refused -- and it is the shape that
+        matters most, because it is the one a rejected click arrives on: the
+        image is still attached, the click was refused for being outside it, and
+        the retry went out with the image and no explanation at all.  The model
+        was asked to correct a call it was never told about, which is why the same
+        out-of-bounds click came back.
         """
-        messages = self._request(run, image, "")
+        messages = self._request(run, image, note)
         call_id = run.pending_screenshot_call_id or "screenshot"
         messages.append(
             LLMMessage(
@@ -1451,19 +1462,18 @@ class ComputerRunner:
             self._trim_trace(run)
 
             if run.pending_image:
-                messages = self._request_after_screenshot(run, run.pending_image)
+                messages = self._request_after_screenshot(run, run.pending_image, refusal)
             else:
                 messages = self._request(run, None, refusal)
-            if attempt and refusal:
-                # The recovery nudge rides on the user turn it corrects, never
-                # as a message of its own, for the same reason the correction
-                # itself does: two consecutive user messages are rejected by
-                # some OpenAI-compatible endpoints.
-                messages[-1] = LLMMessage(
-                    role="user",
-                    content=f"{messages[-1].content}\n\n{RETRY_NOTE}",
-                    images=list(messages[-1].images),
-                )
+            # `refusal` is now handed to both shapes, and the nudge that used to
+            # be appended to `messages[-1]` is part of `REFUSAL_NOTE` instead.
+            # Rewriting the last message was wrong in a way that only showed up
+            # here: on the screenshot shape the last message is the tool result,
+            # so "help the model recover" turned the tool result into a user
+            # message -- which strands the assistant's `screenshot` tool call
+            # without a reply to it, drops the image's tool result, and adds the
+            # second consecutive user message this shape is built to avoid.  The
+            # refusal travels in the one message that is allowed to carry it.
 
             system = next((m for m in messages if m.role == "system"), None)
             turn.prompt = system.content if system else ""
@@ -1844,6 +1854,11 @@ class ComputerRunner:
             run.status = STATUS_ERROR
             run.message = f"{give_up}: {error}"
             return False
+        # A refusal that is being recovered from is still something that happened,
+        # and this run's status line is the only place the user can watch it
+        # happen.  Without this the run keeps reporting the step it was on while
+        # it is quietly spending another request on the same mistake.
+        run.message = f"Refused, asking for a corrected call: {error}"
         return True
 
     def _trim_trace(self, run: ComputerRun) -> None:
