@@ -258,7 +258,16 @@ export interface ComputerMessageMeta {
 export interface ComputerWire {
   path: string;
   model: string | null;
-  messages_count: number;
+  /**
+   * How many messages actually reached the API.
+   *
+   * Optional because it is absent on a turn where no request was serialised --
+   * a provider that was never configured, a request that raised before the body
+   * was built.  "Not reported" is a third state and is rendered as such; reading
+   * a missing count as `0`, or as a failed comparison against the runner's own
+   * count, is what turned an absent field into a red "serialisation failed".
+   */
+  messages_count?: number;
   roles: string[];
   text_parts: number;
   image_count: number;
@@ -270,7 +279,17 @@ export interface ComputerWire {
   stream: boolean;
   response_format: string | null;
   tools_count: number;
-  source_message_count: number;
+  /** How many messages the runner built, for cross-checking against the wire. */
+  source_message_count?: number;
+  /**
+   * Whether the body was serialisable and carried every message the runner
+   * built -- decided by the serialiser, which is the only place the answer
+   * exists.  Absent means the turn recorded no serialised request at all, which
+   * is neither a success nor a failure.
+   */
+  serialized_ok?: boolean;
+  /** Why the body could not be serialised, when it could not be. */
+  serialization_error?: string;
 }
 
 export interface ComputerImageMeta {
@@ -330,8 +349,24 @@ export interface ComputerTurn {
   image_withheld?: boolean;
   /** The user turn this request ended with, in full. */
   user_text: string;
-  wire: ComputerWire;
+  /**
+   * The serialised request, when there was one.
+   *
+   * Optional rather than an empty object because an empty object is a claim:
+   * it says "nothing was serialised" with the same confidence as a real summary
+   * says what was, and the panel rendered both identically.
+   */
+  wire?: ComputerWire;
   raw: string;
+  /**
+   * Why the provider said the turn ended: `stop`, `length`, `tool_calls`,
+   * `content_filter`.  Empty when it said nothing.
+   *
+   * This is what separates a reply with no text and no tool call that was
+   * truncated by the completion ceiling from one that carried a call the parser
+   * could not read.  Both arrive as empty text; only this says which it was.
+   */
+  stop_reason?: string;
   /**
    * The semantic history the model wrote, read from the `history` argument of
    * this reply's own tool call, and the exact text the *next* request will carry

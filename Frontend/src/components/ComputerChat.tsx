@@ -555,6 +555,7 @@ function Failure({ turn }: { turn: ComputerTurn }) {
 }
 
 function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
+  const serialised = serialisedFact(turn);
   return (
     <div className="ccchat__turn">
       <div className="ccchat__turn-rule">
@@ -579,10 +580,15 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
           <Fact ok>
             {turn.message_count} {turn.message_count === 1 ? "message" : "messages"} of context
           </Fact>
-          <Fact ok={turn.wire.image_present}>Screenshot on the wire: {turn.wire.image_present ? "yes" : "no"}</Fact>
-          <Fact ok={turn.wire.messages_count === turn.message_count}>
-            {turn.wire.messages_count} serialised for the API
+          {/* The screenshot and the serialisation are separate facts.  "No
+              screenshot on the wire" is a fact about this turn, not a fault:
+              nothing attaches one unless the model asked to look, and the first
+              turn always says no.  It is coloured from the value the serialiser
+              reported and nothing else. */}
+          <Fact ok={turn.wire?.image_present}>
+            Screenshot on the wire: {turn.wire?.image_present ? "yes" : "no"}
           </Fact>
+          <Fact ok={serialised.ok}>{serialised.text}</Fact>
         </div>
 
         {turn.user_text && <Verbatim>{turn.user_text}</Verbatim>}
@@ -616,6 +622,16 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
 
       {/* 3.  The reply, exactly as it arrived. */}
       <Bubble side="ai" icon={<Bot size={13} aria-hidden="true" />} label="AI response" tone="raw">
+        {/* Why the provider stopped, in its own word.  Neutral, because it is a
+            reported value and not a verdict -- but it is the whole difference
+            between an empty reply that was truncated by the completion ceiling
+            and one that carried a call the parser could not read, so it is shown
+            on every turn rather than only on the ones that failed. */}
+        {!turn.error && (
+          <div className="ccchat__facts">
+            <Fact>finish_reason: {turn.stop_reason || "not reported by the provider"}</Fact>
+          </div>
+        )}
         {turn.error ? (
           <Failure turn={turn} />
         ) : turn.raw === "" ? (
@@ -630,7 +646,15 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
               <b>{turn.tool_call.name}</b>, whose arguments carry the run&apos;s history.
             </p>
           ) : (
-            <p className="ccchat__none">(the model returned an empty response)</p>
+            /* The runner's own diagnosis, which names the provider, the model
+               and the reason it gave for stopping.  The old sentence here was
+               "(the model returned an empty response)" for every one of these --
+               a truncated reasoning trace, an unreadable call and a withheld
+               answer all rendered as the same words, none of which said what to
+               change. */
+            <p className="ccchat__none">
+              {turn.parse_error || "The reply carried no text and no tool call."}
+            </p>
           )
         ) : (
           <>
@@ -874,6 +898,57 @@ function Details({ summary, children }: { summary: string; children: React.React
       <div className="ccchat__details-body">{children}</div>
     </details>
   );
+}
+
+/**
+ * The "serialised for the API" fact, decided by the backend's `serialized_ok`
+ * and coloured to match.
+ *
+ * The panel used to decide this itself, by comparing the wire's message count
+ * against the runner's.  That is a comparison the frontend can only lose: on a
+ * turn where the request was never serialised there is no count to compare, so
+ * `undefined === 2` is false and a turn that sent nothing was reported as a turn
+ * that sent the wrong number of messages -- red, on both halves of the same
+ * badge.  A provider that was never configured got the same verdict as a
+ * serialiser that dropped messages, and neither was the thing that happened.
+ *
+ * Three states, and the third is the one that was missing:
+ *
+ * - `true` when the serialiser says the body was serialisable and carried every
+ *   message the runner built.
+ * - `false` when it says otherwise, with the reason it gave -- an unencodable
+ *   object, or a message list that came out shorter than it went in.
+ * - `undefined` when there is nothing to judge: no request was made, or the
+ *   backend is older than this field.  Neutral text, no colour, no verdict.  An
+ *   unanswered question is not a failed serialisation.
+ */
+function serialisedFact(turn: ComputerTurn): { ok?: boolean; text: string } {
+  const wire = turn.wire;
+  const sent = typeof wire?.messages_count === "number" ? wire.messages_count : null;
+  const built = typeof wire?.source_message_count === "number"
+    ? wire.source_message_count
+    : turn.message_count;
+
+  if (!wire || sent === null) {
+    return { ok: undefined, text: "No serialised request was recorded for this turn" };
+  }
+
+  // Independently of the backend's verdict: a count that disagrees with the
+  // runner is a mismatch whatever the serialiser believed, and saying so
+  // locally keeps the badge honest if the two ever drift apart.
+  const mismatch = typeof built === "number" && sent !== built;
+  if (wire.serialized_ok === false || mismatch) {
+    const why = wire.serialization_error
+      || (mismatch
+        ? `the request carried ${sent} of the ${built} messages the runner built`
+        : "the backend reported that the request body could not be serialised");
+    return { ok: false, text: `Serialisation failed: ${why}` };
+  }
+
+  return {
+    ok: wire.serialized_ok,
+    text: `${sent} serialised for the API`,
+  };
 }
 
 function toneFor(outcome?: string): "ok" | "bad" {

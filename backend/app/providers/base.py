@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable, Dict, List, Optional, Union
 
@@ -62,6 +63,17 @@ class Provider:
     #: answered: whether the request that carried a screenshot was worth more
     #: than the one that did not.
     last_usage: Optional[Dict[str, int]] = None
+
+    #: Why the last request stopped, as the provider reported it -- ``stop``,
+    #: ``length``, ``tool_calls``, ``content_filter``.
+    #:
+    #: Recorded here, next to `last_wire`, because both are facts about the last
+    #: call that only the provider can know.  They are also what turns "the model
+    #: returned an empty response" into a diagnosis: a reply with no content and
+    #: no tool call means something completely different when the provider said
+    #: `length` (the completion budget ran out first) than when it said
+    #: `tool_calls` (a call was sent that the parser could not read).
+    last_stop_reason: Optional[str] = None
 
     async def stream(
         self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
@@ -131,6 +143,19 @@ async def stream_model(
         while True:
             try:
                 async for event in provider.stream(messages, tools, model):
+                    if isinstance(event, Done):
+                        # Recorded on the provider, next to `last_wire` and
+                        # `last_usage`, because it is the same kind of fact: only
+                        # the provider knows why the call stopped.  The runner
+                        # reads it after draining the stream, and without it an
+                        # empty reply is undiagnosable -- "the model returned an
+                        # empty response" covers a truncated reasoning trace, a
+                        # filtered answer and a call the parser dropped, and
+                        # those three need three different fixes.
+                        try:
+                            provider.last_stop_reason = event.stop_reason
+                        except Exception:  # pragma: no cover - defensive
+                            pass
                     yield event
                 _MODEL_CALL_GATE.finish_success()
                 _MODEL_CALL_GATE.release()
@@ -208,11 +233,23 @@ def summarize_wire(
     in application state" but "is an image part present in the bytes going to
     the API", and only the serialised form can answer the second one.
 
+    ``serialized_ok`` is the answer to the only question a count cannot answer
+    on its own: *was this body actually serialisable, and did every message the
+    caller built survive into it*.  It is decided here, by the code doing the
+    serialising, because that is the only place the answer exists -- and the
+    frontend is told the result instead of being left to compare two numbers and
+    guess.  ``serialization_error`` says why, when it is false, so a red badge is
+    a diagnosis rather than an accusation.
+
     Never includes the base64 itself, the API key, or any header value.
     """
-    wire_messages = body.get("messages") or []
-    if not isinstance(wire_messages, list):
-        wire_messages = []
+    raw_messages = body.get("messages")
+    messages_is_list = isinstance(raw_messages, list)
+    wire_messages: list = raw_messages if messages_is_list else []
+
+    serialized_ok, serialization_error = _serialisation_verdict(
+        body, messages_is_list, len(messages)
+    )
 
     roles: List[str] = []
     image_count = 0
@@ -273,4 +310,49 @@ def summarize_wire(
         # For cross-checking: the messages the caller passed in, so a mismatch
         # between intent and wire is visible rather than silent.
         "source_message_count": len(messages),
+        # The verdict itself, so the inspector renders what the serialiser knows
+        # rather than re-deriving it from the two counts above.  A turn with no
+        # wire summary at all has no `serialized_ok` key, which the frontend
+        # reads as "not reported" -- a third state, and the one that used to be
+        # rendered as a failure.
+        "serialized_ok": serialized_ok,
+        "serialization_error": serialization_error,
     }
+
+
+def _serialisation_verdict(
+    body: Dict[str, object],
+    messages_is_list: bool,
+    source_count: int,
+) -> tuple:
+    """``(serialized_ok, why_not)`` for a body that is about to be sent.
+
+    Two questions, and they fail differently, so both are asked here rather than
+    in the panel:
+
+    1. *Can this body be encoded at all?*  Checked by encoding it, which is the
+       same thing the HTTP client is about to do.  A body holding something
+       JSON cannot represent would otherwise fail at the socket with a
+       ``TypeError`` that names a field and not the request.
+    2. *Did every message the caller built reach the wire?*  Counted, because a
+       serialiser that silently drops a message it does not recognise produces a
+       shorter conversation and a run that cannot see its own history, with
+       nothing in the trace to say so.
+
+    A count of more than the caller built is the same fault seen from the other
+    side -- a message invented in serialisation -- and is reported as the
+    mismatch it is rather than passing as "at least everything got there".
+    """
+    if not messages_is_list:
+        return False, "the request body has no serialised message list"
+    try:
+        json.dumps(body)
+    except (TypeError, ValueError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    wire_count = len(body.get("messages") or [])
+    if wire_count != source_count:
+        return False, (
+            f"the request carried {wire_count} of the {source_count} messages "
+            f"the runner built"
+        )
+    return True, ""

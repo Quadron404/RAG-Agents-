@@ -198,6 +198,16 @@ class ComputerTurnTrace:
     # -- D. what came back, verbatim
     raw: str = ""
     reply_timestamp: float = 0.0
+    #: Why the provider said the turn ended, in its own word: `stop`, `length`,
+    #: `tool_calls`, `content_filter`.  Empty when it said nothing at all.
+    #:
+    #: It is the difference between two replies that look identical from the
+    #: outside.  A turn with no content and no tool call is a wasted completion
+    #: when the provider said nothing, a truncated reasoning trace when it said
+    #: `length`, and a call the parser failed to read when it said
+    #: `tool_calls`.  Without it all three are reported as "the model returned an
+    #: empty response", which names none of the three causes.
+    stop_reason: str = ""
     #: The semantic history the model wrote, read from this reply's tool-call
     #: arguments, and kept so the inspector can show what the next request will
     #: be told.  Empty when the model wrote none, or wrote one that was refused
@@ -276,6 +286,7 @@ class ComputerTurnTrace:
             "user_text": self.user_text,
             "wire": self.wire,
             "raw": self.raw,
+            "stop_reason": self.stop_reason,
             "history_note": self.history_note,
             "history_error": self.history_error,
             "error": self.error,
@@ -415,6 +426,18 @@ class ComputerRun:
     simple_task: bool = False
     action_count: int = 0
     screenshot_count: int = 0
+    #: The provider instance that answered the last request of this run.
+    #:
+    #: Held on the run rather than on the runner for two reasons.  It is how a
+    #: request that *failed* can still report the body it serialised -- a request
+    #: that was refused on the wire was still built, and the wire summary of a
+    #: failed turn is exactly the evidence a reader needs.  And two runs in
+    #: flight must not read each other's provider state, which is what a single
+    #: attribute on the runner would let them do.
+    #:
+    #: Never published: the instance holds the API key, and `public()` is an
+    #: explicit allow-list rather than a dump of the record.
+    last_provider: Any = None
 
     def public(self) -> Dict[str, Any]:
         """What the browser is allowed to see.
@@ -592,6 +615,70 @@ def _simple_single_action(task: str) -> bool:
     )):
         return False
     return bool(re.match(r"^(click|press|type|scroll|hit)\b", text))
+
+
+def _wire_of(provider) -> Dict[str, Any]:
+    """The serialised-request summary a provider recorded, or an empty one.
+
+    A copy, so a turn keeps the body that *its* request was made of even after
+    the shared provider object records the next one.  ``{}`` when there is
+    nothing to report -- which is a third state, not a failure, and the one the
+    panel used to render as a red failure.
+    """
+    wire = getattr(provider, "last_wire", None)
+    return dict(wire) if isinstance(wire, dict) else {}
+
+
+#: Why a reply with no text and no tool call says what it says.  Keyed by the
+#: provider's own `finish_reason`, because that word is the only evidence there
+#: is: three different faults produce a byte-identical empty reply, and they do
+#: not have the same fix.
+#:
+#: - `length`: the completion ceiling was spent before the call was emitted.  A
+#:   reasoning model spends it on thinking, so the ceiling -- not the model --
+#:   decides whether this provider can answer at all.
+#: - `tool_calls`: the provider says it sent a call, and none arrived.  That is
+#:   a parser or a malformed-call fault, and saying so here stops it being
+#:   mistaken for a model that had nothing to say.
+#: - `content_filter`: the answer existed and was withheld.
+_STOP_REASONS = {
+    "length": (
+        "it spent the whole completion budget before emitting a call "
+        "(finish_reason=length); raise COMPUTER_MAX_COMPLETION_TOKENS, or use a "
+        "model that answers with a tool call"
+    ),
+    "tool_calls": (
+        "it reported a tool call that arrived unreadable "
+        "(finish_reason=tool_calls with no call in the response)"
+    ),
+    "content_filter": "the provider withheld the answer (finish_reason=content_filter)",
+    "error": "the provider reported an error instead of a reply (finish_reason=error)",
+}
+
+
+def _empty_reply_reason(provider: str, model: str, stop_reason: str) -> str:
+    """What to report for a reply with no text and no tool call.
+
+    Named after the provider and model that produced it, because the sentence is
+    the only diagnosis the run will ever give: "the model returned an empty
+    response" is what the reader sees, and it names neither the endpoint that
+    answered nor the reason it gave for stopping -- which is the one piece of
+    evidence that distinguishes a truncated reasoning trace from a call the
+    parser could not read from a refusal.
+    """
+    who = f"{provider}/{model}" if provider and model else (provider or model or "the provider")
+    why = _STOP_REASONS.get(str(stop_reason or "").strip().lower())
+    if why:
+        return f"{who} sent no text and no tool call: {why}"
+    if not stop_reason:
+        return (
+            f"{who} sent no text and no tool call, and reported no finish_reason, "
+            f"so nothing about the turn can be attributed to the model"
+        )
+    return (
+        f"{who} sent no text and no tool call "
+        f"(finish_reason={stop_reason})"
+    )
 
 
 class ComputerRunner:
@@ -791,13 +878,23 @@ class ComputerRunner:
             return ["screenshot"]
         return ["click", "type", "key", "scroll", "stop"]
 
-    async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int]]:
+    async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int], str]:
         """Make exactly one logical model request.
 
         The provider layer owns the global ten-second pacing and 429 stall/retry
         policy. A 429 therefore never creates a new logical request here and
         cannot be overtaken by another queued message.
+
+        Returns the assistant text, the provider and model that were asked, the
+        serialised request, the native tool calls, the reported token counts and
+        the provider's own reason for ending the turn -- the last of which is
+        what makes an empty reply a diagnosis rather than a shrug.
         """
+        # Cleared before the provider is even resolved: a run that fails to
+        # resolve must not inherit the previous turn's provider, and with it the
+        # previous turn's wire summary, as evidence for a request that was never
+        # built.
+        run.last_provider = None
         provider, model = self.router.resolve(
             "computer",
             provider_name=run.provider or None,
@@ -840,13 +937,27 @@ class ComputerRunner:
                 elif isinstance(event, ToolCallEvent):
                     calls.append(event.call)
 
+        # Held on the run, so a request that raises below can still report the
+        # body it serialised: a request refused on the wire was still built, and
+        # the serialised body of a failed turn is evidence, not noise.
+        run.last_provider = provider
+        # Cleared before the call, never after it.  `last_wire` is provider
+        # state that outlives one request, so a provider that raises *before* it
+        # records a new summary would otherwise leave the previous turn's summary
+        # on this turn -- a wire description of a request that was never sent,
+        # attributed to one that was.  Resetting is what makes "the wire summary
+        # on this turn is this turn's" true rather than usually true.
+        provider.last_wire = None
+        provider.last_stop_reason = None
+
         # There is intentionally no fixed wall-clock timeout here.  A 429 owns
         # the model-call gate until the provider reset time and must not be
         # converted into TimeoutError while it is sleeping.
         await drain()
 
-        wire = getattr(provider, "last_wire", None) or {}
+        wire = _wire_of(provider)
         usage = getattr(provider, "last_usage", None) or {}
+        stop_reason = str(getattr(provider, "last_stop_reason", "") or "")
         raw = "".join(parts)
 
         # `raw` is the assistant text and nothing else.  A native tool-call reply
@@ -873,6 +984,7 @@ class ComputerRunner:
             wire,
             calls,
             dict(usage),
+            stop_reason,
         )
 
     def _remember_ai_history(self, run: ComputerRun, note: str) -> None:
@@ -1204,6 +1316,7 @@ class ComputerRunner:
             wire: Dict[str, Any] = {}
             calls: List[ToolCall] = []
             usage: Dict[str, int] = {}
+            stop_reason = ""
             try:
                 (
                     raw,
@@ -1212,6 +1325,7 @@ class ComputerRunner:
                     wire,
                     calls,
                     usage,
+                    stop_reason,
                 ) = await self._ask(messages, run)
             except ProviderUnavailable as exc:
                 # The provider is named even though the call never happened, so
@@ -1224,6 +1338,11 @@ class ComputerRunner:
                 turn.reply_timestamp = time.time()
                 turn.error = str(exc)
                 turn.provider_reached = False
+                # No request was made, so there is no serialised request to
+                # report: an empty wire here means "nothing was sent", and the
+                # panel says so rather than rendering it as a failed
+                # serialisation.
+                turn.wire = _wire_of(run.last_provider)
                 run.status = STATUS_ERROR
                 run.message = str(exc)
                 return None, str(exc)
@@ -1246,6 +1365,12 @@ class ComputerRunner:
                 turn.retry_after = exc.retry_after
                 turn.retry_attempts = len(run.http_attempts or [])
                 turn.http_attempts = list(run.http_attempts or [])
+                # The body this turn *did* serialise, kept on the failed turn.
+                # It was built and sent before the refusal, so the trace can show
+                # what was asked for next to what came back -- and the panel no
+                # longer has to guess at a request whose serialisation it could
+                # not see.
+                turn.wire = _wire_of(run.last_provider)
                 run.status = STATUS_ERROR
                 run.message = exc.message
                 return None, exc.message
@@ -1259,6 +1384,10 @@ class ComputerRunner:
                 turn.reply_timestamp = time.time()
                 turn.error = f"{type(exc).__name__}: {exc}"
                 turn.provider_reached = False
+                # Whatever the serialiser managed to record before the failure.
+                # A transport failure after the body was built is not a
+                # serialisation failure, and the trace must not say it was.
+                turn.wire = _wire_of(run.last_provider)
                 run.status = STATUS_ERROR
                 run.message = turn.error
                 return None, turn.error
@@ -1266,6 +1395,7 @@ class ComputerRunner:
             turn.provider = provider_name
             turn.model = model
             turn.wire = wire
+            turn.stop_reason = stop_reason
             turn.reply_timestamp = time.time()
             # Refusals this request recovered from, carried on success too: a
             # request that was refused once and then answered looks identical to
@@ -1315,10 +1445,22 @@ class ComputerRunner:
                 run.pending_screenshot_call_id = ""
 
             if not calls and not raw.strip():
-                refusal = "the model returned an empty response (no text and no tool call)"
+                # Named after the provider and model that answered, and carrying
+                # the provider's own `finish_reason`.  "The model returned an
+                # empty response" was true of every one of these replies and
+                # useless about all of them: the same bytes mean a truncated
+                # reasoning trace on one provider, an unreadable call on another
+                # and a refusal on a third, and the run reported the same
+                # sentence for each -- twice, in `run.message` -- leaving the
+                # reader at "Deciding what to do" with no cause and no next step.
+                refusal = _empty_reply_reason(provider_name or turn.provider, model or turn.model, stop_reason)
                 turn.parse_error = refusal
+                # The give-up sentence is not the refusal restated: together they
+                # read "openrouter sent no text and no tool call: it spent the
+                # whole completion budget..." rather than "empty response: empty
+                # response".
                 if self._refuse(run, turn, raw, refusal, "<empty-response>", attempt,
-                                "the model returned an empty response"):
+                                f"{provider_name or 'the provider'} returned no usable tool call"):
                     continue
                 return None, refusal
 

@@ -103,6 +103,124 @@ def _retry_after(resp: "httpx.Response"):
     return max(0.0, seconds)
 
 
+def _arguments_json(value) -> str:
+    """A tool call's arguments as the JSON *string* the parser expects.
+
+    The spec says a string, and most endpoints send one.  Not all do: an
+    OpenAI-compatible endpoint may send ``arguments`` already decoded, as an
+    object.  Stringifying that with ``str()`` is what turns a perfectly valid
+    call into ``{'x': 344, 'y': 107}`` -- single quotes, which is not JSON -- and
+    the runner then refuses a tool call that was correct, reporting "the
+    arguments of click() were not valid JSON" for a call that carried valid
+    arguments.  So anything that is not a string is re-encoded as JSON.
+    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "{}"
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def _message_tool_calls(message) -> List[ToolCall]:
+    """The native tool calls in one complete ``message``, whatever shape they came in.
+
+    ``content: null`` with a call on it is the *normal* reply of a tool-calling
+    model and not a defect, so nothing here requires any text to be present.
+
+    Three spellings are accepted, because OpenAI-compatible endpoints use all
+    three and a loop that reads only one of them reports "the model returned an
+    empty response" for a call that was delivered:
+
+    - ``tool_calls: [{id, type, function: {name, arguments}}]`` -- the current one.
+    - ``function_call: {name, arguments}`` -- the single-call spelling from
+      before ``tool_calls`` existed, still answered by some endpoints.
+    - the fields hoisted onto the entry itself (``{name, arguments}``) with no
+      ``function`` wrapper at all.
+
+    Entries that are not objects, and calls with no name, are dropped rather than
+    turned into an empty tool call the runner would then have to diagnose.
+    """
+    if not isinstance(message, dict):
+        return []
+    raw = message.get("tool_calls")
+    entries = list(raw) if isinstance(raw, list) else []
+    if not entries:
+        legacy = message.get("function_call")
+        entries = [legacy] if isinstance(legacy, dict) else []
+    calls: List[ToolCall] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        function = function if isinstance(function, dict) else {}
+        name = str(function.get("name") or entry.get("name") or "")
+        if not name:
+            continue
+        arguments = function.get("arguments", entry.get("arguments"))
+        calls.append(
+            ToolCall(
+                id=str(entry.get("id") or f"call_{index}"),
+                name=name,
+                arguments=_arguments_json(arguments),
+            )
+        )
+    return calls
+
+
+def _completion_error(payload, provider: str, model: str, streamed: bool = False):
+    """A 200 that is not a completion, raised as the error it actually is.
+
+    OpenRouter answers a request it cannot satisfy -- a routed model with no tool
+    support, a router with no free endpoint available -- with ``{"error": {...}}``
+    and **no** ``choices``, sometimes under HTTP 200.  Read as a completion that
+    is an empty model reply, which is not what happened: the model was never
+    asked, and the trace then reports "(the model returned an empty response)"
+    for a request the provider refused by name.  So the body is checked before it
+    is parsed as a reply, and a refusal is raised with the provider's own words
+    attached.
+
+    Status 200 is reported honestly rather than dressed up as a 4xx: the provider
+    was reached and did answer, and it is not retryable -- resending an identical
+    request gets the identical refusal.
+    """
+    body = ""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, (str, dict, list)) and error:
+            body = error if isinstance(error, str) else json.dumps(error)
+    elif isinstance(payload, (str, bytes)):
+        body = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else payload
+    elif payload is not None:
+        body = str(payload)
+    detail = body.strip()
+    if not detail:
+        if streamed:
+            return ProviderHTTPError(
+                provider=provider,
+                model=model,
+                status=200,
+                reason="OK (stream ended with no completion)",
+                body="the stream carried no chat completion chunk",
+            )
+        return ProviderHTTPError(
+            provider=provider,
+            model=model,
+            status=200,
+            reason="OK (no completion in the response)",
+            body=json.dumps(payload) if payload is not None else "",
+        )
+    return ProviderHTTPError(
+        provider=provider,
+        model=model,
+        status=200,
+        reason="OK (error body, no completion)",
+        body=detail,
+    )
+
+
 class OpenAICompatProvider(Provider):
     def __init__(
         self,
@@ -250,6 +368,11 @@ class OpenAICompatProvider(Provider):
         acc: dict = {}
         order: list = []
         usage: Dict[str, int] = {}
+        #: Why the provider said the turn ended, as it reported it.  Empty means
+        #: it never said, which is itself reported as such rather than turned
+        #: into a guess: the runner has to be able to tell "no reason given" from
+        #: "ran out of completion budget" from "stopped after a tool call".
+        stop_reason = ""
         self.last_usage = {}
         async with httpx.AsyncClient(timeout=timeout) as client:
             if not use_stream:
@@ -268,14 +391,23 @@ class OpenAICompatProvider(Provider):
                     payload = resp.json()
                 except Exception as exc:
                     raise RuntimeError(f"provider returned invalid JSON: {exc}")
-                reported = payload.get("usage")
+                reported = payload.get("usage") if isinstance(payload, dict) else None
                 if isinstance(reported, dict):
                     usage = {
                         "prompt_tokens": int(reported.get("prompt_tokens") or 0),
                         "completion_tokens": int(reported.get("completion_tokens") or 0),
                         "total_tokens": int(reported.get("total_tokens") or 0),
                     }
-                choices = payload.get("choices") or []
+                choices = payload.get("choices") if isinstance(payload, dict) else None
+                # Checked before anything is read out of the body.  A refusal
+                # that arrives with no `choices` has no reply in it at all, and
+                # parsing it as a reply is what turned an OpenRouter error into
+                # "the model returned an empty response" -- a report about a
+                # model that was never reached, from a request it refused by name.
+                if isinstance(payload, dict) and (
+                    payload.get("error") or not isinstance(choices, list) or not choices
+                ):
+                    raise _completion_error(payload, self.name, model)
                 first = choices[0] if choices and isinstance(choices[0], dict) else {}
                 message = first.get("message") if isinstance(first, dict) else {}
                 if not isinstance(message, dict):
@@ -286,20 +418,11 @@ class OpenAICompatProvider(Provider):
                 # A tool call is a complete answer on its own, and the note the
                 # loop remembers it by is an *argument* of that call -- see
                 # `app.computer.history`.  Text is yielded here exactly as it
-                # arrived, for the trace; `content: null` yields nothing, which is
-                # the normal case on this endpoint and not a fault.  Neither part
-                # requires the other.
-                for tc in message.get("tool_calls") or []:
-                    if not isinstance(tc, dict):
-                        continue
-                    fn = tc.get("function") or {}
-                    yield ToolCallEvent(
-                        ToolCall(
-                            id=str(tc.get("id") or "call_0"),
-                            name=str(fn.get("name") or ""),
-                            arguments=str(fn.get("arguments") or "{}"),
-                        )
-                    )
+                # arrived, for the trace; `content: null` -- and `content: ""` --
+                # yield nothing, which is the normal case on this endpoint and
+                # not a fault.  Neither part requires the other.
+                for call in _message_tool_calls(message):
+                    yield ToolCallEvent(call)
                 self.last_usage = dict(usage)
                 yield Done(stop_reason=str(first.get("finish_reason") or "stop"))
                 return
@@ -330,6 +453,18 @@ class OpenAICompatProvider(Provider):
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # A frame that is not an object carries no completion and no
+                    # error; read past it rather than attribute a field to it.
+                    if not isinstance(chunk, dict):
+                        continue
+                    # A refusal delivered inside the stream.  OpenRouter reports
+                    # a request it cannot route as a frame carrying `error` and
+                    # no choices; skipping it, as an earlier version did, leaves
+                    # the caller with an empty reply and no idea that the
+                    # provider had answered with a refusal instead of a
+                    # completion.
+                    if chunk.get("error"):
+                        raise _completion_error(chunk, self.name, model, streamed=True)
                     # The usage frame carries no choices, so it has to be read
                     # before the `if not chunk.get("choices")` skip below --
                     # otherwise the one chunk that says what the request cost is
@@ -343,7 +478,17 @@ class OpenAICompatProvider(Provider):
                         }
                     if not chunk.get("choices"):
                         continue
-                    delta = chunk["choices"][0].get("delta", {})
+                    first = chunk["choices"][0] if isinstance(chunk["choices"][0], dict) else {}
+                    delta = first.get("delta")
+                    delta = delta if isinstance(delta, dict) else {}
+                    # Why the turn ended, kept because it is the only thing that
+                    # separates "the model had nothing to say" from "the model
+                    # ran out of completion budget before it said anything" --
+                    # and a stream that ends with `finish_reason: length`, no
+                    # content and no tool call is indistinguishable from an
+                    # empty model reply without it.
+                    if first.get("finish_reason"):
+                        stop_reason = str(first.get("finish_reason"))
                     # Accumulated as text whatever shape the delta used, and
                     # joined across chunks: a streamed reply can split the
                     # computer loop's history JSON anywhere, including inside a
@@ -352,18 +497,49 @@ class OpenAICompatProvider(Provider):
                     content = _content_text(delta.get("content"))
                     if content:
                         yield TextDelta(content)
-                    for tc in delta.get("tool_calls") or []:
-                        idx = tc.get("index", 0)
+                    # `tool_calls` on the delta is where a native call arrives on
+                    # a stream, with `content: null` beside it and no trailing
+                    # text anywhere.  Read with the same tolerance as the
+                    # complete-response path: a null `function`, a missing
+                    # `index`, and arguments sent as an object rather than a
+                    # string are all shapes real endpoints use, and each of them
+                    # used to lose the call entirely.
+                    legacy = delta.get("function_call")
+                    deltas = delta.get("tool_calls")
+                    entries = list(deltas) if isinstance(deltas, list) else []
+                    if not entries and isinstance(legacy, dict):
+                        entries = [dict(legacy, index=0)]
+                    for position, tc in enumerate(entries):
+                        if not isinstance(tc, dict):
+                            continue
+                        idx = tc.get("index", position)
+                        if not isinstance(idx, int):
+                            idx = position
                         if idx not in acc:
                             acc[idx] = {"id": "", "name": "", "args": ""}
                             order.append(idx)
-                        fn = tc.get("function", {})
+                        fn = tc.get("function")
+                        fn = fn if isinstance(fn, dict) else {}
                         if tc.get("id"):
-                            acc[idx]["id"] = tc["id"]
-                        if fn.get("name"):
-                            acc[idx]["name"] += fn["name"]
-                        if fn.get("arguments"):
-                            acc[idx]["args"] += fn["arguments"]
+                            acc[idx]["id"] = str(tc["id"])
+                        name = fn.get("name") or tc.get("name")
+                        if name:
+                            # A tool name arrives whole in the first frame and
+                            # absent from the rest -- but some endpoints repeat it
+                            # in full every frame, and appending blindly would
+                            # publish `clickclick`.  Extending text replaces,
+                            # anything else is a fragment and appends.
+                            name_text = str(name)
+                            known = acc[idx]["name"]
+                            if name_text != known:
+                                acc[idx]["name"] = (
+                                    name_text
+                                    if name_text.startswith(known)
+                                    else known + name_text
+                                )
+                        arguments = fn.get("arguments", tc.get("arguments"))
+                        if arguments not in (None, ""):
+                            acc[idx]["args"] += _arguments_json(arguments)
         # Published after the stream is drained rather than inside it: a caller
         # that abandons the iterator mid-response must not read a half-filled
         # count as if it were the price of the whole request.
@@ -373,4 +549,4 @@ class OpenAICompatProvider(Provider):
             yield ToolCallEvent(
                 ToolCall(id=a["id"] or f"call_{idx}", name=a["name"], arguments=a["args"])
             )
-        yield Done()
+        yield Done(stop_reason=stop_reason)
