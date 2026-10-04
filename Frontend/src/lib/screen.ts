@@ -333,15 +333,26 @@ export interface ComputerTurn {
   wire: ComputerWire;
   raw: string;
   /**
-   * The semantic history the model wrote at the end of its own reply, and the
-   * exact text the *next* request will carry as `History.txt`.
+   * The semantic history the model wrote, read from the `history` argument of
+   * this reply's own tool call, and the exact text the *next* request will carry
+   * as `History.txt`.
    *
-   * Separate from `execution` on purpose: this is what the model said it did,
+   * Separate from `execution` on purpose: this is what the model said it issued,
    * that is what the machine did with it. Empty with a `history_error` means the
    * model wrote none the runner could accept — it is never invented.
    */
   history_note?: string;
   history_error?: string;
+  /**
+   * The native tool call this reply contained, with `arguments` still as the
+   * provider's raw JSON string.
+   *
+   * Present on the normal path: a tool-calling model replies with a call and
+   * `content: null`, so `raw` is legitimately empty while the turn did exactly
+   * what it was asked to do. Without this the UI reports the commonest reply of
+   * all as an empty one.
+   */
+  tool_call?: { name: string; arguments: string } | null;
   error: string;
   /**
    * How the request ended, when it ended badly.

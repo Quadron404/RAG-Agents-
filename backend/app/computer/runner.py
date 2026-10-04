@@ -24,17 +24,24 @@ The split between the two records of a turn is the point of this module, and it
 is not negotiable:
 
 ``ai_history`` -- ``{"history":"I've clicked the Post button."}``, written by the
-    model, and `History.txt`.  This is the run's memory.  Only the model knows
-    which button it meant.
+    model as the `history` argument of its tool call, and `History.txt`.  This is
+    the run's memory.  Only the model knows which button it meant.
 
-``facts`` / ``last_action`` / ``execution`` -- ``click (499,375) -> SUCCESS``,
+``facts`` / ``last_action`` / ``execution`` -- ``click (344,107) -> SUCCESS``,
     written by the executor.  This is the evidence.  It answers whether the
     action worked, and it answers it from the only party that could know.
 
-Neither is allowed to become the other.  A memory of `click (499,375)` teaches
+Neither is allowed to become the other.  A memory of `click (344,107)` teaches
 the next request nothing it can act on; a history line the model wrote about a
 navigation that timed out teaches it that the navigation worked.  So the model
 writes only what it issued, and the executor reports only what occurred.
+
+The history travels as an argument of the tool call rather than as text after
+it, and that is not a preference.  Native tool calling returns `content: null`
+for a tool call: there is no trailing text to read and none to ask for, so a
+memory read from assistant prose is empty on every provider that does tool
+calling well.  One call, one required `history` argument, read before the
+argument is stripped and the executable command is built.
 
 Nothing here fabricates.  A history note exists only because the model wrote one,
 a screenshot exists only because the real screen was captured, and the trace
@@ -63,9 +70,10 @@ from ..providers.router import (
 )
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
-from .history import extract_history_note, history_block
+from .history import extract_history, history_block
 from .prompt import REFUSAL_NOTE, RETRY_NOTE, build_prompt, screenshot_note
 from .tools import (
+    HISTORY_ARGUMENT,
     STATE_CHANGING_TOOLS,
     TOOL_NAMES,
     computer_tools,
@@ -190,8 +198,8 @@ class ComputerTurnTrace:
     # -- D. what came back, verbatim
     raw: str = ""
     reply_timestamp: float = 0.0
-    #: The semantic history the model wrote at the end of this reply, extracted
-    #: from `raw` and kept so the inspector can show what the next request will
+    #: The semantic history the model wrote, read from this reply's tool-call
+    #: arguments, and kept so the inspector can show what the next request will
     #: be told.  Empty when the model wrote none, or wrote one that was refused
     #: -- and `history_error` says which, because a silently dropped note is
     #: indistinguishable from a model that was never asked for one.
@@ -346,13 +354,18 @@ class ComputerRun:
     #: just issued -- ``I've opened x.com.``, ``I've clicked the Post button.``
     #: It is deliberately *not* the executor's fact line.  Only the model knows
     #: that the click was on the Post button; the executor knows it was at
-    #: (499,375), and a memory of coordinates tells the next request nothing it
+    #: (344,107), and a memory of coordinates tells the next request nothing it
     #: can act on.
     #:
+    #: Each entry arrives as the required `history` argument of the native tool
+    #: call, because that is the one channel a tool-calling model is guaranteed
+    #: to fill: these endpoints answer a tool call with `content: null` and no
+    #: trailing text at all.
+    #:
     #: Text-only by construction: nothing in this loop can put an image here, and
-    #: `extract_history_note` refuses a note carrying coordinates or an executor
-    #: verdict, so "the history holds semantics, not mechanics" is enforced at the
-    #: point of entry rather than promised in a comment.
+    #: `extract_history` refuses a note carrying coordinates, raw tool JSON or an
+    #: executor verdict, so "the history holds semantics, not mechanics" is
+    #: enforced at the point of entry rather than promised in a comment.
     ai_history: List[str] = field(default_factory=list)
     #: The executor's own record of every attempt, in the form the machine saw
     #: it: ``navigate https://x.com -> FAILED: connection timeout`` or
@@ -767,8 +780,10 @@ class ComputerRunner:
 
         The catalogue is returned whole for every other task.  There is no
         `history` entry in it and there is not going to be one: history is the
-        JSON object the model writes at the end of its reply, not a second call
-        to execute, and filtering for a tool that does not exist only hid that.
+        required `history` *argument* of these ten calls, read in `history.py`.
+        Making it a tool would be a second call per turn, which is the one thing
+        this loop does not do, and filtering for a tool that does not exist only
+        hid that.
         """
         if not run.simple_task:
             return list(TOOL_NAMES)
@@ -834,24 +849,22 @@ class ComputerRunner:
         usage = getattr(provider, "last_usage", None) or {}
         raw = "".join(parts)
 
-        if calls and not raw.strip():
-            # A pure native tool-call response has no prose. Keep the trace
-            # readable without feeding this synthetic text back to the model.
-            #
-            # This is also why the history parser is given `raw` and not the
-            # tool calls: a reply that carried only a call has no history in it,
-            # and the note it must not claim is `{"name": ..., "arguments": ...}`
-            # -- a JSON object with no `history` key, which the parser refuses
-            # rather than mistaking for one.
-            raw = "".join(
-                json.dumps({"name": c.name, "arguments": c.arguments})
-                for c in calls
-            )
-
-        # A reply that carries a tool call, a history JSON and no other prose is
-        # a complete answer: `raw` is its history object verbatim, the call is on
-        # `calls`, and `_next_command` accepts the call on that alone.  Prose is
-        # never required, and this response is never classified as empty.
+        # `raw` is the assistant text and nothing else.  A native tool-call reply
+        # has none -- Groq's Qwen answers with `content: null` -- so it stays
+        # empty, and that emptiness is not repaired by inventing
+        # `{"name": ..., "arguments": ...}` and calling it model output.
+        #
+        # Doing that was the bug this replaced: the manufactured object has no
+        # `history` key, so every valid tool call on a content-less provider was
+        # recorded as "no history object at the end of the model response", and
+        # the run's memory stayed empty on exactly the provider that works best.
+        # The history now travels inside `calls[0].arguments`, and the trace
+        # shows the tool call from `turn.tool_call` rather than a forgery in the
+        # reply column.
+        #
+        # This is also why a tool-call-only reply is never classified as empty:
+        # `not calls and not raw.strip()` below is the empty-response test, and a
+        # reply with a call on it has something.
 
         return (
             raw,
@@ -894,10 +907,13 @@ class ComputerRunner:
            turn acts.  It is never written into the history, so no later request
            can inherit it.
         3. Every accepted action is remembered by the model, in the model's own
-           words.  The `{"history": ...}` object it ends its reply with is stored
-           verbatim and is what the next request receives as `History.txt`, which
-           is the point: the executor knows the coordinates and not the intent,
-           so only the model can write a sentence the next turn can act on.
+           words.  The required `history` argument of the tool call is stored
+           verbatim and is what the next request receives as `History.txt`,
+           which is the point: the executor knows the coordinates and not the
+           intent, so only the model can write a sentence the next turn can act
+           on.  It is read from the call before the call's arguments are reduced
+           to the executable command, so the next request has it immediately --
+           not one model turn later, and never assembled from the executor's log.
         4. What actually happened is reported separately, by the executor.  The
            AI history says what was issued; `last_action` says what the machine
            did with it.  Neither is allowed to stand in for the other, and a
@@ -1264,22 +1280,18 @@ class ComputerRunner:
                 turn.provider_error_raw = str(last_refusal.get("provider_error_raw") or "")
                 turn.retry_after = last_refusal.get("retry_after")
                 turn.provider_reached = True
-            # Verbatim.  Whatever came back is what gets shown, including prose.
+            # Verbatim.  Whatever came back is what gets shown, including prose.  A
+            # native tool-call reply has none, and none is invented here: the
+            # tool call is shown from `turn.tool_call` below instead.
             turn.raw = raw
 
-            # The AI-written semantic history, taken from the same reply as the
-            # tool call and out of the same accumulated text -- streamed chunks
-            # have been joined by now, so a note that arrived one fragment at a
-            # time is read whole.  Extracted here rather than in `_execute`
-            # because this is the only place that has the reply, and stored on
-            # the turn rather than on the run because a reply that is about to be
-            # refused must not become the run's memory.
-            #
-            # A refusal here is recorded, never repaired.  Inventing a note would
-            # put a sentence in the model's mouth about an action it may not
-            # have issued, which is the one failure this whole separation exists
-            # to prevent.
-            turn.history_note, turn.history_error = extract_history_note(raw)
+            # The AI-written semantic history, not read from `raw` at all.  It is
+            # read from the tool call's own arguments, one step below, because
+            # that is where a tool-calling model puts it and the only place it
+            # can be relied on to be.  Set here for the turns that never get as
+            # far as a parsable call -- a refused tool, an empty reply -- so
+            # those read "no history" rather than inheriting the previous turn's.
+            turn.history_note, turn.history_error = "", ""
 
             # Token accounting, from what the API reported and counted off the
             # serialised body rather than from application state.
@@ -1351,6 +1363,28 @@ class ComputerRunner:
                                 "the model sent unusable arguments"):
                     continue
                 return None, refusal
+
+            # The AI-written semantic history, read out of the call itself.
+            #
+            # This is the whole reason the memory works: the note is an argument
+            # of the tool call the model had to make anyway, so it arrives
+            # whether or not the provider returned any assistant text.  Groq's
+            # Qwen answers a native tool call with `content: null` and nothing
+            # else, which is why a history read from trailing text was empty on
+            # precisely the providers this loop runs on.
+            #
+            # Recorded on the turn, not on the run.  Only an accepted command
+            # reaches `_remember_ai_history`, so a call that is about to be
+            # refused -- out of bounds, not allowed, unusable arguments -- cannot
+            # put a sentence in the run's memory for something that did not
+            # happen.  A missing or unusable note is recorded and never repaired:
+            # inventing one, or copying the tool name into a sentence, is the one
+            # thing this separation exists to prevent.
+            turn.history_note, turn.history_error = extract_history(args, raw)
+            # Removed before the command is built, so `Command`, `Command.to_json()`
+            # and therefore `RemoteComputer` see only the executable fields.  The
+            # note has already been read; from here it is memory, not an argument.
+            args.pop(HISTORY_ARGUMENT, None)
 
             if call.name == "click" and not run.seen_width:
                 # A click needs a frame to be a coordinate in.  Refusing it is

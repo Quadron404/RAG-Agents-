@@ -25,20 +25,27 @@ from __future__ import annotations
 #:
 #: The response contract lives here because the model is the only party that can
 #: satisfy it: `History.txt` is written from the model's own sentence about the
-#: action it just issued, so the words have to be its own.  The executor cannot
+#: action it is issuing, so the words have to be its own.  The executor cannot
 #: supply them, because it knows the coordinates and not the intent, and a memory
-#: of `click (499,375) -> SUCCESS` tells the next request nothing it can act on.
+#: of `click (344,107) -> SUCCESS` tells the next request nothing it can act on.
+#:
+#: The sentence is requested as an argument of the tool call rather than as text
+#: after it.  A native tool-calling reply has no text: these endpoints answer a
+#: tool call with `content: null`, so there is nothing after the call to read and
+#: nothing the model could be shown to put there.  One call, one `history`
+#: argument, and the whole reply is the call -- which also keeps the
+#: one-tool-call-per-reply rule intact by construction.
 COMPUTER_CONTROL_PROMPT = (
-    "You control a real remote browser. Call exactly one native tool per reply, then "
-    "end the reply with exactly one JSON object and write nothing after it: "
-    '{"history":"I\'ve <short semantic description of what I just did>."} '
-    "Write it yourself, as a sentence about the action you issued, e.g. "
-    '"I\'ve opened x.com." or "I\'ve clicked the Post button." Never put '
-    "coordinates, tool names with their arguments, executor internals, or "
-    "success/failure wording in it. That object is the run's History.txt and is sent "
-    "back to you on the next request, so say what you did, not how the machine "
-    "received it. Use the History.txt in the user turn as context; do not echo it "
-    "into tool arguments. When an action is required, use the tool instead of prose. "
+    "You control a real remote browser. Call exactly one native tool per reply. "
+    "Every tool call MUST include a required \"history\" string in its arguments; "
+    "that string is your semantic memory of the action you are issuing right now. "
+    "Example: {\"x\":344,\"y\":107,\"history\":\"I've clicked the Post button.\"} "
+    "Write the history yourself, as a short sentence naming the page or the control. "
+    "Never include coordinates, raw tool arguments, executor internals, or whether "
+    "the action succeeded; only the executor reports that, separately. Do not write "
+    "a second JSON object, and do not add prose after the call. "
+    "Use the History.txt in the user turn as context; do not echo it into tool "
+    "arguments. When an action is required, use the tool instead of prose. "
     "The executor's result is the only truth about the browser; never invent or "
     "assume state. For a simple single-action task, act once; the executor ends the "
     "task automatically after a successful action, so do not call stop afterward. "

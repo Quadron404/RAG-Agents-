@@ -7,12 +7,19 @@ ignored -- so the model is told it happened -- or performed by a second,
 unreviewed code path.  Neither is available here.
 
 None of the ten is a history tool, and there is no eleventh waiting to become
-one.  The run's memory is the ``{"history": ...}`` JSON object the model writes
-at the end of its own reply, extracted in ``history.py`` and carried on the next
-request by the runner.  Making it a *call* would break the loop's central rule --
-one executable action per request -- and would make the memory a thing the
-executor records rather than a thing the model writes, which is precisely the
-distinction this design turns on.
+one.  The run's memory is the ``history`` **argument** every one of these ten
+carries, read in ``history.py`` and carried on the next request by the runner.
+Making it a *call* would break the loop's central rule -- one executable action
+per request -- and would make the memory a thing the executor records rather
+than a thing the model writes, which is precisely the distinction this design
+turns on.
+
+The argument is required on all ten, including the four that change nothing.  A
+memory read from the assistant's prose cannot work here at all: these endpoints
+answer a tool call with ``content: null`` and no trailing text, so a note asked
+for after the call was asked for from a place that does not exist.  Inside the
+call it is part of the action the model had to take anyway, so it cannot be
+dropped without dropping the action.
 
 One of the ten is the one the loop is shaped around:
 
@@ -65,6 +72,48 @@ TOOL_NAMES = (
 #: it read something, it did not move anything.
 STATE_CHANGING_TOOLS = frozenset({"navigate", "search", "click", "type", "key", "scroll"})
 
+#: The name of the argument every tool carries.  Not a tool: it is metadata
+#: inside a tool call, and there is no `history()` in `TOOL_NAMES` and never will
+#: be -- a second call would break the one-call-per-reply rule and would turn the
+#: run's memory into something the executor records rather than something the
+#: model writes.
+HISTORY_ARGUMENT = "history"
+
+#: Why it is required, in the words the model reads.  This description is sent
+#: on every request of every run, so it is also the recurring place where the
+#: semantic rule is enforced: what the sentence may say, and what it may never
+#: say.  The negative half matters most, because the executor's own log is
+#: exactly what a model copies when left to guess.
+HISTORY_DESCRIPTION = (
+    "Required. One short sentence in your own words describing the action you are "
+    "issuing right now, e.g. \"I've clicked the Post button.\" This is the run's "
+    "memory: the next request is sent it instead of a transcript. Never include "
+    "coordinates, raw tool arguments, executor internals, or whether the action "
+    "succeeded -- only the executor may report that, and it reports it separately."
+)
+
+
+def _object_schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
+    """A tool's parameters, with `history` added and required.
+
+    Every tool takes it, including the four that change nothing: a screenshot or
+    a `done` is still something the model did, and leaving the argument optional
+    on those is how a model learns that the sentence is optional at all.
+
+    The key is added last and unconditionally so a future tool cannot ship
+    without it by forgetting this helper.
+    """
+    props = dict(properties)
+    props[HISTORY_ARGUMENT] = {
+        "type": "string",
+        "description": HISTORY_DESCRIPTION,
+    }
+    return {
+        "type": "object",
+        "properties": props,
+        "required": [*list(required), HISTORY_ARGUMENT],
+    }
+
 
 def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Return only the tool schemas the current request needs.
@@ -74,12 +123,7 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
     fewer recurring input tokens.  No new capability is created here: filtering
     only removes schemas from the request.
     """
-    def object_schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": dict(properties),
-            "required": list(required),
-        }
+    object_schema = _object_schema
 
     schemas = [
         {
@@ -130,11 +174,7 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         {
             "name": "error",
             "description": "Stop: the task cannot be completed safely.",
-            "parameters": {
-                "type": "object",
-                "properties": {"message": {"type": "string"}},
-                "required": ["message"],
-            },
+            "parameters": object_schema({"message": {"type": "string"}}, ["message"]),
         },
     ]
     if allowed_names is None:
@@ -218,6 +258,13 @@ def tool_to_command(
     """
     if name not in TOOL_NAMES:
         return None, f"{name!r} is not a tool; the tools are {', '.join(TOOL_NAMES)}"
+
+    # `history` rides inside the call as metadata for the AI-memory layer and is
+    # never part of the command.  Dropped here as well as in the runner so that
+    # no branch below can pick it up by accident, and so that
+    # `Command.to_json()` and the executor both provably receive only the fields
+    # the machine is actually driven by.
+    args = {key: value for key, value in args.items() if key != HISTORY_ARGUMENT}
 
     if name == "screenshot":
         # Carried as a command so it lands in the event log and the trace like
@@ -314,6 +361,8 @@ def tool_to_command(
 __all__ = [
     "TOOL_NAMES",
     "STATE_CHANGING_TOOLS",
+    "HISTORY_ARGUMENT",
+    "HISTORY_DESCRIPTION",
     "computer_tools",
     "parse_arguments",
     "tool_to_command",

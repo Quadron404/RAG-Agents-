@@ -283,11 +283,12 @@ class OpenAICompatProvider(Provider):
                 content = _content_text(message.get("content"))
                 if content:
                     yield TextDelta(content)
-                # A reply that carries a tool call plus structured text and no
-                # other prose is a complete answer: the text is yielded above
-                # unchanged, so the caller can read the computer loop's
-                # {"history": ...} object out of it, and the call below is
-                # accepted on its own merits.  Neither part requires the other.
+                # A tool call is a complete answer on its own, and the note the
+                # loop remembers it by is an *argument* of that call -- see
+                # `app.computer.history`.  Text is yielded here exactly as it
+                # arrived, for the trace; `content: null` yields nothing, which is
+                # the normal case on this endpoint and not a fault.  Neither part
+                # requires the other.
                 for tc in message.get("tool_calls") or []:
                     if not isinstance(tc, dict):
                         continue

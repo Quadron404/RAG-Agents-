@@ -619,7 +619,19 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
         {turn.error ? (
           <Failure turn={turn} />
         ) : turn.raw === "" ? (
-          <p className="ccchat__none">(the model returned an empty response)</p>
+          /* A native tool-calling reply has no assistant text at all -- these
+             endpoints answer a tool call with `content: null` -- so an empty
+             `raw` here means "the whole reply was the tool call", which is a
+             complete answer, not an empty one. Calling it empty would report
+             the normal case as the failure. */
+          turn.tool_call?.name ? (
+            <p className="ccchat__none">
+              No assistant text. The reply was the native tool call{" "}
+              <b>{turn.tool_call.name}</b>, whose arguments carry the run&apos;s history.
+            </p>
+          ) : (
+            <p className="ccchat__none">(the model returned an empty response)</p>
+          )
         ) : (
           <>
             {/* A request that was refused and then answered on a retry has a
@@ -634,7 +646,7 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
       </Bubble>
 
       {/* 4.  What the parser made of it. */}
-      {turn.raw !== "" && !turn.error && (
+      {!turn.error && (turn.raw !== "" || !!turn.tool_call?.name) && (
         <Bubble
           side="system"
           icon={<Cpu size={13} aria-hidden="true" />}
@@ -651,9 +663,9 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
 
       {/* 5.  The sentence the model wrote about what it just issued.  This is
           History.txt: the exact entry the *next* request carries, so a run's
-          memory is visible where the actions are.  Shown separately from
-          Execution below, which is the machine's verdict on the same action —
-          the two are deliberately not the same record. */}
+          memory is visible where the actions are.  Only the sentence, never the
+          coordinates or the verdict -- those are the executor's, and they are in
+          the Execution block below. */}
       {(turn.history_note || turn.history_error) && (
         <Bubble
           side="ai"
@@ -662,7 +674,7 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
           tone={turn.history_note ? "ok" : "bad"}
         >
           {turn.history_note ? (
-            <Verbatim small>{JSON.stringify({ history: turn.history_note })}</Verbatim>
+            <p className="ccchat__note">{turn.history_note}</p>
           ) : (
             <p className="ccchat__none">
               Not added to History.txt. {turn.history_error}
