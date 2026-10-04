@@ -89,6 +89,32 @@ STATUS_DONE = "done"
 STATUS_STOPPED = "stopped"
 STATUS_ERROR = "error"
 
+# The lifecycle of one *request*, which is not the same thing as the run's status:
+# a run is working on something for most of its life, and a request is a single
+# call to the provider inside that.
+#
+# It exists because a trace entry is created *before* the provider is asked -- it
+# has to be, since it is where the request being sent is recorded -- and the
+# panel polls every second.  For the whole duration of the request the entry
+# therefore holds nothing but its own defaults: `raw` empty, no wire summary, no
+# tool call, no `finish_reason`.  Those are the same values a provider produces
+# when it answers with nothing, so "the reply was empty" and "the reply has not
+# arrived" were indistinguishable, and every in-flight request was rendered as a
+# failed one: a missing wire summary read as a failed serialisation, an empty
+# `raw` read as an empty response, and an unreported `finish_reason` read as a
+# provider fault.
+#
+# So the state is recorded explicitly, and the panel reads it before it reads
+# anything else.  `pending` is the only state in which the fields mean nothing
+# yet, and nothing is concluded from them there.
+REQUEST_PENDING = "pending"
+#: The provider answered.  The reply may still be empty, unusable or refused by
+#: the loop -- that is judged from what came back, which now exists.
+REQUEST_COMPLETED = "completed"
+#: The provider never answered: not configured, refused on the wire, or the
+#: connection failed.  There is no reply to judge.
+REQUEST_FAILED = "failed"
+
 
 def _backoff_delay(
     attempt: int,
@@ -198,6 +224,16 @@ class ComputerTurnTrace:
     # -- D. what came back, verbatim
     raw: str = ""
     reply_timestamp: float = 0.0
+    #: Where this request is in its own lifecycle: `pending` from the moment this
+    #: entry exists until the provider answers or refuses, then `completed` or
+    #: `failed`.  See `REQUEST_PENDING` for why the panel cannot infer it from the
+    #: empty fields an in-flight request happens to have.
+    #:
+    #: `completed` does not mean the reply was usable -- it means there *is* a
+    #: reply to judge.  An empty one, a call the loop refused and a perfectly
+    #: good tool call are all completed, and are told apart by `raw`,
+    #: `tool_call` and `parse_error`, which by then hold something real.
+    request_state: str = REQUEST_PENDING
     #: Why the provider said the turn ended, in its own word: `stop`, `length`,
     #: `tool_calls`, `content_filter`.  Empty when it said nothing at all.
     #:
@@ -286,6 +322,7 @@ class ComputerTurnTrace:
             "user_text": self.user_text,
             "wire": self.wire,
             "raw": self.raw,
+            "request_state": self.request_state,
             "stop_reason": self.stop_reason,
             "history_note": self.history_note,
             "history_error": self.history_error,
@@ -654,6 +691,25 @@ _STOP_REASONS = {
     "content_filter": "the provider withheld the answer (finish_reason=content_filter)",
     "error": "the provider reported an error instead of a reply (finish_reason=error)",
 }
+
+
+def _close_pending_turns(run: ComputerRun) -> None:
+    """Give every request that will never be answered its terminal state.
+
+    A turn left `pending` after the run is over is not a request in progress --
+    nothing is going to answer it now.  The only ways to get here are the ones
+    that end a run mid-request: the run was cancelled, it crashed in the loop, or
+    it stopped while the provider was still working.  Left as `pending`, those
+    turns would render as an in-flight request that never finishes, which is a
+    worse lie than the failure that actually happened: it stays "in progress"
+    forever, beside a run that has already reported its outcome.
+    """
+    for turn in run.trace:
+        if turn.request_state != REQUEST_PENDING:
+            continue
+        turn.request_state = REQUEST_FAILED
+        if not turn.error:
+            turn.error = "the run ended before this request came back"
 
 
 def _empty_reply_reason(provider: str, model: str, stop_reason: str) -> str:
@@ -1137,6 +1193,9 @@ class ComputerRunner:
             run.status = STATUS_ERROR
             run.message = f"computer control failed: {exc}"
         finally:
+            # First, so the state that is persisted is the truth about every
+            # request rather than one still claiming to be in flight.
+            _close_pending_turns(run)
             run.finished_at = time.time()
             self._persist(run)
 
@@ -1338,6 +1397,7 @@ class ComputerRunner:
                 turn.reply_timestamp = time.time()
                 turn.error = str(exc)
                 turn.provider_reached = False
+                turn.request_state = REQUEST_FAILED
                 # No request was made, so there is no serialised request to
                 # report: an empty wire here means "nothing was sent", and the
                 # panel says so rather than rendering it as a failed
@@ -1365,6 +1425,9 @@ class ComputerRunner:
                 turn.retry_after = exc.retry_after
                 turn.retry_attempts = len(run.http_attempts or [])
                 turn.http_attempts = list(run.http_attempts or [])
+                # The provider was asked and did not answer, so there is no reply
+                # to judge and nothing here may be read as one.
+                turn.request_state = REQUEST_FAILED
                 # The body this turn *did* serialise, kept on the failed turn.
                 # It was built and sent before the refusal, so the trace can show
                 # what was asked for next to what came back -- and the panel no
@@ -1384,6 +1447,7 @@ class ComputerRunner:
                 turn.reply_timestamp = time.time()
                 turn.error = f"{type(exc).__name__}: {exc}"
                 turn.provider_reached = False
+                turn.request_state = REQUEST_FAILED
                 # Whatever the serialiser managed to record before the failure.
                 # A transport failure after the body was built is not a
                 # serialisation failure, and the trace must not say it was.
@@ -1396,6 +1460,10 @@ class ComputerRunner:
             turn.model = model
             turn.wire = wire
             turn.stop_reason = stop_reason
+            # The provider answered.  Set before anything is judged, because every
+            # judgement below -- valid call, empty reply, refused call -- is a
+            # judgement about a reply that exists, and only this says so.
+            turn.request_state = REQUEST_COMPLETED
             turn.reply_timestamp = time.time()
             # Refusals this request recovered from, carried on success too: a
             # request that was refused once and then answered looks identical to

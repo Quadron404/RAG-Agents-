@@ -254,6 +254,19 @@ export interface ComputerMessageMeta {
   content_preview: string;
 }
 
+/**
+ * Where one provider request is in its own lifecycle.
+ *
+ * `pending` covers the whole time between the trace entry being created and the
+ * provider answering -- which is most of what the panel shows for a request that
+ * takes a few seconds. `completed` means there is a reply to judge (an empty one
+ * and a refused one included); `failed` means there is none.
+ *
+ * Optional on the type because an older backend does not send it. Absent is read
+ * as `completed`, which is what such a backend's turns are.
+ */
+export type ComputerRequestState = "pending" | "completed" | "failed";
+
 /** What the request looked like once serialised, from the body that was sent. */
 export interface ComputerWire {
   path: string;
@@ -358,6 +371,19 @@ export interface ComputerTurn {
    */
   wire?: ComputerWire;
   raw: string;
+  /**
+   * Whether this request is still in flight, and so whether its fields mean
+   * anything yet.
+   *
+   * A turn exists in the trace before the provider is called -- it has to, since
+   * it is where the outgoing request is recorded -- so while the request is in
+   * flight `raw` is empty, `wire` is absent and no `finish_reason` has been
+   * reported. Those are the same values a provider produces by answering with
+   * nothing, which is why the state is read first: while it is `pending`, the
+   * panel says the request is in progress and concludes nothing from an empty
+   * field.
+   */
+  request_state?: ComputerRequestState;
   /**
    * Why the provider said the turn ended: `stop`, `length`, `tool_calls`,
    * `content_filter`.  Empty when it said nothing.

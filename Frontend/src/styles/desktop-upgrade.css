@@ -1434,6 +1434,17 @@
   color: #d97706;
 }
 
+/* A request that is still open.  Blue rather than amber: amber means "this one
+   was refused and retried", and a live request is neither -- it has no outcome
+   yet, which is why it is coloured as information and never as a fault. */
+.ccchat__tag--live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  color: var(--blue);
+}
+
 /* ---- bubbles --------------------------------------------------------- */
 
 .ccbubble {

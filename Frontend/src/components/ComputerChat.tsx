@@ -270,8 +270,19 @@ export default function ComputerChat() {
               <p className="ccchat__empty">The run has been accepted but has not asked the model anything yet.</p>
             )}
 
-            <Bubble side="system" icon={<Terminal size={13} aria-hidden="true" />} label="Run">
-              {trace.message || "(no message)"}
+            {/* The run's own live line.  While it is running this is a status,
+                not a conclusion -- "Deciding what to do" is what the loop is
+                doing right now, and reading it as an outcome is what made a
+                healthy in-flight run look broken.  The label and the icon say so
+                explicitly; the message itself is left as the backend writes it. */}
+            <Bubble
+              side="system"
+              icon={run?.running
+                ? <Loader2 size={13} className="ccchat__spin" aria-hidden="true" />
+                : <Terminal size={13} aria-hidden="true" />}
+              label={run?.running ? "Run — in progress" : "Run"}
+            >
+              {trace.message || (run?.running ? "Working…" : "(no message)")}
             </Bubble>
           </>
         )}
@@ -555,6 +566,15 @@ function Failure({ turn }: { turn: ComputerTurn }) {
 }
 
 function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
+  // Read before anything else, because it decides what the rest of the fields
+  // mean.  An entry exists in the trace from the moment it is created, which is
+  // before the provider is asked, so for the whole duration of the request it
+  // holds only its defaults: `raw` empty, no wire, no call, no finish_reason.
+  // Those are exactly what a provider sends when it answers with nothing, so
+  // without this every in-flight request rendered as an empty reply, a missing
+  // wire summary and an unreported finish reason -- three failures that had not
+  // happened yet.  Absent means an older backend, whose turns are all complete.
+  const pending = turn.request_state === "pending";
   const serialised = serialisedFact(turn);
   return (
     <div className="ccchat__turn">
@@ -568,6 +588,14 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
         {turn.model && <span className="ccchat__provmodel">{turn.model}</span>}
         {turn.attempt > 0 && <span className="ccchat__retry">retry {turn.attempt + 1}</span>}
         {turn.first_turn && <span className="ccchat__tag">no screenshot yet</span>}
+        {/* A live request, named as one.  The reason this cannot be left to the
+            empty fields: "in progress" and "came back empty" are the same
+            pixels, and only the backend knows which it is looking at. */}
+        {pending && (
+          <span className="ccchat__tag ccchat__tag--live" role="status">
+            <Loader2 size={11} className="ccchat__spin" aria-hidden="true" /> in progress
+          </span>
+        )}
         <span className="ccchat__turn-time">{clock(turn.timestamp)}</span>
       </div>
 
@@ -584,9 +612,15 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
               screenshot on the wire" is a fact about this turn, not a fault:
               nothing attaches one unless the model asked to look, and the first
               turn always says no.  It is coloured from the value the serialiser
-              reported and nothing else. */}
-          <Fact ok={turn.wire?.image_present}>
-            Screenshot on the wire: {turn.wire?.image_present ? "yes" : "no"}
+              reported and nothing else.
+
+              While the request is in flight the wire summary does not exist yet
+              -- it is written when the body is serialised, inside the provider --
+              so the answer is unknown, not "no".  Uncoloured, because a fact
+              that has not been established is not a green one. */}
+          <Fact ok={pending ? undefined : turn.wire?.image_present}>
+            Screenshot on the wire:{" "}
+            {pending ? "not sent yet" : turn.wire?.image_present ? "yes" : "no"}
           </Fact>
           <Fact ok={serialised.ok}>{serialised.text}</Fact>
         </div>
@@ -622,49 +656,62 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
 
       {/* 3.  The reply, exactly as it arrived. */}
       <Bubble side="ai" icon={<Bot size={13} aria-hidden="true" />} label="AI response" tone="raw">
-        {/* Why the provider stopped, in its own word.  Neutral, because it is a
-            reported value and not a verdict -- but it is the whole difference
-            between an empty reply that was truncated by the completion ceiling
-            and one that carried a call the parser could not read, so it is shown
-            on every turn rather than only on the ones that failed. */}
-        {!turn.error && (
-          <div className="ccchat__facts">
-            <Fact>finish_reason: {turn.stop_reason || "not reported by the provider"}</Fact>
-          </div>
-        )}
-        {turn.error ? (
-          <Failure turn={turn} />
-        ) : turn.raw === "" ? (
-          /* A native tool-calling reply has no assistant text at all -- these
-             endpoints answer a tool call with `content: null` -- so an empty
-             `raw` here means "the whole reply was the tool call", which is a
-             complete answer, not an empty one. Calling it empty would report
-             the normal case as the failure. */
-          turn.tool_call?.name ? (
-            <p className="ccchat__none">
-              No assistant text. The reply was the native tool call{" "}
-              <b>{turn.tool_call.name}</b>, whose arguments carry the run&apos;s history.
-            </p>
-          ) : (
-            /* The runner's own diagnosis, which names the provider, the model
-               and the reason it gave for stopping.  The old sentence here was
-               "(the model returned an empty response)" for every one of these --
-               a truncated reasoning trace, an unreadable call and a withheld
-               answer all rendered as the same words, none of which said what to
-               change. */
-            <p className="ccchat__none">
-              {turn.parse_error || "The reply carried no text and no tool call."}
-            </p>
-          )
+        {/* In flight: nothing has come back, so nothing is said about it.  Not
+            "the reply carried no text and no tool call", which is a verdict on a
+            reply that does not exist yet, and not "finish_reason: not reported",
+            which is a claim about a provider that has not been asked. */}
+        {pending ? (
+          <p className="ccchat__none" role="status">
+            <Loader2 size={12} className="ccchat__spin" aria-hidden="true" /> Waiting for the
+            provider&apos;s reply. Nothing has come back yet, so there is nothing to judge.
+          </p>
         ) : (
           <>
-            {/* A request that was refused and then answered on a retry has a
-                perfectly good reply above and no sign at all that it was ever
-                refused, which makes the retry policy invisible. The refusals
-                are on the turn, so they are shown here rather than only when
-                the retry budget finally ran out. */}
-            {(turn.http_attempts?.length ?? 0) > 0 && <Recovered attempts={turn.http_attempts ?? []} turn={turn} />}
-            <Verbatim raw>{turn.raw}</Verbatim>
+            {/* Why the provider stopped, in its own word.  Neutral, because it is a
+                reported value and not a verdict -- but it is the whole difference
+                between an empty reply that was truncated by the completion ceiling
+                and one that carried a call the parser could not read, so it is shown
+                on every answered turn rather than only on the ones that failed. */}
+            {!turn.error && (
+              <div className="ccchat__facts">
+                <Fact>finish_reason: {turn.stop_reason || "not reported by the provider"}</Fact>
+              </div>
+            )}
+            {turn.error ? (
+              <Failure turn={turn} />
+            ) : turn.raw === "" ? (
+              /* A native tool-calling reply has no assistant text at all -- these
+                 endpoints answer a tool call with `content: null` -- so an empty
+                 `raw` here means "the whole reply was the tool call", which is a
+                 complete answer, not an empty one. Calling it empty would report
+                 the normal case as the failure. */
+              turn.tool_call?.name ? (
+                <p className="ccchat__none">
+                  No assistant text. The reply was the native tool call{" "}
+                  <b>{turn.tool_call.name}</b>, whose arguments carry the run&apos;s history.
+                </p>
+              ) : (
+                /* The runner's own diagnosis, which names the provider, the model
+                   and the reason it gave for stopping.  The old sentence here was
+                   "(the model returned an empty response)" for every one of these --
+                   a truncated reasoning trace, an unreadable call and a withheld
+                   answer all rendered as the same words, none of which said what to
+                   change. */
+                <p className="ccchat__none">
+                  {turn.parse_error || "The reply carried no text and no tool call."}
+                </p>
+              )
+            ) : (
+              <>
+                {/* A request that was refused and then answered on a retry has a
+                    perfectly good reply above and no sign at all that it was ever
+                    refused, which makes the retry policy invisible. The refusals
+                    are on the turn, so they are shown here rather than only when
+                    the retry budget finally ran out. */}
+                {(turn.http_attempts?.length ?? 0) > 0 && <Recovered attempts={turn.http_attempts ?? []} turn={turn} />}
+                <Verbatim raw>{turn.raw}</Verbatim>
+              </>
+            )}
           </>
         )}
       </Bubble>
@@ -918,11 +965,22 @@ function Details({ summary, children }: { summary: string; children: React.React
  *   message the runner built.
  * - `false` when it says otherwise, with the reason it gave -- an unencodable
  *   object, or a message list that came out shorter than it went in.
- * - `undefined` when there is nothing to judge: no request was made, or the
- *   backend is older than this field.  Neutral text, no colour, no verdict.  An
- *   unanswered question is not a failed serialisation.
+ * - `undefined` when there is nothing to judge: the request is still in flight,
+ *   no request was made, or the backend is older than this field.  Neutral text,
+ *   no colour, no verdict.  An unanswered question is not a failed
+ *   serialisation, and a request that has not been sent cannot have failed to
+ *   serialise.
  */
 function serialisedFact(turn: ComputerTurn): { ok?: boolean; text: string } {
+  // First, because it is not a value to compare but a moment in the request's
+  // life: the wire summary is written when the body is serialised, which happens
+  // inside the provider.  While the request is in flight its absence means
+  // "not yet", not "failed" -- and reading it as a failure is what painted a
+  // red serialisation badge over a request that had not left the building.
+  if (turn.request_state === "pending") {
+    return { ok: undefined, text: "Request in progress — the body has not been sent yet" };
+  }
+
   const wire = turn.wire;
   const sent = typeof wire?.messages_count === "number" ? wire.messages_count : null;
   const built = typeof wire?.source_message_count === "number"
@@ -930,7 +988,12 @@ function serialisedFact(turn: ComputerTurn): { ok?: boolean; text: string } {
     : turn.message_count;
 
   if (!wire || sent === null) {
-    return { ok: undefined, text: "No serialised request was recorded for this turn" };
+    return {
+      ok: undefined,
+      text: turn.request_state === "failed"
+        ? "No serialised request was recorded for this turn — it never reached the provider"
+        : "No serialised request was recorded for this turn",
+    };
   }
 
   // Independently of the backend's verdict: a count that disagrees with the
