@@ -46,11 +46,33 @@ COMPUTER_CONTROL_PROMPT = (
     "a second JSON object, and do not add prose after the call. "
     "Use the History.txt in the user turn as context; do not echo it into tool "
     "arguments. When an action is required, use the tool instead of prose. "
-    "The executor's result is the only truth about the browser; never invent or "
-    "assume state. For a simple single-action task, act once; the executor ends the "
+    "The executor's result is the only truth about what was executed; never invent "
+    "or assume state. A successful action is already completed. Do not repeat the "
+    "same successful action just because the control is still visible in a later "
+    "screenshot. After a successful action, advance to the next step of the task. "
+    "Repeat an action only when the latest screenshot or executor result shows that "
+    "the previous action did not produce the required state. "
+    "For a simple single-action task, act once; the executor ends the "
     "task automatically after a successful action, so do not call stop afterward. "
     "Ask for screenshot() only when visual inspection is needed; each screenshot is "
     "sent once per requested view."
+)
+
+#: Added to the user turn immediately after `Last action:`, and only on a turn
+#: that has one -- so it can only ever be read next to the executor's verdict on
+#: the step the model just took.
+#:
+#: It is here because the prompt alone did not stop the loop this is about: a
+#: successful click was repeated after each new screenshot, because the model read
+#: the control it had already acted on as the next thing to do.  A rule stated in
+#: the system prompt is restated next to the two artifacts the model has to
+#: reconcile -- its own `History.txt` line and the executor's `Last action:` line
+#: -- which is where the decision is actually made.  It does not touch what counts
+#: as success or what a click does; it only tells the model what a success means.
+PROGRESS_NOTE = (
+    "Progress rule: The last successful action is already completed. Do not repeat "
+    "it unless the current screenshot proves it did not achieve the required state. "
+    "Continue with the next task step."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.

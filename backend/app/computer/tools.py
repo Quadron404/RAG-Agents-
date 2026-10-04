@@ -90,6 +90,8 @@ HISTORY_DESCRIPTION = (
     "memory: the next request is sent it instead of a transcript. Never include "
     "coordinates, raw tool arguments, executor internals, or whether the action "
     "succeeded -- only the executor may report that, and it reports it separately."
+    " Use the existing History.txt and Last action to avoid repeating completed "
+    "actions and to progress the task."
 )
 
 
@@ -128,7 +130,7 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
     schemas = [
         {
             "name": "screenshot",
-            "description": "Get the current VM screen. Call only when you need to see it.",
+            "description": "Get the current VM screen. Call only when you need to see it. After receiving the screenshot, use it to determine the next task step; do not repeat the previous successful action merely because the same control is still visible.",
             "parameters": object_schema({}, []),
         },
         {
