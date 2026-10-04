@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 import uuid
@@ -89,6 +90,9 @@ from .tools import (
     parse_arguments,
     tool_to_command,
 )
+from .ui_state import UI_STATE_UNAVAILABLE, format_ui_state
+
+log = logging.getLogger(__name__)
 
 # The only states a run can be in, and the only strings the frontend renders.
 STATUS_IDLE = "idle"
@@ -460,6 +464,17 @@ class ComputerRun:
     #: request is told about, so the model learns what happened from the machine
     #: rather than from its own memory of what it asked for.
     last_action: Dict[str, Any] = field(default_factory=dict)
+    #: The page's real state, formatted for the model, from the most recent read.
+    #:
+    #: Held on the run so every request carries the same rule: refresh before the
+    #: request, replace, never append and never keep.  It is re-read on every
+    #: request after the first -- including retries of one request -- because the
+    #: page it describes is the page the *next* action will land on, and a state
+    #: read before the last action is a different page.
+    #:
+    #: In memory only, like the pending screenshot: it is context for a request
+    #: about to be made, not a record of the run.
+    ui_state: str = ""
     #: The signature of the last call this loop refused, so that an identical
     #: refusal is recognised rather than paid for a second time.
     last_refused: str = ""
@@ -965,6 +980,13 @@ class ComputerRunner:
             # reads down the user turn meets "this step is done" before it meets
             # the screenshot that still shows the control it just used.
             parts.append(PROGRESS_NOTE)
+        if run.ui_state:
+            # The page as it is, not as it looked.  Placed with the other facts
+            # about the present and before the screenshot, so a control that is
+            # still on screen is read together with the fact of what it is
+            # already doing.  Empty on the first request of a run, which is the
+            # one request that has no action to be the consequence of.
+            parts.append(run.ui_state)
         if image:
             # Only the current screenshot, stated with its own size so the
             # coordinates that follow are measured in this image's grid.
@@ -1029,6 +1051,33 @@ class ComputerRunner:
             )
         )
         return messages
+
+    async def _refresh_ui_state(self, run: ComputerRun) -> None:
+        """Re-read the page and replace whatever the last request was told.
+
+        Called before every request after the first, so the block a request
+        carries is the state of the page at the moment that request is built --
+        after the last action, after the last screenshot, and re-read on a retry
+        of the same request.
+
+        The replacement is unconditional.  Keeping the previous text when a read
+        fails would be the one outcome that cannot be defended: the model would be
+        shown a stale page described in the present tense, and would have no way
+        to tell.  So a failed read clears the field and sends
+        `UI_STATE_UNAVAILABLE`, which says the state is unknown instead of
+        claiming it is known and wrong.
+
+        A read must never fail the run.  The state is an addition to what the
+        model already had, not the basis of any decision the loop makes, so an
+        exception here costs one line of context and nothing else.
+        """
+        try:
+            state = await self.computer.state()
+        except Exception as exc:  # context is never a reason to fail the run
+            log.debug("computer: could not read the page state: %s", exc)
+            run.ui_state = UI_STATE_UNAVAILABLE
+            return
+        run.ui_state = format_ui_state(state) or UI_STATE_UNAVAILABLE
 
     def _allowed_tools(self, run: ComputerRun) -> List[str]:
         """Narrow the tool catalogue for conservative single-action runs.
@@ -1465,6 +1514,13 @@ class ComputerRunner:
             run.trace.append(turn)
             self._trim_trace(run)
 
+            # From the second request of the run onwards, every request carries the
+            # page's current state, read now rather than remembered: the first
+            # request is the only one with nothing in it to be the consequence of,
+            # and a state read earlier than the last action describes a page the
+            # model is no longer on.
+            if len(run.trace) > 1:
+                await self._refresh_ui_state(run)
             if run.pending_image:
                 messages = self._request_after_screenshot(run, run.pending_image, refusal)
             else:

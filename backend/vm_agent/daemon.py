@@ -276,6 +276,98 @@ def _cdp_send(ws, mid: int, method: str, params: dict | None = None) -> None:
     ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
 
 
+#: The page's own state, read from the live DOM rather than from a picture of it.
+#:
+#: `location.href` and `document.title` were already read here; this adds what a
+#: screenshot cannot carry -- which element actually holds focus, what it is
+#: called, whether a dialog is open, and what is selected.  Those are the four
+#: facts that separate "the composer is still on screen" from "the composer is
+#: focused and waiting for text", and a screenshot shows both identically.
+#:
+#: Everything here is generic and derives from ARIA plus the platform's own
+#: mapping: no site, no selector, no control name is named anywhere in it, so the
+#: same expression describes any page.  Names are resolved the way a screen reader
+#: resolves them -- `aria-label`, `aria-labelledby`, a `<label for>`, then
+#: title/placeholder/alt -- and the role falls back to the tag's implicit role.
+#:
+#: Every step is wrapped: a page that throws (a cross-origin frame, a CSP quirk, a
+#: detached node) yields an absent field, never an exception and never a guess.
+#: An absent field is the truthful answer, and the caller renders it as absent.
+_UI_STATE_JS = r"""
+(function () {
+  var out = {};
+  function attr(el, name) {
+    try { return (el.getAttribute && el.getAttribute(name)) || ""; } catch (e) { return ""; }
+  }
+  function text(el) {
+    try { return (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100); }
+    catch (e) { return ""; }
+  }
+  function name(el) {
+    if (!el) return "";
+    var v = attr(el, "aria-label");
+    if (!v && attr(el, "aria-labelledby")) {
+      try {
+        v = attr(el, "aria-labelledby").split(/\s+/).map(function (id) {
+          return text(document.getElementById(id));
+        }).join(" ");
+      } catch (e) {}
+    }
+    if (!v && el.id) {
+      try {
+        var esc = (window.CSS && CSS.escape) ? CSS.escape(el.id)
+                                             : el.id.replace(/["\\]/g, "\\$&");
+        var lab = document.querySelector('label[for="' + esc + '"]');
+        if (lab) v = text(lab);
+      } catch (e) {}
+    }
+    if (!v) v = attr(el, "title") || attr(el, "placeholder") || attr(el, "alt");
+    if (!v && (el.tagName || "").toUpperCase() === "INPUT") v = attr(el, "value");
+    if (!v) v = text(el);
+    return v.replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+  var TAGS = { TEXTAREA: "textbox", SELECT: "combobox", BUTTON: "button", A: "link", IMG: "img" };
+  var INPUTS = { text: "textbox", search: "searchbox", email: "textbox", tel: "textbox",
+                 url: "textbox", password: "textbox", number: "spinbutton",
+                 checkbox: "checkbox", radio: "radio", range: "slider",
+                 submit: "button", button: "button", reset: "button" };
+  function role(el) {
+    if (!el) return "";
+    var r = attr(el, "role");
+    if (r) return r.split(/\s+/)[0];
+    try { if (el.isContentEditable) return "textbox"; } catch (e) {}
+    var t = (el.tagName || "").toUpperCase();
+    if (t === "A" && !attr(el, "href")) return "";
+    if (t === "INPUT") return INPUTS[(attr(el, "type") || "text").toLowerCase()] || "textbox";
+    return TAGS[t] || t.toLowerCase();
+  }
+  function describe(el) {
+    if (!el) return null;
+    var r = role(el), n = name(el);
+    if (!r && !n) return null;
+    return { role: r, name: n };
+  }
+  try { out.url = location.href || ""; } catch (e) { out.url = ""; }
+  try { out.title = document.title || ""; } catch (e) { out.title = ""; }
+  try {
+    var ae = document.activeElement;
+    // A focused <body> means nothing on the page has focus, which is a different
+    // answer from "the body is focused" and the one the model needs.
+    out.focus = describe(ae && ae !== document.body ? ae : null);
+  } catch (e) { out.focus = null; }
+  try {
+    var dlg = document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]');
+    out.dialog = dlg ? { name: name(dlg) } : null;
+  } catch (e) { out.dialog = null; }
+  try {
+    var sel = document.querySelector('[aria-selected="true"], [aria-pressed="true"], [aria-checked="true"], option:checked');
+    out.selected = describe(sel);
+  } catch (e) { out.selected = null; }
+  return JSON.stringify(out);
+})()
+"""
+
+
 _cdp_cmd_lock = threading.Lock()
 _cdp_in_ws_obj = None
 _cdp_in_wsurl = None
@@ -2358,6 +2450,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/computer/state":
             url, title = "", ""
+            info = {}
             wsurl = _cdp_target_wsurl()
             if wsurl:
                 try:
@@ -2366,7 +2459,7 @@ class Handler(BaseHTTPRequestHandler):
                     ws = _cdp_connect(wsurl)
                     try:
                         _cdp_send(ws, 1, "Runtime.evaluate",
-                                  {"expression": "JSON.stringify({u:location.href,t:document.title})",
+                                  {"expression": _UI_STATE_JS,
                                    "returnByValue": True})
                         for _ in range(30):
                             raw = ws.recv()
@@ -2379,7 +2472,9 @@ class Handler(BaseHTTPRequestHandler):
                                     info = json.loads(val)
                                 except Exception:
                                     info = {}
-                                url, title = info.get("u", ""), info.get("t", "")
+                                if not isinstance(info, dict):
+                                    info = {}
+                                url, title = info.get("url", ""), info.get("title", "")
                                 break
                     finally:
                         try:
@@ -2388,12 +2483,19 @@ class Handler(BaseHTTPRequestHandler):
                             pass
                 except Exception:
                     pass
+            # `focus`, `dialog` and `selected` are null when the page could not
+            # report them, and the caller renders that as absent.  They are never
+            # filled in from what the page looked like: this route reports the
+            # DOM, and a guess here would be indistinguishable from a fact.
             self._json(200, {
                 "ok": True,
                 "url": url,
                 "title": title,
                 "width": _desktop_width(),
                 "height": _desktop_height(),
+                "focus": info.get("focus") or None,
+                "dialog": info.get("dialog") or None,
+                "selected": info.get("selected") or None,
             })
             return
         if path in ("/display/restart", "/display/chromium/restart", "/display/ensure"):
