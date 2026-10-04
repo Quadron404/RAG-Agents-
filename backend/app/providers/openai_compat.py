@@ -46,6 +46,31 @@ def _reason(resp: "httpx.Response") -> str:
     return str(phrase).strip()
 
 
+def _content_text(content) -> str:
+    """`message.content` as plain text, whichever shape it arrived in.
+
+    The spec allows a string or a list of content parts, and OpenAI-compatible
+    endpoints differ on which they send.  A list rendered with ``str()`` would
+    reach the caller as a Python repr with quotes and braces around it, which
+    corrupts any structured text in the content -- the computer loop's
+    ``{"history": ...}`` object, for one, would no longer be extractable.  So the
+    text parts are joined and the rest is dropped, rather than stringified.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return "" if content is None else str(content)
+    parts: List[str] = []
+    for part in content:
+        if isinstance(part, str):
+            parts.append(part)
+        elif isinstance(part, dict) and part.get("type") in ("text", "output_text", ""):
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts)
+
+
 def _retry_after(resp: "httpx.Response"):
     """``Retry-After`` in seconds, when the provider sent a usable one.
 
@@ -255,9 +280,14 @@ class OpenAICompatProvider(Provider):
                 message = first.get("message") if isinstance(first, dict) else {}
                 if not isinstance(message, dict):
                     message = {}
-                content = message.get("content")
+                content = _content_text(message.get("content"))
                 if content:
-                    yield TextDelta(str(content))
+                    yield TextDelta(content)
+                # A reply that carries a tool call plus structured text and no
+                # other prose is a complete answer: the text is yielded above
+                # unchanged, so the caller can read the computer loop's
+                # {"history": ...} object out of it, and the call below is
+                # accepted on its own merits.  Neither part requires the other.
                 for tc in message.get("tool_calls") or []:
                     if not isinstance(tc, dict):
                         continue
@@ -313,7 +343,12 @@ class OpenAICompatProvider(Provider):
                     if not chunk.get("choices"):
                         continue
                     delta = chunk["choices"][0].get("delta", {})
-                    content = delta.get("content")
+                    # Accumulated as text whatever shape the delta used, and
+                    # joined across chunks: a streamed reply can split the
+                    # computer loop's history JSON anywhere, including inside a
+                    # string, and the object is only readable once the whole
+                    # reply has arrived.
+                    content = _content_text(delta.get("content"))
                     if content:
                         yield TextDelta(content)
                     for tc in delta.get("tool_calls") or []:

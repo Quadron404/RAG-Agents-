@@ -332,6 +332,16 @@ export interface ComputerTurn {
   user_text: string;
   wire: ComputerWire;
   raw: string;
+  /**
+   * The semantic history the model wrote at the end of its own reply, and the
+   * exact text the *next* request will carry as `History.txt`.
+   *
+   * Separate from `execution` on purpose: this is what the model said it did,
+   * that is what the machine did with it. Empty with a `history_error` means the
+   * model wrote none the runner could accept — it is never invented.
+   */
+  history_note?: string;
+  history_error?: string;
   error: string;
   /**
    * How the request ended, when it ended badly.
@@ -459,6 +469,16 @@ export interface ComputerTrace {
    * is not something a string can carry.
    */
   failure?: ComputerFailure;
+  /**
+   * `History.txt` as the next request carries it: one `{"history": ...}` object
+   * per action, in the model's own words, newest last.
+   *
+   * Never contains coordinates, a tool name with its arguments, or a success or
+   * failure verdict — those are the executor's, and they are in `turn.execution`.
+   */
+  history?: string;
+  /** The executor's own per-attempt log, kept beside the history, never in it. */
+  executor_facts?: string[];
   protocol: {
     first_turn_allowed: string[];
     after_screenshot_allowed: string[];

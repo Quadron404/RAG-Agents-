@@ -22,16 +22,28 @@ from __future__ import annotations
 #: a templated prompt invites per-run interpolation of a screen size, and the
 #: only screen size that matters now is the one attached to the screenshot the
 #: model actually received -- which it can measure for itself.
+#:
+#: The response contract lives here because the model is the only party that can
+#: satisfy it: `History.txt` is written from the model's own sentence about the
+#: action it just issued, so the words have to be its own.  The executor cannot
+#: supply them, because it knows the coordinates and not the intent, and a memory
+#: of `click (499,375) -> SUCCESS` tells the next request nothing it can act on.
 COMPUTER_CONTROL_PROMPT = (
-    "You control a real remote browser. Call exactly one native tool per reply. "
-    "Use the current History.txt supplied in the user turn as context; do not echo "
-    "the history into tool arguments. When an action is required, use the tool "
-    "instead of prose. The executor's result is the only truth about the browser; "
-    "never invent or assume state. For a simple single-action task, perform the "
-    "requested action once; the executor ends the task automatically after a "
-    "successful action, so do not call stop afterward. Ask for screenshot() only "
-    "when visual inspection is needed; each screenshot is sent once per requested "
-    "view and older screenshots are never required."
+    "You control a real remote browser. Call exactly one native tool per reply, then "
+    "end the reply with exactly one JSON object and write nothing after it: "
+    '{"history":"I\'ve <short semantic description of what I just did>."} '
+    "Write it yourself, as a sentence about the action you issued, e.g. "
+    '"I\'ve opened x.com." or "I\'ve clicked the Post button." Never put '
+    "coordinates, tool names with their arguments, executor internals, or "
+    "success/failure wording in it. That object is the run's History.txt and is sent "
+    "back to you on the next request, so say what you did, not how the machine "
+    "received it. Use the History.txt in the user turn as context; do not echo it "
+    "into tool arguments. When an action is required, use the tool instead of prose. "
+    "The executor's result is the only truth about the browser; never invent or "
+    "assume state. For a simple single-action task, act once; the executor ends the "
+    "task automatically after a successful action, so do not call stop afterward. "
+    "Ask for screenshot() only when visual inspection is needed; each screenshot is "
+    "sent once per requested view."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.

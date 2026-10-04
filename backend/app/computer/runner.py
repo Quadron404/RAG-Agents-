@@ -17,12 +17,28 @@ to know it had arrived on the page, which one line of text says.
 
 So the screen became a tool.  Nothing attaches an image implicitly, the model
 calls `screenshot()` when it needs to look, and the image it gets is dropped the
-moment it has been acted on.  What persists is text: one short line per state
-change, written by the model, which is what the next request carries.
+moment it has been acted on.  What persists is text: the model's own sentence
+about the action it just issued, and that is what the next request carries.
 
-Nothing here fabricates.  A history line is recorded only when the model wrote
-one, a screenshot exists only because the real screen was captured, and the
-trace reports the token counts the API reported rather than an estimate of them.
+The split between the two records of a turn is the point of this module, and it
+is not negotiable:
+
+``ai_history`` -- ``{"history":"I've clicked the Post button."}``, written by the
+    model, and `History.txt`.  This is the run's memory.  Only the model knows
+    which button it meant.
+
+``facts`` / ``last_action`` / ``execution`` -- ``click (499,375) -> SUCCESS``,
+    written by the executor.  This is the evidence.  It answers whether the
+    action worked, and it answers it from the only party that could know.
+
+Neither is allowed to become the other.  A memory of `click (499,375)` teaches
+the next request nothing it can act on; a history line the model wrote about a
+navigation that timed out teaches it that the navigation worked.  So the model
+writes only what it issued, and the executor reports only what occurred.
+
+Nothing here fabricates.  A history note exists only because the model wrote one,
+a screenshot exists only because the real screen was captured, and the trace
+reports the token counts the API reported rather than an estimate of them.
 """
 
 from __future__ import annotations
@@ -47,6 +63,7 @@ from ..providers.router import (
 )
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
+from .history import extract_history_note, history_block
 from .prompt import REFUSAL_NOTE, RETRY_NOTE, build_prompt, screenshot_note
 from .tools import (
     STATE_CHANGING_TOOLS,
@@ -164,14 +181,22 @@ class ComputerTurnTrace:
     #: Images on this request.  Read off the serialised body, so it counts what
     #: went to the API rather than what the loop believed it was sending.
     images_sent: int = 0
-    #: The compact text history as it went out, so the trace can show that the
-    #: history stayed text: one line per state change, no base64 anywhere.
+    #: The AI-written history as it went out on this request, so the trace can
+    #: show that the memory stayed text and stayed semantic: one JSON object per
+    #: action, no base64, no coordinates.
     history_lines: List[str] = field(default_factory=list)
     history_chars: int = 0
 
     # -- D. what came back, verbatim
     raw: str = ""
     reply_timestamp: float = 0.0
+    #: The semantic history the model wrote at the end of this reply, extracted
+    #: from `raw` and kept so the inspector can show what the next request will
+    #: be told.  Empty when the model wrote none, or wrote one that was refused
+    #: -- and `history_error` says which, because a silently dropped note is
+    #: indistinguishable from a model that was never asked for one.
+    history_note: str = ""
+    history_error: str = ""
     # A transport or provider failure, kept separate from a parse failure: the
     # two are indistinguishable from the outside and get "fixed" in the wrong
     # place.
@@ -243,6 +268,8 @@ class ComputerTurnTrace:
             "user_text": self.user_text,
             "wire": self.wire,
             "raw": self.raw,
+            "history_note": self.history_note,
+            "history_error": self.history_error,
             "error": self.error,
             "provider_reached": self.provider_reached,
             "http_status": self.http_status,
@@ -311,25 +338,32 @@ class ComputerRun:
     #: holds the screenshot bytes, which are the largest thing in the process
     #: and are only ever alive for the one request that asked for them.
     trace: List[ComputerTurnTrace] = field(default_factory=list)
-    #: The compact text history, one short line per state-changing action,
-    #: written by the model through `history(note)` and never by this module.
+    #: The AI-written semantic history, one entry per accepted action.  This is
+    #: `History.txt`: the run's model memory, and the only record of it the next
+    #: request receives.
     #:
-    #: This is the run's memory, and it is written by the *executor*, not by the
-    #: model.  Each line is a fact the machine produced, in the form
-    #: ``navigate https://x.com → FAILED: connection timeout`` or
-    #: ``click (540,420) → SUCCESS``.  Text-only by construction: nothing in this
-    #: loop can put an image here, so "the history contains no screenshots" is a
-    #: property of the data structure rather than a promise in a comment.
+    #: Every entry is a sentence the model itself wrote about the action it had
+    #: just issued -- ``I've opened x.com.``, ``I've clicked the Post button.``
+    #: It is deliberately *not* the executor's fact line.  Only the model knows
+    #: that the click was on the Post button; the executor knows it was at
+    #: (499,375), and a memory of coordinates tells the next request nothing it
+    #: can act on.
     #:
-    #: It used to be the model's own account of what it had done, which meant a
-    #: run could believe it had navigated when the machine had refused, and spend
-    #: the rest of its steps building on that.
+    #: Text-only by construction: nothing in this loop can put an image here, and
+    #: `extract_history_note` refuses a note carrying coordinates or an executor
+    #: verdict, so "the history holds semantics, not mechanics" is enforced at the
+    #: point of entry rather than promised in a comment.
+    ai_history: List[str] = field(default_factory=list)
+    #: The executor's own record of every attempt, in the form the machine saw
+    #: it: ``navigate https://x.com -> FAILED: connection timeout`` or
+    #: ``click (540,420) -> SUCCESS``.
+    #:
+    #: This is evidence, not memory.  It is never sent to the model, because a
+    #: run that reads its own executor log as history will believe a refused
+    #: click landed; it stays on the trace and in the event log, where it is
+    #: exactly what it is -- what the machine did, with coordinates that a bad
+    #: click can be diagnosed from afterwards.
     facts: List[str] = field(default_factory=list)
-    #: The model's optional `history()` lines.  Kept, because a model noticing
-    #: something the executor cannot see is worth keeping -- but they are never
-    #: proof that anything happened, never gate the next action, and never
-    #: appear as fact in the run report.
-    history_text: str = ""
     #: What the executor actually did with the most recent action, and what it
     #: actually reported back.  This is the single source of truth the next
     #: request is told about, so the model learns what happened from the machine
@@ -341,8 +375,8 @@ class ComputerRun:
     #: The screenshot the model asked for, held for exactly one request.
     #:
     #: Set by `screenshot()` and cleared by the request that carries it.  It
-    #: cannot be attached twice, and it is never written into `facts`, so no
-    #: later request can inherit an image the loop has already shown.
+    #: cannot be attached twice, and it is never written into `ai_history`, so
+    #: no later request can inherit an image the loop has already shown.
     pending_image: str = ""
     pending_width: int = 0
     pending_height: int = 0
@@ -493,12 +527,21 @@ class ComputerRun:
             # so a failure is attributed to the request that caused it rather
             # than to whatever happened to be last in the list.
             "failure": self._failure(),
-            # The compact text history, as a list of the model's own lines.  It
-            # is sent in every request, so it is the second-largest recurring
-            # cost after the prompt itself -- and unlike the images it replaced,
-            # it grows by one bounded line per action rather than by a whole
-            # frame.
-            "history": self.history_text,
+            # The AI-written history, verbatim: one `{"history": ...}` object per
+            # action, exactly as it goes out on the next request.  It is the
+            # second-largest recurring cost after the prompt itself -- and unlike
+            # the images it replaced, it grows by one bounded sentence per action
+            # rather than by a whole frame.
+            #
+            # The executor's fact lines are not here and never were meant to be.
+            # They stay on the turn (`history_lines` is the AI history;
+            # `execution` is the machine's verdict), so the memory the model sees
+            # and the evidence a person reads can never be the same thing.
+            "history": history_block(self.ai_history),
+            # The executor's own record of every attempt, kept beside the AI
+            # history precisely because the two are not the same claim: one is
+            # what the model says it did, the other is what the machine did.
+            "executor_facts": list(self.facts),
             # Token accounting, so "the loop got cheaper" is a number rather
             # than an impression.  `usage_reported` is false when no provider
             # sent counts, and the totals are then absent rather than zero.
@@ -574,8 +617,8 @@ class ComputerRunner:
         ``provider`` names which provider answers the *first* request.  It is a
         starting choice rather than a property of the run: the selector can
         change it between turns, and the conversation it is applied to is
-        unchanged, because the history is rebuilt from the recorded events
-        either way.  Blank means the configured default.
+        unchanged, because the AI-written history is the same either way.
+        Blank means the configured default.
         """
         task_id = uuid.uuid4().hex
         run = ComputerRun(
@@ -646,18 +689,21 @@ class ComputerRunner:
         set for exactly one request: the one immediately after the model asked
         for it.
 
-        Everything the loop puts here is a fact the machine produced.  The URL is
-        only ever present because `state()` was asked and answered, and the last
-        action is reported with the result the executor returned, because a model
-        told only what it asked for cannot tell the difference between a click
-        that landed and one the agent refused.
+        `History.txt` is the AI-written semantic history and nothing else: one
+        `{"history": ...}` object per action, in the model's own words.  The
+        executor's fact lines are deliberately absent, and the machine's verdict
+        arrives once, on its own line, as `Last action:` -- so the model learns
+        what it did from its own memory and whether it worked from the only party
+        that could know.  Anything else would collapse those two into one claim.
         """
         parts = [f"Task: {run.task}"]
         if run.last_url:
             # Only ever set from a verified state read, never from a call the
             # model made or wished it had made.
             parts.append(f"Current URL: {run.last_url}")
-        history_text = "\n".join(run.facts)[:12000]
+        history_text = history_block(
+            run.ai_history[-max(1, int(self.settings.computer_max_history_lines)) :]
+        )
         if history_text:
             parts.append("History.txt (latest complete version; use only this):\n" + history_text)
         if run.last_action:
@@ -717,9 +763,15 @@ class ComputerRunner:
         return messages
 
     def _allowed_tools(self, run: ComputerRun) -> List[str]:
-        """Narrow the tool catalogue for conservative single-action runs."""
+        """Narrow the tool catalogue for conservative single-action runs.
+
+        The catalogue is returned whole for every other task.  There is no
+        `history` entry in it and there is not going to be one: history is the
+        JSON object the model writes at the end of its reply, not a second call
+        to execute, and filtering for a tool that does not exist only hid that.
+        """
         if not run.simple_task:
-            return [name for name in TOOL_NAMES if name != "history"]
+            return list(TOOL_NAMES)
         if run.action_count == 0 and not run.seen_width:
             return ["screenshot"]
         return ["click", "type", "key", "scroll", "stop"]
@@ -785,10 +837,21 @@ class ComputerRunner:
         if calls and not raw.strip():
             # A pure native tool-call response has no prose. Keep the trace
             # readable without feeding this synthetic text back to the model.
+            #
+            # This is also why the history parser is given `raw` and not the
+            # tool calls: a reply that carried only a call has no history in it,
+            # and the note it must not claim is `{"name": ..., "arguments": ...}`
+            # -- a JSON object with no `history` key, which the parser refuses
+            # rather than mistaking for one.
             raw = "".join(
                 json.dumps({"name": c.name, "arguments": c.arguments})
                 for c in calls
             )
+
+        # A reply that carries a tool call, a history JSON and no other prose is
+        # a complete answer: `raw` is its history object verbatim, the call is on
+        # `calls`, and `_next_command` accepts the call on that alone.  Prose is
+        # never required, and this response is never classified as empty.
 
         return (
             raw,
@@ -799,10 +862,28 @@ class ComputerRunner:
             dict(usage),
         )
 
+    def _remember_ai_history(self, run: ComputerRun, note: str) -> None:
+        """Store the sentence the model wrote about the action it just issued.
+
+        The only writer of `run.ai_history`, which is `History.txt`.  Appended,
+        never replaced: a run of eight actions is a run of eight entries, and the
+        next request carries all of them so the model can see its own progress
+        rather than only its most recent step.
+
+        Stored as the model's words and nothing more.  No coordinates are added,
+        no status is attached, and a rejected note is not repaired here -- the
+        executor's verdict reaches the model separately, through `last_action`,
+        which is the only place a success or a failure is ever claimed.
+        """
+        cleaned = " ".join(str(note or "").split())
+        if not cleaned:
+            return
+        run.ai_history.append(cleaned)
+
     async def _execute(self, run: ComputerRun) -> None:
         """The loop: one tool call per turn, an image only when asked for.
 
-        Three rules do all the work:
+        Four rules do all the work:
 
         1. No screenshot is captured unless the model called `screenshot()`.  The
            old loop captured one after every single action and attached it to the
@@ -810,14 +891,17 @@ class ComputerRunner:
            the model looked at them or not.
         2. A screenshot lives for exactly one request.  It is attached to the
            turn that follows the call that asked for it, and dropped after that
-turn acts.  It is never written into the facts, so no later request
+           turn acts.  It is never written into the history, so no later request
            can inherit it.
-        3. Every action is followed by what the executor reported, and the run
-           remembers that.  The model is never obliged to write a line about an
-           action before it may take the next one: that obligation cost a whole
-           model turn per action, and the line it produced was the model's claim
-           rather than the machine's evidence.  The executor records the fact
-           itself, so one action is one request.
+        3. Every accepted action is remembered by the model, in the model's own
+           words.  The `{"history": ...}` object it ends its reply with is stored
+           verbatim and is what the next request receives as `History.txt`, which
+           is the point: the executor knows the coordinates and not the intent,
+           so only the model can write a sentence the next turn can act on.
+        4. What actually happened is reported separately, by the executor.  The
+           AI history says what was issued; `last_action` says what the machine
+           did with it.  Neither is allowed to stand in for the other, and a
+           failed action is never rewritten as a successful history entry.
         """
 
         run.status = STATUS_OBSERVING
@@ -863,6 +947,16 @@ turn acts.  It is never written into the facts, so no later request
                 run.step += 1
                 started = time.time()
 
+                # The model described what it just issued; the run remembers it.
+                # Stored before the action runs, and stored whether or not it
+                # succeeds, because the note is a statement about the *request*
+                # ("I've clicked the Post button") and the executor's verdict
+                # about that request is delivered separately on the next turn.
+                # Collapsing the two here is what would turn a refused click into
+                # a successful one.
+                if turn is not None and turn.history_note:
+                    self._remember_ai_history(run, turn.history_note)
+
                 if command.type == "screenshot":
                     # Nothing was performed; the screen was read.  Recorded as an
                     # event so the trace shows that a capture happened rather
@@ -874,7 +968,7 @@ turn acts.  It is never written into the facts, so no later request
                     continue
 
                 terminal = await self._perform(run, command)
-                if command.type not in ("screenshot", "history", "done", "error") and run.last_action.get("status") == "SUCCESS":
+                if command.type not in ("screenshot", "done", "error") and run.last_action.get("status") == "SUCCESS":
                     run.action_count += 1
                 if turn is not None:
                     self._record_execution(turn, command, run, started, terminal)
@@ -1039,8 +1133,8 @@ turn acts.  It is never written into the facts, so no later request
                 # image, so it is recorded before the call rather than inferred
                 # afterwards from whatever was attached.
                 reason="screenshot_result" if run.pending_image else "step",
-                history_lines=list(run.facts),
-                history_chars=sum(len(n) for n in run.facts),
+                history_lines=list(run.ai_history),
+                history_chars=sum(len(n) for n in run.ai_history),
             )
             run.trace.append(turn)
             self._trim_trace(run)
@@ -1172,6 +1266,20 @@ turn acts.  It is never written into the facts, so no later request
                 turn.provider_reached = True
             # Verbatim.  Whatever came back is what gets shown, including prose.
             turn.raw = raw
+
+            # The AI-written semantic history, taken from the same reply as the
+            # tool call and out of the same accumulated text -- streamed chunks
+            # have been joined by now, so a note that arrived one fragment at a
+            # time is read whole.  Extracted here rather than in `_execute`
+            # because this is the only place that has the reply, and stored on
+            # the turn rather than on the run because a reply that is about to be
+            # refused must not become the run's memory.
+            #
+            # A refusal here is recorded, never repaired.  Inventing a note would
+            # put a sentence in the model's mouth about an action it may not
+            # have issued, which is the one failure this whole separation exists
+            # to prevent.
+            turn.history_note, turn.history_error = extract_history_note(raw)
 
             # Token accounting, from what the API reported and counted off the
             # serialised body rather than from application state.
@@ -1358,10 +1466,16 @@ turn acts.  It is never written into the facts, so no later request
         """Execute one command.  The only place a command reaches the machine.
 
         This is the only writer of `run.last_action` and `run.facts`, which is
-        the whole point: the run's memory of what happened is produced here, by
-        the code that can see whether it happened, and not by the model that
+        the whole point: the run's *evidence* of what happened is produced here,
+        by the code that can see whether it happened, and not by the model that
         asked.  A caller cannot learn that an action succeeded except by reading
         what this method recorded.
+
+        It is deliberately not the only writer of `run.ai_history`.  The AI
+        history is the model's own sentence about the action it issued and is
+        written by `_remember_ai_history` from the model's reply; this method
+        never touches it, so the memory the next request reads can never acquire
+        a success or a failure that only this method is entitled to report.
 
         Returns True when the run has reached a terminal state.
         """
@@ -1442,8 +1556,13 @@ turn acts.  It is never written into the facts, so no later request
 
         The line is built from the command the executor was handed and the
         status it returned, so it cannot drift from what was actually attempted.
-        `navigate https://x.com → FAILED: connection timeout` is the whole
-        memory the next request gets of that action.
+        `navigate https://x.com → FAILED: connection timeout` is what a person
+        reads when they want to know whether it worked.
+
+        It is not sent to the model.  That is `run.ai_history`, the model's own
+        words, and mixing the two would give a run a memory of its own executor
+        log -- coordinates and verdicts, in place of the sentence that says what
+        it was trying to do.
         """
         line = f"{_fact_line(command)} → {status}"
         if detail:
@@ -1501,9 +1620,10 @@ turn acts.  It is never written into the facts, so no later request
 def _fact_line(command: Command) -> str:
     """One action as the executor saw it, in as few tokens as are still exact.
 
-    Only the arguments that identify the action appear, because this line is the
-    run's memory and a run of twenty actions must not grow a transcript.  Typed
-    text is clipped so a pasted paragraph cannot dominate every later request.
+    Executor diagnostics, not model memory: these lines carry coordinates on
+    purpose, because that is what a click that missed its target has to be
+    diagnosed from afterwards.  They stay on the trace and out of `History.txt`.
+    Typed text is clipped so a pasted paragraph cannot dominate the log.
     """
     kind = command.type
     if kind == "navigate":

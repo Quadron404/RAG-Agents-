@@ -6,7 +6,15 @@ touch the machine.  A tool the loop cannot perform would have to be either
 ignored -- so the model is told it happened -- or performed by a second,
 unreviewed code path.  Neither is available here.
 
-Two of the ten are the ones the whole loop is shaped around:
+None of the ten is a history tool, and there is no eleventh waiting to become
+one.  The run's memory is the ``{"history": ...}`` JSON object the model writes
+at the end of its own reply, extracted in ``history.py`` and carried on the next
+request by the runner.  Making it a *call* would break the loop's central rule --
+one executable action per request -- and would make the memory a thing the
+executor records rather than a thing the model writes, which is precisely the
+distinction this design turns on.
+
+One of the ten is the one the loop is shaped around:
 
 ``screenshot``
     The only source of an image.  Nothing attaches one automatically, so the
@@ -15,13 +23,7 @@ Two of the ten are the ones the whole loop is shaped around:
     saving: an image costs orders of magnitude more than a line of text, and the
     old loop paid for one on every turn whether or not the model used it.
 
-``history``
-    One short text line per state change, written by the model, stored on the
-    run, and sent back as the compact history.  It is text because that is the
-    only thing that survives: a screenshot in the history is the expensive part
-    coming back, which is exactly what this loop exists to stop.
-
-The remaining eight are the machine's existing executors, unchanged.
+The remaining nine are the machine's existing executors, unchanged.
 """
 
 from __future__ import annotations
@@ -58,16 +60,10 @@ TOOL_NAMES = (
     "error",
 )
 
-#: Tools that change the remote browser, and therefore require a `history` note
-#: before the next action.  `screenshot` changes nothing, which is why asking
-#: for one does not oblige the model to describe it afterwards -- it read
-#: something, it did not do anything.
+#: Tools that change the remote browser.  `screenshot` changes nothing, which is
+#: why asking for one is still an action the model describes in its own words --
+#: it read something, it did not move anything.
 STATE_CHANGING_TOOLS = frozenset({"navigate", "search", "click", "type", "key", "scroll"})
-
-#: One line of history, bounded.  Long enough to say what happened and short
-#: enough that a dozen of them are still cheaper than one screenshot, which is
-#: the comparison the whole design rests on.
-MAX_HISTORY_NOTE_LENGTH = 12000
 
 
 def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -223,8 +219,6 @@ def tool_to_command(
     if name not in TOOL_NAMES:
         return None, f"{name!r} is not a tool; the tools are {', '.join(TOOL_NAMES)}"
 
-    # History is request context, not a tool argument. Older clients may still
-    # send it, so accepting and ignoring it here keeps the wire backward-compatible.
     if name == "screenshot":
         # Carried as a command so it lands in the event log and the trace like
         # every other call, but it has no executor and cannot move anything.
@@ -305,13 +299,6 @@ def tool_to_command(
             return None, f"delta_y must be between -{MAX_SCROLL_DELTA} and {MAX_SCROLL_DELTA}"
         return Command(type="scroll", delta_y=int(delta)), ""
 
-    if name == "history":
-        note = args.get("note")
-        if not isinstance(note, str) or not note.strip():
-            return None, 'history requires a non-empty string "note"'
-        note = " ".join(note.split())[:MAX_HISTORY_NOTE_LENGTH]
-        return Command(type="history", text=note), ""
-
     # done / error
     message = args.get("message")
     if not isinstance(message, str) or not message.strip():
@@ -327,7 +314,6 @@ def tool_to_command(
 __all__ = [
     "TOOL_NAMES",
     "STATE_CHANGING_TOOLS",
-    "MAX_HISTORY_NOTE_LENGTH",
     "computer_tools",
     "parse_arguments",
     "tool_to_command",

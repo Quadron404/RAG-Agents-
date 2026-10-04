@@ -649,7 +649,29 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
         </Bubble>
       )}
 
-      {/* 5.  What the machine did. */}
+      {/* 5.  The sentence the model wrote about what it just issued.  This is
+          History.txt: the exact entry the *next* request carries, so a run's
+          memory is visible where the actions are.  Shown separately from
+          Execution below, which is the machine's verdict on the same action —
+          the two are deliberately not the same record. */}
+      {(turn.history_note || turn.history_error) && (
+        <Bubble
+          side="ai"
+          icon={<Bot size={13} aria-hidden="true" />}
+          label="AI history"
+          tone={turn.history_note ? "ok" : "bad"}
+        >
+          {turn.history_note ? (
+            <Verbatim small>{JSON.stringify({ history: turn.history_note })}</Verbatim>
+          ) : (
+            <p className="ccchat__none">
+              Not added to History.txt. {turn.history_error}
+            </p>
+          )}
+        </Bubble>
+      )}
+
+      {/* 6.  What the machine did. */}
       {turn.execution && Object.keys(turn.execution).length > 0 && (
         <Bubble
           side="system"
@@ -661,7 +683,7 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
         </Bubble>
       )}
 
-      {/* 6.  The frame that followed. */}
+      {/* 7.  The frame that followed. */}
       {turn.next_image && (
         <Bubble side="ai" icon={<Monitor size={13} aria-hidden="true" />} label="Next screenshot" tone="input">
           <Shot image={turn.next_image} meta={turn.next_image_meta} caption="captured after the action" onZoom={onZoom} onGrown={onGrown} />
