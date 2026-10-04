@@ -3,6 +3,57 @@ from __future__ import annotations
 from typing import Optional
 
 
+class ModelCallGateTimeout(RuntimeError):
+    """A request waited for the model-call gate and the queue never cleared.
+
+    Not an HTTP error, and deliberately not one: nothing was sent, so there is
+    no status and no provider body to report, and inventing either would put a
+    claim in the trace that no provider made.  It is the failure this whole class
+    exists to prevent -- the one where a request is queued behind other model
+    calls, never starts, and is indistinguishable from a provider that is slow.
+
+    Raised instead of waiting forever, so the trace says *why* there is no reply:
+    the request lost a queue, not the model.  The two usual reasons are a request
+    already parked on a rate limit and another role (commander, worker, browser)
+    streaming through the same gate.
+    """
+
+    def __init__(
+        self,
+        provider: str = "",
+        model: str = "",
+        waited: float = 0.0,
+        held_by: str = "",
+    ) -> None:
+        self.provider = provider
+        self.model = model
+        self.waited = float(waited)
+        #: Who holds the gate, when it is held.  Names the request that is
+        #: actually in progress, which is the only thing that turns "queued" into
+        #: something actionable.
+        self.held_by = held_by or ""
+        super().__init__(self.message)
+
+    @property
+    def message(self) -> str:
+        who = f"{self.provider}/{self.model}" if self.provider and self.model else (
+            self.provider or "the request"
+        )
+        held = f", still held by {self.held_by}" if self.held_by else ""
+        # Deliberately not "the provider was never reached": this is raised from
+        # two places, and only one of them is a request that was never sent.  The
+        # other is a rate-limited retry that gave up before it was re-sent, where
+        # the provider was reached and refused.  One sentence covering both is
+        # "no reply came back", and the next says why.
+        return (
+            f"{who} gave up after waiting {self.waited:.0f}s for the model-call gate "
+            f"shared by every model call in the app{held}. No reply came back: the "
+            f"request was either never sent or, if the provider had already refused "
+            f"it with a rate limit, never re-sent. The delay was this app's queue, "
+            f"not the model."
+        )
+
+
 class ProviderHTTPError(RuntimeError):
     """A provider answered with an HTTP error status.
 

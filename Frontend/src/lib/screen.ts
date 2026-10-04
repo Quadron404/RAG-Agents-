@@ -385,6 +385,27 @@ export interface ComputerTurn {
    */
   request_state?: ComputerRequestState;
   /**
+   * Seconds this request spent queued for the app's shared model-call gate
+   * before the provider saw it.
+   *
+   * `0` (or absent) means the gate was free and the whole delay was the
+   * provider's. A non-zero value says the delay was ours, spent waiting behind
+   * another model call -- which is otherwise indistinguishable from a slow model,
+   * because a request that has not been sent has no wire summary, no usage and no
+   * finish reason to look at.
+   */
+  gate_wait_seconds?: number;
+  /**
+   * True when the request failed while waiting for the model-call queue, rather
+   * than at the provider.
+   *
+   * Its own flag because `provider_reached: false` covers every kind of transport
+   * failure, and reporting a queue as "the provider was not reached" points the
+   * reader at DNS, keys and firewalls when none of them were involved -- the
+   * request was never sent because other model calls were ahead of it.
+   */
+  queue_timeout?: boolean;
+  /**
    * Why the provider said the turn ended: `stop`, `length`, `tool_calls`,
    * `content_filter`.  Empty when it said nothing.
    *
@@ -478,6 +499,36 @@ export interface ComputerFailure {
   final_result: string;
 }
 
+/**
+ * Where the run's in-flight request stands in the app's shared model-call queue.
+ *
+ * Every model call in the app goes through one gate, because the limit that
+ * matters is the provider's. Queueing is therefore a normal event, and a silent
+ * one: a request waiting behind another call has produced no wire summary, no
+ * token count and no finish reason, so from the turn alone it is indistinguishable
+ * from a request that has hung. This says which it is, and who is in front.
+ */
+export interface ComputerQueue {
+  /**
+   * `clear` nothing is queued and nothing is in flight.
+   * `in_flight` the gate is busy and this run's request is the one using it.
+   * `queued` something else is using it, so this request has not been sent.
+   */
+  state: "clear" | "in_flight" | "queued";
+  /** Who holds the gate, as `provider/model` plus a caller tag. Empty when free. */
+  held_by: string;
+  /**
+   * Epoch seconds at which the current queue formed, or 0 when nobody is queued.
+   *
+   * An epoch rather than a duration on purpose: it is read once per poll and the
+   * browser renders the elapsed time itself, so the number keeps counting between
+   * polls instead of freezing at whatever it was when the response was built.
+   */
+  waiting_since: number;
+  /** This run's own gate label while its request is alive, empty otherwise. */
+  request: string;
+}
+
 /** What the browser may know about a selectable computer-control provider. */
 export interface ComputerProvider {
   name: string;
@@ -541,6 +592,18 @@ export interface ComputerTrace {
    * is not something a string can carry.
    */
   failure?: ComputerFailure;
+  /**
+   * Where the run's live request stands in the shared model-call queue.
+   *
+   * Live rather than historical, and deliberately not part of the saved run
+   * record: a queue is a moment. Read while a turn is `pending`, it is the
+   * difference between "the model is thinking" and "this request has not been
+   * sent yet because something else is using the provider".
+   *
+   * Optional because an older backend does not send it, and absence means there
+   * is no queue to report -- never "there was none".
+   */
+  queue?: ComputerQueue;
   /**
    * `History.txt` as the next request carries it: one `{"history": ...}` object
    * per action, in the model's own words, newest last.

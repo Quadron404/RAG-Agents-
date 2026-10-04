@@ -17,6 +17,7 @@ import {
   fetchComputerTrace,
   setComputerProvider,
   type ComputerProvider,
+  type ComputerQueue,
   type ComputerTrace,
   type ComputerTurn,
 } from "../lib/screen";
@@ -263,7 +264,7 @@ export default function ComputerChat() {
             </Bubble>
 
             {trace.turns.map((turn) => (
-              <Turn key={turn.turn} turn={turn} onZoom={setZoom} onGrown={repin} />
+              <Turn key={turn.turn} turn={turn} queue={trace.queue} onZoom={setZoom} onGrown={repin} />
             ))}
 
             {trace.turns.length === 0 && (
@@ -485,9 +486,15 @@ function Failure({ turn }: { turn: ComputerTurn }) {
   const reached = turn.provider_reached;
   const attempts = turn.http_attempts ?? [];
   const rateLimited = status === 429;
+  // A queue is not a provider.  This gets its own headline because the two
+  // failures look identical in every other field -- no status, no provider body,
+  // provider not reached -- and they have opposite fixes: one means look at the
+  // key and the network, the other means look at what else is calling the model.
+  const queuedOut = turn.queue_timeout === true;
 
-  const headline =
-    reached === true
+  const headline = queuedOut
+    ? `Gave up in the model-call queue after ${Math.round(turn.gate_wait_seconds ?? 0)}s — never sent`
+    : reached === true
       ? `Provider reached — HTTP ${status}${turn.http_reason ? ` ${turn.http_reason}` : ""}`
       : reached === false
         ? "Provider was not reached"
@@ -498,6 +505,7 @@ function Failure({ turn }: { turn: ComputerTurn }) {
       <p className="ccfail__headline">
         {headline}
         {rateLimited && <span className="ccfail__tag">rate limited</span>}
+        {queuedOut && <span className="ccfail__tag">queued out</span>}
       </p>
 
       {turn.provider_error && <p className="ccfail__why">{turn.provider_error}</p>}
@@ -518,16 +526,28 @@ function Failure({ turn }: { turn: ComputerTurn }) {
             Provider asked to wait: {Number(turn.retry_after).toFixed(Number(turn.retry_after) % 1 ? 1 : 0)}s
           </Fact>
         )}
-        <Fact ok={(turn.retry_attempts ?? 0) <= 1}>
-          Attempts made: {turn.retry_attempts ?? 1}
-        </Fact>
+        {/* Counted from the recorded attempts rather than from a default, so a
+            request that was never sent does not claim it was attempted once. */}
+        {attempts.length > 0 && (
+          <Fact ok={attempts.length <= 1}>
+            Attempts made: {attempts.length}
+          </Fact>
+        )}
       </div>
 
+      {queuedOut && (
+        <p className="ccfail__hint">
+          This request was never sent. Every model call in the app goes through one queue &mdash; the
+          commander, the workers and this run share it &mdash; and this one waited behind them for
+          longer than the queue will hold a request. Nothing about the provider, the key or the
+          network is at fault; the run was waiting its turn.
+        </p>
+      )}
       {rateLimited && (
         <p className="ccfail__hint">
           The provider was reached and refused on purpose, so this is not a network or a key problem.
-          Quota limits clear on their own; the request is retried with a widening, jittered pause and
-          then stops rather than retrying forever.
+          Quota limits clear on their own, so the same request is re-sent when the provider says its
+          window reopens &mdash; at most three times, and it stops there rather than retrying forever.
         </p>
       )}
       {status > 0 && !rateLimited && status >= 400 && status < 500 && (
@@ -565,7 +585,7 @@ function Failure({ turn }: { turn: ComputerTurn }) {
   );
 }
 
-function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
+function Turn({ turn, queue, onZoom, onGrown }: { turn: ComputerTurn; queue?: ComputerQueue; onZoom: (z: { src: string; label: string }) => void; onGrown: () => void }) {
   // Read before anything else, because it decides what the rest of the fields
   // mean.  An entry exists in the trace from the moment it is created, which is
   // before the provider is asked, so for the whole duration of the request it
@@ -575,6 +595,15 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
   // wire summary and an unreported finish reason -- three failures that had not
   // happened yet.  Absent means an older backend, whose turns are all complete.
   const pending = turn.request_state === "pending";
+  // Queued is read from the run's own request, not inferred from the turn: a
+  // pending turn has no provider and no reply yet, so it cannot say whether it
+  // is the call using the provider or the one waiting for it.  The backend can,
+  // because it knows which request published the gate's label.
+  const queued = pending && queue?.state === "queued";
+  const queuedFor = queued ? elapsedSince(queue?.waiting_since) : 0;
+  // The queue this request paid, once it is over.  Zero is not reported: it means
+  // the gate was free, and the delay that followed belonged to the provider.
+  const gateWait = turn.gate_wait_seconds ?? 0;
   const serialised = serialisedFact(turn);
   return (
     <div className="ccchat__turn">
@@ -590,10 +619,31 @@ function Turn({ turn, onZoom, onGrown }: { turn: ComputerTurn; onZoom: (z: { src
         {turn.first_turn && <span className="ccchat__tag">no screenshot yet</span>}
         {/* A live request, named as one.  The reason this cannot be left to the
             empty fields: "in progress" and "came back empty" are the same
-            pixels, and only the backend knows which it is looking at. */}
+            pixels, and only the backend knows which it is looking at.
+
+            "Queued" is a different statement again, and a more useful one: the
+            request has not been *sent*, so the model has not started on it and
+            the clock that matters is the queue's.  Both are shown, because a
+            reader watching a request sit still needs to know which of the two
+            they are watching -- "waiting its turn" and "thinking" are
+            different problems with different fixes. */}
         {pending && (
           <span className="ccchat__tag ccchat__tag--live" role="status">
-            <Loader2 size={11} className="ccchat__spin" aria-hidden="true" /> in progress
+            <Loader2 size={11} className="ccchat__spin" aria-hidden="true" />{" "}
+            {queued ? `queued behind another model call for ${queuedFor}s` : "in progress"}
+          </span>
+        )}
+        {queued && queue?.held_by && (
+          <span className="ccchat__tag">gate held by {queueLabel(queue.held_by)}</span>
+        )}
+        {/* What the queue cost this request, kept after it is over.  Shown only
+            when it was at least a second, because a fraction of a second is the
+            normal case of an uncontended gate and reporting it would be noise.
+            This is the receipt for the live tag above -- the run can be read
+            afterwards as slow model or slow queue. */}
+        {!pending && gateWait >= 1 && (
+          <span className="ccchat__tag" title="Time this request spent waiting for the app's shared model-call queue before the provider was asked">
+            queued {Math.round(gateWait)}s before it was sent
           </span>
         )}
         <span className="ccchat__turn-time">{clock(turn.timestamp)}</span>
@@ -1032,6 +1082,31 @@ function fmt(v: unknown): string {
 function clock(seconds: number): string {
   if (!seconds) return "";
   return new Date(seconds * 1000).toLocaleTimeString();
+}
+
+/**
+ * Whole seconds since an epoch timestamp, as the browser sees it now.
+ *
+ * The arithmetic is local on purpose. The backend sends when the queue formed,
+ * not how long it has lasted, so the number keeps counting between polls and
+ * across a reopened panel -- a duration computed server-side would be stale the
+ * moment it was rendered. `0` for an absent timestamp, which the caller only asks
+ * about when it has already established that a queue exists.
+ */
+function elapsedSince(epochSeconds?: number): number {
+  if (!epochSeconds) return 0;
+  return Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
+}
+
+/**
+ * The gate holder's name without the caller tag the backend appends.
+ *
+ * The tag exists so the backend can tell two calls apart when both resolve to
+ * the same provider and model; it is a task id, and a task id in a status line
+ * is noise to anyone reading it.
+ */
+function queueLabel(heldBy: string): string {
+  return heldBy.split("#")[0].trim() || heldBy;
 }
 
 function formatBytes(n: number): string {

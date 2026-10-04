@@ -60,8 +60,17 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
-from ..providers.base import LLMMessage, TextDelta, ToolCall, ToolCallEvent, image_mime, stream_model
-from ..providers.errors import ProviderHTTPError
+from ..providers.base import (
+    LLMMessage,
+    TextDelta,
+    ToolCall,
+    ToolCallEvent,
+    image_mime,
+    model_call_gate_label,
+    model_call_gate_snapshot,
+    stream_model,
+)
+from ..providers.errors import ModelCallGateTimeout, ProviderHTTPError
 from ..providers.router import (
     ProviderUnavailable,
     Router,
@@ -234,6 +243,25 @@ class ComputerTurnTrace:
     #: good tool call are all completed, and are told apart by `raw`,
     #: `tool_call` and `parse_error`, which by then hold something real.
     request_state: str = REQUEST_PENDING
+    #: Seconds this request spent queued for the shared model-call gate before the
+    #: provider saw it, including a wait to re-enter after a rate limit.
+    #:
+    #: It lives next to `request_state` because that is the field it explains.
+    #: A pending turn with no wire summary has no way to say whether it is a
+    #: slow provider or a queue -- the provider has not been asked, so it has said
+    #: nothing at all -- and a run that cannot tell those apart looks identical to
+    #: one that has hung.  Non-zero says the delay was spent in the gate, in this
+    #: process, and names it: ours, not the model's.
+    gate_wait_seconds: float = 0.0
+    #: True only when this request failed while *waiting for the gate*, so the
+    #: panel can say that instead of "provider not reached".
+    #:
+    #: A separate flag because `provider_reached` is true of a hundred other
+    #: failures and false of this one, and reading this failure as an unreachable
+    #: provider sends the reader after DNS, keys and firewalls when nothing was
+    #: wrong with any of them: the request lost a queue in this process and was
+    #: never sent at all.
+    queue_timeout: bool = False
     #: Why the provider said the turn ended, in its own word: `stop`, `length`,
     #: `tool_calls`, `content_filter`.  Empty when it said nothing at all.
     #:
@@ -323,6 +351,8 @@ class ComputerTurnTrace:
             "wire": self.wire,
             "raw": self.raw,
             "request_state": self.request_state,
+            "gate_wait_seconds": self.gate_wait_seconds,
+            "queue_timeout": self.queue_timeout,
             "stop_reason": self.stop_reason,
             "history_note": self.history_note,
             "history_error": self.history_error,
@@ -475,6 +505,16 @@ class ComputerRun:
     #: Never published: the instance holds the API key, and `public()` is an
     #: explicit allow-list rather than a dump of the record.
     last_provider: Any = None
+    #: The gate label of this run's request while it is in flight, empty the rest
+    #: of the time.
+    #:
+    #: The gate publishes the label of whoever holds it, and holding a label is
+    #: not the same as being this run's request: the commander, the worker and a
+    #: second run all call through the same gate.  This is how the panel tells
+    #: "your request is queued" from "your request is the one running" -- a
+    #: distinction it cannot make from the turn, which is still empty of provider
+    #: and reply while the call is in progress.
+    inflight_label: str = ""
 
     def public(self) -> Dict[str, Any]:
         """What the browser is allowed to see.
@@ -554,7 +594,49 @@ class ComputerRun:
         # confident report of a failure that never occurred.
         if not report.get("failure"):
             report.pop("failure", None)
+        # The gate is live state, so it is attached here and not in `_build_report`
+        # or `public()`: those describe what a run *did*, and both are persisted
+        # by `_persist`.  A queue is a moment, and freezing one into the saved
+        # record would turn "was queued for 12s at this instant" into a permanent
+        # claim about the run.
+        report["queue"] = self._queue_report()
         return report
+
+    def _queue_report(self) -> Dict[str, Any]:
+        """Where this run's request stands in the shared model-call queue.
+
+        Decided here rather than in the panel because the two facts it needs are
+        both server-side: the gate is a process object, and whether the call
+        holding it is *this* run's request is known by comparing the gate's label
+        with the label this run published.  A panel handed only "the gate is busy"
+        would have to guess, and the guess is the one that matters -- it decides
+        whether a request with no reply yet is running or stuck.
+
+        `waiting_since` is an epoch rather than a duration so the browser can keep
+        counting between polls.  A duration computed here is already stale by the
+        time it is rendered, which would make a queue that has waited 40s read as
+        39s and appear to be going backwards.
+        """
+        gate = model_call_gate_snapshot()
+        held_by = str(gate.get("held_by") or "")
+        inflight = self.inflight_label
+        if not gate.get("busy"):
+            state = "clear"
+        elif inflight and held_by == inflight:
+            state = "in_flight"
+        elif held_by:
+            state = "queued"
+        else:
+            # Busy with nothing holding it under a name: the window between
+            # taking the lock and publishing the label.  Reporting a queue here
+            # would be inventing a second caller that is not there.
+            state = "in_flight"
+        return {
+            "state": state,
+            "held_by": held_by,
+            "waiting_since": float(gate.get("waiting_since") or 0.0),
+            "request": inflight,
+        }
 
     def _build_report(
         self,
@@ -664,6 +746,21 @@ def _wire_of(provider) -> Dict[str, Any]:
     """
     wire = getattr(provider, "last_wire", None)
     return dict(wire) if isinstance(wire, dict) else {}
+
+
+def _gate_wait_of(provider) -> float:
+    """Seconds a request spent queued, read off the provider that queued it.
+
+    Read the same way on the failure paths as on the success path, because the
+    failure paths are exactly where it matters: a request that gave up waiting is
+    the one whose wait is the entire story, and reading it from the same place
+    means it cannot disagree with the value a successful request would have
+    reported.
+    """
+    try:
+        return max(0.0, float(getattr(provider, "last_gate_wait", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 #: Why a reply with no text and no tool call says what it says.  Keyed by the
@@ -934,17 +1031,22 @@ class ComputerRunner:
             return ["screenshot"]
         return ["click", "type", "key", "scroll", "stop"]
 
-    async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int], str]:
+    async def _ask(self, messages: List[LLMMessage], run: ComputerRun) -> Tuple[str, str, str, Dict[str, Any], List[ToolCall], Dict[str, int], str, float]:
         """Make exactly one logical model request.
 
-        The provider layer owns the global ten-second pacing and 429 stall/retry
-        policy. A 429 therefore never creates a new logical request here and
-        cannot be overtaken by another queued message.
+        The provider layer owns the global ten-second pacing and the 429
+        stall/retry policy, both of which are now bounded: a request that cannot
+        get the gate, or cannot get past a rate limit, is told so instead of
+        waiting without end. A 429 still never creates a new logical request here
+        and cannot be overtaken by another queued message.
 
         Returns the assistant text, the provider and model that were asked, the
-        serialised request, the native tool calls, the reported token counts and
-        the provider's own reason for ending the turn -- the last of which is
-        what makes an empty reply a diagnosis rather than a shrug.
+        serialised request, the native tool calls, the reported token counts, the
+        provider's own reason for ending the turn and the seconds this request
+        spent queued before the provider saw it -- the last of which is what
+        makes a delayed request attributable to a queue rather than to a model,
+        and the provider's reason for ending is what makes an empty reply a
+        diagnosis rather than a shrug.
         """
         # Cleared before the provider is even resolved: a run that fails to
         # resolve must not inherit the previous turn's provider, and with it the
@@ -987,6 +1089,7 @@ class ComputerRunner:
                 computer_tools(self._allowed_tools(run)),
                 model,
                 on_rate_limit=on_rate_limit,
+                caller=run.task_id,
             ):
                 if isinstance(event, TextDelta):
                     parts.append(event.content)
@@ -1005,15 +1108,35 @@ class ComputerRunner:
         # on this turn is this turn's" true rather than usually true.
         provider.last_wire = None
         provider.last_stop_reason = None
+        # Same reason, one step earlier in the request: `last_gate_wait` says how
+        # long this request was queued, so the previous turn's queue must not be
+        # reported as this one's.  A zero here is a claim -- "the gate was free" --
+        # and it is only true because `stream_model` overwrites it before it waits.
+        provider.last_gate_wait = 0.0
 
-        # There is intentionally no fixed wall-clock timeout here.  A 429 owns
-        # the model-call gate until the provider reset time and must not be
-        # converted into TimeoutError while it is sleeping.
-        await drain()
+        # There is intentionally no wall-clock timeout wrapped around this call.
+        # A rate-limited request parks inside the provider layer and is retried at
+        # the provider's own reset time, and a local timeout would convert that
+        # wait into a TimeoutError and lose the fact that the provider was reached
+        # and said when to come back.  The waits here are bounded where they
+        # happen instead -- at the gate -- so the request is told the queue was
+        # the problem rather than being cut off by a timer that knows nothing
+        # about it.
+        #
+        # The label is published for exactly as long as the call is alive, queue
+        # included, and cleared in a `finally` because a request that raised or
+        # was cancelled must not keep claiming the gate -- a stale label would
+        # make the next run report itself as queued behind a request that ended.
+        run.inflight_label = model_call_gate_label(provider, model, run.task_id)
+        try:
+            await drain()
+        finally:
+            run.inflight_label = ""
 
         wire = _wire_of(provider)
         usage = getattr(provider, "last_usage", None) or {}
         stop_reason = str(getattr(provider, "last_stop_reason", "") or "")
+        gate_wait = float(getattr(provider, "last_gate_wait", 0.0) or 0.0)
         raw = "".join(parts)
 
         # `raw` is the assistant text and nothing else.  A native tool-call reply
@@ -1041,6 +1164,7 @@ class ComputerRunner:
             calls,
             dict(usage),
             stop_reason,
+            gate_wait,
         )
 
     def _remember_ai_history(self, run: ComputerRun, note: str) -> None:
@@ -1376,6 +1500,7 @@ class ComputerRunner:
             calls: List[ToolCall] = []
             usage: Dict[str, int] = {}
             stop_reason = ""
+            gate_wait = 0.0
             try:
                 (
                     raw,
@@ -1385,6 +1510,7 @@ class ComputerRunner:
                     calls,
                     usage,
                     stop_reason,
+                    gate_wait,
                 ) = await self._ask(messages, run)
             except ProviderUnavailable as exc:
                 # The provider is named even though the call never happened, so
@@ -1398,6 +1524,7 @@ class ComputerRunner:
                 turn.error = str(exc)
                 turn.provider_reached = False
                 turn.request_state = REQUEST_FAILED
+                turn.gate_wait_seconds = _gate_wait_of(run.last_provider)
                 # No request was made, so there is no serialised request to
                 # report: an empty wire here means "nothing was sent", and the
                 # panel says so rather than rendering it as a failed
@@ -1406,6 +1533,27 @@ class ComputerRunner:
                 run.status = STATUS_ERROR
                 run.message = str(exc)
                 return None, str(exc)
+            except ModelCallGateTimeout as exc:
+                # The request lost a queue, not the model.  Nothing was sent, so
+                # there is no status, no provider body and no reply to judge --
+                # and this handler exists so the trace says exactly that instead
+                # of inheriting "provider unreachable", which sends the reader
+                # looking at DNS, keys and firewalls when the delay was ours.
+                turn.provider = exc.provider or run.provider
+                turn.model = exc.model or (
+                    computer_model_for(self.settings, run.provider) if run.provider else ""
+                )
+                turn.raw = ""
+                turn.reply_timestamp = time.time()
+                turn.error = exc.message
+                turn.provider_reached = False
+                turn.request_state = REQUEST_FAILED
+                turn.queue_timeout = True
+                turn.gate_wait_seconds = max(exc.waited, _gate_wait_of(run.last_provider))
+                turn.wire = _wire_of(run.last_provider)
+                run.status = STATUS_ERROR
+                run.message = exc.message
+                return None, exc.message
             except ProviderHTTPError as exc:
                 # The provider was reached and refused.  Recorded as structured
                 # fields, not flattened into one string, because the reader has
@@ -1428,6 +1576,7 @@ class ComputerRunner:
                 # The provider was asked and did not answer, so there is no reply
                 # to judge and nothing here may be read as one.
                 turn.request_state = REQUEST_FAILED
+                turn.gate_wait_seconds = _gate_wait_of(run.last_provider)
                 # The body this turn *did* serialise, kept on the failed turn.
                 # It was built and sent before the refusal, so the trace can show
                 # what was asked for next to what came back -- and the panel no
@@ -1448,6 +1597,7 @@ class ComputerRunner:
                 turn.error = f"{type(exc).__name__}: {exc}"
                 turn.provider_reached = False
                 turn.request_state = REQUEST_FAILED
+                turn.gate_wait_seconds = _gate_wait_of(run.last_provider)
                 # Whatever the serialiser managed to record before the failure.
                 # A transport failure after the body was built is not a
                 # serialisation failure, and the trace must not say it was.
@@ -1460,6 +1610,11 @@ class ComputerRunner:
             turn.model = model
             turn.wire = wire
             turn.stop_reason = stop_reason
+            # How long this request was queued before the provider saw it.  Kept on
+            # the turn that paid it, so a slow run can be read as slow *model* or
+            # slow *queue* afterwards -- the two are indistinguishable from the
+            # timings otherwise.
+            turn.gate_wait_seconds = gate_wait
             # The provider answered.  Set before anything is judged, because every
             # judgement below -- valid call, empty reply, refused call -- is a
             # judgement about a reply that exists, and only this says so.
