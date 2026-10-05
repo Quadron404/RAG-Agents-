@@ -94,6 +94,14 @@ _LIMITS = {
     "condition": MAX_CONDITION_CHARS,
 }
 
+#: One message for every way of not having a plan: the argument absent from the
+#: call, and the argument present and empty are the same failure, so they get the
+#: same sentence.  Two messages for one fault is how a reader starts wondering
+#: which of them the run actually hit.
+_ABSENT_ERROR = (
+    f"the {NEXT_STEP_ARGUMENT} argument was not present; every native tool call must carry it"
+)
+
 
 def next_step_schema(description: str) -> Dict[str, Any]:
     """The `next_step` argument, added to every tool and required on every one.
@@ -149,9 +157,23 @@ def _validate(raw: Any) -> Tuple[Dict[str, str], str]:
     reason, because "bad next_step" and "no next_step" call for different fixes.
     """
     if raw is None:
-        return {}, f"the {NEXT_STEP_ARGUMENT} argument was not present"
+        return {}, _ABSENT_ERROR
     if not isinstance(raw, dict):
         return {}, f"the {NEXT_STEP_ARGUMENT} argument was {type(raw).__name__}, not an object"
+
+    # Unknown fields are refused rather than ignored.  The three are the whole
+    # plan, and a fourth is either the model rewriting the object it was given a
+    # schema for or smuggling something past the checks below under a name they do
+    # not look at -- so it is dropped here rather than filtered silently, and the
+    # refusal names what a plan is made of so the model can correct it in one
+    # reply.
+    extra = sorted(set(raw) - set(_FIELDS))
+    if extra:
+        return {}, (
+            f"the {NEXT_STEP_ARGUMENT} object has unexpected field(s) "
+            f"{', '.join(repr(name) for name in extra)}; a plan has exactly "
+            f"{', '.join(_FIELDS)}"
+        )
 
     plan: Dict[str, str] = {}
     for name in _FIELDS:
@@ -203,8 +225,8 @@ def extract_next_step(args: Optional[Dict[str, Any]]) -> Tuple[Dict[str, str], s
     """
     if not isinstance(args, dict):
         return {}, "the tool call arguments were not an object"
-    if NEXT_STEP_ARGUMENT not in args:
-        return {}, f"the {NEXT_STEP_ARGUMENT} argument was missing; every native tool call must carry it"
+    # `.get` rather than a membership test, so the absent argument and the empty
+    # one are reported by the same rule instead of two that can drift apart.
     return _validate(args.get(NEXT_STEP_ARGUMENT))
 
 

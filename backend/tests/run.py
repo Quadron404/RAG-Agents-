@@ -22,6 +22,14 @@ TESTS = (
     # to pass for a feature that can click a user's real browser to be
     # deployable at all.
     "test_computer_control",
+    # The `next_step` memory, the second half of the model's memory of a run.
+    # Paired with the check above on purpose: `history` says what the model just
+    # did and this says what it meant to do next, so a run can only be trusted to
+    # progress rather than to repeat itself if both are proven to arrive, be
+    # replaced by the newest value, and reach the executor as neither.  It sits
+    # next to test_computer_control rather than with the provider checks because it
+    # drives none of them: the timing it proves is the loop's, not a provider's.
+    "test_computer_next_step",
     # The real xdotool layer on the agent.  Paired with the check above on
     # purpose: that one proves the loop only asks for allowed commands, and this
     # one proves the agent cannot be talked into running anything else.  Either

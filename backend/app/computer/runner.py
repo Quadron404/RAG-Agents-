@@ -729,6 +729,11 @@ class ComputerRun:
             # `execution` is the machine's verdict), so the memory the model sees
             # and the evidence a person reads can never be the same thing.
             "history": history_block(self.ai_history),
+            # The one plan the run is currently holding, rendered exactly as the
+            # next request will receive it.  Beside the history rather than on
+            # the turns because, unlike the history, there is only ever one: the
+            # newest, and the only one any later request will be sent.
+            "next_step": format_next_step(self.next_step),
             # The executor's own record of every attempt, kept beside the AI
             # history precisely because the two are not the same claim: one is
             # what the model says it did, the other is what the machine did.

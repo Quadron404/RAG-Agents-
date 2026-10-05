@@ -312,7 +312,14 @@ class NextStepTiming(NextStepTestCase):
         ])
         asyncio.run(finish(runner, "go"))
         texts = [user_text(c) for c in provider.calls]
-        for text in texts[1:]:
+        # Request 1 has no previous plan at all.  Request 2 legitimately carries
+        # the plan reply 1 wrote -- that is the feature working.  The claim under
+        # test starts at request 3: the two replies after it each carried no
+        # usable plan, so the good one must be gone rather than still readable as
+        # current.
+        self.assertIsNone(planned_tool(texts[0]))
+        self.assertEqual(planned_tool(texts[1]), "click")
+        for text in texts[2:]:
             self.assertNotIn("The good plan.", text,
                              "a superseded plan survived a response that carried none")
 
@@ -327,9 +334,14 @@ class NextStepTiming(NextStepTestCase):
         ])
         asyncio.run(finish(runner, "go"))
         texts = [user_text(c) for c in provider.calls]
-        # Request 2 is the one that carries the image, and it carries the plan.
+        # Request 2 is answered by the `screenshot` call, so the frame it captures
+        # rides on request 3 -- which must carry the plan that call wrote, or a
+        # turn that can see the screen is a turn with no idea what it meant to do
+        # on it.
         self.assertEqual(planned_tool(texts[1]), "screenshot")
-        self.assertIn("Latest screenshot", texts[1])
+        self.assertEqual(planned_tool(texts[2]), "click")
+        self.assertIn("Latest screenshot", texts[2])
+        self.assertIn("Activate.", texts[2])
 
     def test_a_refused_call_revises_the_plan_in_its_retry(self):
         # The click is out of bounds, so it is refused; the retry has to carry the
@@ -456,7 +468,7 @@ class NextStepValidation(NextStepTestCase):
     def test_a_missing_plan_is_an_error_not_a_default(self):
         got, error = extract_next_step({"history": "I've clicked it."})
         self.assertEqual(got, {})
-        self.assertIn("missing", error)
+        self.assertIn("not present", error)
 
     def test_each_mistake_is_named(self):
         cases = [
