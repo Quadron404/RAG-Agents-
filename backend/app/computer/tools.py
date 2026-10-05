@@ -49,6 +49,7 @@ from .commands import (
     Command,
     normalize_key,
 )
+from .next_step import NEXT_STEP_ARGUMENT, next_step_schema
 
 #: The complete tool surface, in the order the prompt lists it.  Every name here
 #: is dispatched in `_perform_tool`; a name that is in the schemas but not in
@@ -94,26 +95,52 @@ HISTORY_DESCRIPTION = (
     "actions and to progress the task."
 )
 
+#: The other metadata argument every tool carries, and the reason it exists.
+#:
+#: `history` says what the model just did; this says what it means to do next.
+#: Both are arguments of the one call the model had to make anyway, because a
+#: native tool call is the only channel these endpoints fill -- a reply that ends
+#: a tool call has no prose to read either of them out of.  See `next_step.py`.
+NEXT_STEP_DESCRIPTION = (
+    "Required. Plan the immediate next model step after this tool finishes. "
+    "Set \"tool\" to the single tool the next turn should normally use, "
+    "\"instruction\" to exactly what that step must accomplish, and \"condition\" "
+    "to what to verify before doing it. The next request is sent this object back, "
+    "so use it to continue the task instead of restarting your reasoning. It is "
+    "planning context, never an executable command, and the next turn must still "
+    "check the latest screenshot, Current UI state, Last action and task and revise "
+    "the plan if the state differs. Do not repeat a completed action merely because "
+    "the same control is still visible. Never claim the planned step already "
+    "happened, never state whether this call succeeded or failed, never include raw "
+    "tool JSON, and never include coordinates -- name the target instead, because "
+    "the frame the coordinates were read from may be gone by the next turn. For "
+    "done, stop and error use \"tool\": \"none\", \"instruction\": \"Terminal "
+    "response; no further model action is required.\" and \"condition\": \"This run "
+    "is finished.\""
+)
+
 
 def _object_schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
-    """A tool's parameters, with `history` added and required.
+    """A tool's parameters, with `history` and `next_step` added and required.
 
-    Every tool takes it, including the four that change nothing: a screenshot or
-    a `done` is still something the model did, and leaving the argument optional
-    on those is how a model learns that the sentence is optional at all.
+    Every tool takes both, including the four that change nothing: a screenshot or
+    a `done` is still something the model did, and the turn after it still has to
+    know what comes next.  Leaving either argument optional on some tools is how a
+    model learns that it is optional at all.
 
-    The key is added last and unconditionally so a future tool cannot ship
-    without it by forgetting this helper.
+    Both keys are added last and unconditionally so a future tool cannot ship
+    without them by forgetting this helper.
     """
     props = dict(properties)
     props[HISTORY_ARGUMENT] = {
         "type": "string",
         "description": HISTORY_DESCRIPTION,
     }
+    props[NEXT_STEP_ARGUMENT] = next_step_schema(NEXT_STEP_DESCRIPTION)
     return {
         "type": "object",
         "properties": props,
-        "required": [*list(required), HISTORY_ARGUMENT],
+        "required": [*list(required), HISTORY_ARGUMENT, NEXT_STEP_ARGUMENT],
     }
 
 
@@ -261,12 +288,16 @@ def tool_to_command(
     if name not in TOOL_NAMES:
         return None, f"{name!r} is not a tool; the tools are {', '.join(TOOL_NAMES)}"
 
-    # `history` rides inside the call as metadata for the AI-memory layer and is
-    # never part of the command.  Dropped here as well as in the runner so that
-    # no branch below can pick it up by accident, and so that
+    # `history` and `next_step` ride inside the call as metadata for the two memory
+    # layers, and are never part of the command.  Dropped here as well as in the
+    # runner so that no branch below can pick one up by accident, and so that
     # `Command.to_json()` and the executor both provably receive only the fields
     # the machine is actually driven by.
-    args = {key: value for key, value in args.items() if key != HISTORY_ARGUMENT}
+    args = {
+        key: value
+        for key, value in args.items()
+        if key not in (HISTORY_ARGUMENT, NEXT_STEP_ARGUMENT)
+    }
 
     if name == "screenshot":
         # Carried as a command so it lands in the event log and the trace like

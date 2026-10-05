@@ -81,6 +81,7 @@ from ..providers.router import (
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
 from .history import extract_history, history_block
+from .next_step import NEXT_STEP_ARGUMENT, extract_next_step, format_next_step
 from .prompt import PROGRESS_NOTE, REFUSAL_NOTE, build_prompt, screenshot_note
 from .tools import (
     HISTORY_ARGUMENT,
@@ -283,6 +284,12 @@ class ComputerTurnTrace:
     #: indistinguishable from a model that was never asked for one.
     history_note: str = ""
     history_error: str = ""
+    #: The plan this reply carried, and why it was refused when it was.  Kept for
+    #: the same reason as `history_error`: a plan that was silently dropped is
+    #: indistinguishable from a model that was never asked for one, and the
+    #: difference is exactly what a repeated action looks like from the outside.
+    next_step: Dict[str, str] = field(default_factory=dict)
+    next_step_error: str = ""
     # A transport or provider failure, kept separate from a parse failure: the
     # two are indistinguishable from the outside and get "fixed" in the wrong
     # place.
@@ -360,6 +367,8 @@ class ComputerTurnTrace:
             "stop_reason": self.stop_reason,
             "history_note": self.history_note,
             "history_error": self.history_error,
+            "next_step": dict(self.next_step),
+            "next_step_error": self.next_step_error,
             "error": self.error,
             "provider_reached": self.provider_reached,
             "http_status": self.http_status,
@@ -475,6 +484,18 @@ class ComputerRun:
     #: In memory only, like the pending screenshot: it is context for a request
     #: about to be made, not a record of the run.
     ui_state: str = ""
+    #: The plan the model wrote for its next turn, from its most recent reply.
+    #:
+    #: Only ever the newest one: every response replaces it, and a response that
+    #: carried no usable plan clears it.  That is what stops an old plan from
+    #: outliving the page it was written on -- a plan is a statement about a turn
+    #: that has not happened, so the one sitting on the run when a request is
+    #: built has to be the last thing the model actually said.
+    #:
+    #: Never executed and never used to choose an action.  It is sent to the model
+    #: as text, next to the state it has to be checked against, and the model still
+    #: makes the call.
+    next_step: Dict[str, str] = field(default_factory=dict)
     #: The signature of the last call this loop refused, so that an identical
     #: refusal is recognised rather than paid for a second time.
     last_refused: str = ""
@@ -991,7 +1012,20 @@ class ComputerRunner:
             # Only the current screenshot, stated with its own size so the
             # coordinates that follow are measured in this image's grid.
             parts.append(screenshot_note(run.pending_width, run.pending_height))
+        plan = format_next_step(run.next_step)
+        if plan:
+            # Last of the context, immediately before the model has to answer:
+            # the task, what it did, what the machine did, what the page reports
+            # and what it looks like, and then what it meant to do next -- read
+            # in that order so the plan is judged against everything above it
+            # rather than in place of it.  Empty on the first request of a run,
+            # which is the one request with no previous reply to plan in.
+            parts.append(plan)
         if note:
+            # After the plan, deliberately.  A refusal is the more urgent fact, so
+            # it is the last thing read; and the plan it revises is still shown,
+            # because a model correcting a wrong call needs to be able to correct
+            # its plan in the same reply.
             parts.append(REFUSAL_NOTE.format(error=note))
         return [
             LLMMessage(role="system", content=build_prompt()),
@@ -1728,6 +1762,18 @@ class ComputerRunner:
             if turn.images_sent:
                 run.requests_with_images += 1
 
+            # Every reply replaces the plan, and that is decided here rather than
+            # in the parser below, because the replies that never reach the parser
+            # are exactly the ones that cannot produce a new plan: an empty
+            # response, no tool call, two tool calls, unreadable arguments.  Left
+            # alone, the previous turn's plan would sit on the run and be sent
+            # again as though the model had just written it -- which is the one
+            # thing a plan must never be.
+            run.next_step = {}
+            turn.next_step, turn.next_step_error = {}, (
+                "the reply carried no readable tool call, so it carried no next_step"
+            )
+
             # Keep the image alive through a no-tool/malformed-tool recovery once.
             # This avoids the wasteful failure pattern:
             # screenshot -> empty response -> screenshot again -> click.
@@ -1816,10 +1862,24 @@ class ComputerRunner:
             # inventing one, or copying the tool name into a sentence, is the one
             # thing this separation exists to prevent.
             turn.history_note, turn.history_error = extract_history(args, raw)
-            # Removed before the command is built, so `Command`, `Command.to_json()`
-            # and therefore `RemoteComputer` see only the executable fields.  The
-            # note has already been read; from here it is memory, not an argument.
+            # The plan for the next turn, read from the same call for the same
+            # reason, and stored on the *run* rather than the turn: unlike the
+            # history it is not filtered by whether the command was accepted,
+            # because it is not a record of this call but of the next one, and a
+            # plan is exactly what a request that was refused still produced.
+            #
+            # Replaced, never merged and never appended to, so the plan on the run
+            # when the next request is built is the last thing the model actually
+            # wrote.  A plan refused here leaves `run.next_step` empty rather than
+            # falling back to the previous one: an older plan about a page the
+            # model has since navigated away from is worse than no plan at all.
+            turn.next_step, turn.next_step_error = extract_next_step(args)
+            run.next_step = dict(turn.next_step)
+            # Both removed before the command is built, so `Command`,
+            # `Command.to_json()` and therefore `RemoteComputer` see only the
+            # executable fields.  By this point they are memory, not arguments.
             args.pop(HISTORY_ARGUMENT, None)
+            args.pop(NEXT_STEP_ARGUMENT, None)
 
             if call.name == "click" and not run.seen_width:
                 # A click needs a frame to be a coordinate in.  Refusing it is
