@@ -37,51 +37,31 @@ from __future__ import annotations
 #: one-tool-call-per-reply rule intact by construction.
 COMPUTER_CONTROL_PROMPT = (
     "You control a real remote browser. Call exactly one native tool per reply. "
-    "Every tool call MUST include a required \"history\" string in its arguments; "
-    "that string is your semantic memory of the action you are issuing right now. "
-    "Example: {\"x\":344,\"y\":107,\"history\":\"I've clicked the Post button.\"} "
-    "Write the history yourself, as a short sentence naming the page or the control. "
-    "Never include coordinates, raw tool arguments, executor internals, or whether "
-    "the action succeeded; only the executor reports that, separately. Do not write "
-    "a second JSON object, and do not add prose after the call. "
-    "Use the History.txt in the user turn as context; do not echo it into tool "
-    "arguments. When an action is required, use the tool instead of prose. "
-    "Every tool call MUST also include a next_step object: that is your plan for "
-    "the immediate next model turn once this tool finishes, and the next request "
-    "is sent it back. Give the next tool, exactly what it must accomplish, and what "
-    "must be verified first. It is planning context, not an executable command -- "
-    "on the next request, use it to continue the task instead of restarting your "
-    "reasoning, and always check the latest screenshot, Current UI state, Last "
-    "action and task, revising the plan when the state differs. Do not repeat a "
-    "completed action merely because the same control is still visible; use the "
-    "previous next_step to move on to the next action. "
-    "The executor's result is the only truth about what was executed; never invent "
-    "or assume state. A successful action is already completed. Do not repeat the "
-    "same successful action just because the control is still visible in a later "
-    "screenshot. After a successful action, advance to the next step of the task. "
-    "Repeat an action only when the latest screenshot or executor result shows that "
-    "the previous action did not produce the required state. "
+    "Every tool call MUST include a required \"history\" string in its arguments: one "
+    "short sentence in your own words naming the page or the control you are acting "
+    "on, e.g. \"I've clicked the Post button.\" That string is the run's memory, and "
+    "the next request is sent it instead of a transcript. Never include coordinates, "
+    "raw tool arguments, executor internals, or whether the action succeeded -- only "
+    "the executor reports that, and it reports it separately. Do not write a second "
+    "JSON object, and do not add prose after the call. Use the History.txt in the "
+    "user turn as context; do not echo it into tool arguments. When an action is "
+    "required, use the tool instead of prose. "
+    "Every tool call MUST also include a next_step object: your plan for the immediate "
+    "next turn once this tool finishes, which the next request is sent back. Give the "
+    "next tool, exactly what it must accomplish, and what must be verified first; for "
+    "done, stop and error use \"tool\": \"none\". It is guidance and never an executable "
+    "command: on the next request, continue from it instead of restarting your "
+    "reasoning, and revise it whenever the latest screenshot, Current UI state, Last "
+    "action or task disagrees with it. "
+    "The executor's result is the only truth about what was executed; never invent or "
+    "assume state. A successful action is already completed -- do not repeat it merely "
+    "because the control is still visible in a later screenshot, and advance to the "
+    "next step of the task instead. Repeat an action only when the latest screenshot "
+    "or executor result shows that it did not produce the required state. "
     "For a simple single-action task, act once; the executor ends the "
     "task automatically after a successful action, so do not call stop afterward. "
     "Ask for screenshot() only when visual inspection is needed; each screenshot is "
     "sent once per requested view."
-)
-
-#: Added to the user turn immediately after `Last action:`, and only on a turn
-#: that has one -- so it can only ever be read next to the executor's verdict on
-#: the step the model just took.
-#:
-#: It is here because the prompt alone did not stop the loop this is about: a
-#: successful click was repeated after each new screenshot, because the model read
-#: the control it had already acted on as the next thing to do.  A rule stated in
-#: the system prompt is restated next to the two artifacts the model has to
-#: reconcile -- its own `History.txt` line and the executor's `Last action:` line
-#: -- which is where the decision is actually made.  It does not touch what counts
-#: as success or what a click does; it only tells the model what a success means.
-PROGRESS_NOTE = (
-    "Progress rule: The last successful action is already completed. Do not repeat "
-    "it unless the current screenshot proves it did not achieve the required state. "
-    "Continue with the next task step."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.
@@ -90,10 +70,15 @@ PROGRESS_NOTE = (
 #: the image was measured in, and this way the number travels with the image
 #: instead of living in a prompt that is describing every screen size the model
 #: might ever see.  Sent once per screenshot rather than once per turn.
+#:
+#: Kept to the three facts that are not recoverable from the image itself: its
+#: size, where (0,0) is, and that a newer frame costs a call.  The longer wording
+#: this replaced also said older images were dropped, which is true of every
+#: request and true of this one -- restating it on the one request that carries an
+#: image bought nothing.
 SCREENSHOT_NOTE = (
-    "Latest screenshot: {width}x{height} pixels, coordinates measured from its "
-    "top-left corner. This is the only current image; older ones are gone. If you "
-    "need the screen again, call screenshot()."
+    "Latest screenshot: {width}x{height}. Coordinates use the image's top-left as "
+    "(0,0). Call screenshot() for a newer frame."
 )
 
 #: Asked for when a call was refused.  Carries the whole recovery instruction,

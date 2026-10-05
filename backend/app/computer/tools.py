@@ -81,18 +81,18 @@ STATE_CHANGING_TOOLS = frozenset({"navigate", "search", "click", "type", "key", 
 HISTORY_ARGUMENT = "history"
 
 #: Why it is required, in the words the model reads.  This description is sent
-#: on every request of every run, so it is also the recurring place where the
-#: semantic rule is enforced: what the sentence may say, and what it may never
-#: say.  The negative half matters most, because the executor's own log is
+#: on every request of every run, ten times over, so it is also the recurring place
+#: where the semantic rule is enforced: what the sentence may say, and what it may
+#: never say.  The negative half matters most, because the executor's own log is
 #: exactly what a model copies when left to guess.
+#:
+#: Kept to one sentence on purpose.  The rules that are *not* here live in the
+#: system prompt instead -- how the sentence is used and when to move on -- because
+#: a rule repeated in all ten schemas is paid for ten times to say one thing, and
+#: this block goes out on every request of every turn.
 HISTORY_DESCRIPTION = (
-    "Required. One short sentence in your own words describing the action you are "
-    "issuing right now, e.g. \"I've clicked the Post button.\" This is the run's "
-    "memory: the next request is sent it instead of a transcript. Never include "
-    "coordinates, raw tool arguments, executor internals, or whether the action "
-    "succeeded -- only the executor may report that, and it reports it separately."
-    " Use the existing History.txt and Last action to avoid repeating completed "
-    "actions and to progress the task."
+    "Required. One short sentence describing the action you are issuing now. No "
+    "coordinates, raw tool arguments, or success/failure claims."
 )
 
 #: The other metadata argument every tool carries, and the reason it exists.
@@ -101,22 +101,20 @@ HISTORY_DESCRIPTION = (
 #: Both are arguments of the one call the model had to make anyway, because a
 #: native tool call is the only channel these endpoints fill -- a reply that ends
 #: a tool call has no prose to read either of them out of.  See `next_step.py`.
+#:
+#: Short for the same reason as `HISTORY_DESCRIPTION` and because the rules it
+#: used to carry are all still in force somewhere cheaper: the system prompt says
+#: to continue from the plan and to revise it when the state disagrees, and it is
+#: the one place that also says a terminal call plans `"tool": "none"`.  The two
+#: prohibitions kept here are the two the validator enforces on the plan itself,
+#: and a model that does not know them loses the plan rather than the action --
+#: so two clauses here are cheaper than ten refused replies.
 NEXT_STEP_DESCRIPTION = (
-    "Required. Plan the immediate next model step after this tool finishes. "
-    "Set \"tool\" to the single tool the next turn should normally use, "
-    "\"instruction\" to exactly what that step must accomplish, and \"condition\" "
-    "to what to verify before doing it. The next request is sent this object back, "
-    "so use it to continue the task instead of restarting your reasoning. It is "
-    "planning context, never an executable command, and the next turn must still "
-    "check the latest screenshot, Current UI state, Last action and task and revise "
-    "the plan if the state differs. Do not repeat a completed action merely because "
-    "the same control is still visible. Never claim the planned step already "
-    "happened, never state whether this call succeeded or failed, never include raw "
-    "tool JSON, and never include coordinates -- name the target instead, because "
-    "the frame the coordinates were read from may be gone by the next turn. For "
-    "done, stop and error use \"tool\": \"none\", \"instruction\": \"Terminal "
-    "response; no further model action is required.\" and \"condition\": \"This run "
-    "is finished.\""
+    "Required. Plan the immediate next model step after this tool finishes. Specify "
+    "the next tool, what it should accomplish, and what to verify first. This is "
+    "guidance, not execution; verify it against the latest task, UI state, "
+    "screenshot, and Last action. Never claim the step already happened. No "
+    "coordinates."
 )
 
 

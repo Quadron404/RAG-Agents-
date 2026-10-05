@@ -109,6 +109,12 @@ def next_step_schema(description: str) -> Dict[str, Any]:
     Built by a function rather than written out once so that a tool added later
     cannot ship without it by forgetting to copy the block, which is the same
     reason `history` goes through `_object_schema`.
+
+    The three field descriptions are the shortest that still say what the field is
+    for.  They are inside the schema of all ten tools, so they go out on every
+    request of every turn, and the model is told what to put in them -- and what to
+    do with the object afterwards -- by the system prompt and the parent block
+    instead.  A field description is for the field, not for the feature.
     """
     return {
         "type": "object",
@@ -116,15 +122,15 @@ def next_step_schema(description: str) -> Dict[str, Any]:
         "properties": {
             "tool": {
                 "type": "string",
-                "description": "The single tool the next model turn should normally use.",
+                "description": "The tool the next turn should normally use.",
             },
             "instruction": {
                 "type": "string",
-                "description": "Detailed instruction for the immediate next task step.",
+                "description": "Exactly what the next step should accomplish.",
             },
             "condition": {
                 "type": "string",
-                "description": "What to verify before performing that next step.",
+                "description": "What must be verified before doing it.",
             },
         },
         "required": list(_FIELDS),

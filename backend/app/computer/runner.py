@@ -82,7 +82,7 @@ from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
 from .history import extract_history, history_block
 from .next_step import NEXT_STEP_ARGUMENT, extract_next_step, format_next_step
-from .prompt import PROGRESS_NOTE, REFUSAL_NOTE, build_prompt, screenshot_note
+from .prompt import REFUSAL_NOTE, build_prompt, screenshot_note
 from .tools import (
     HISTORY_ARGUMENT,
     STATE_CHANGING_TOOLS,
@@ -1002,10 +1002,6 @@ class ComputerRunner:
             parts.append("History.txt (latest complete version; use only this):\n" + history_text)
         if run.last_action:
             parts.append("Last action: " + _result_line(run.last_action))
-            # Directly under the verdict, before anything else, so a model that
-            # reads down the user turn meets "this step is done" before it meets
-            # the screenshot that still shows the control it just used.
-            parts.append(PROGRESS_NOTE)
         if run.ui_state:
             # The page as it is, not as it looked.  Placed with the other facts
             # about the present and before the screenshot, so a control that is
