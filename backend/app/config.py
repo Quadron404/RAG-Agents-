@@ -140,6 +140,12 @@ class Settings:
     )
     computer_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS", "1400")))
     computer_settle_ms_click: int = field(default_factory=lambda: int(_get("COMPUTER_SETTLE_MS_CLICK", "0")))
+    #: Budget (ms) a state-changing action may take to stop changing the page,
+    #: measured by polling the page until two consecutive reads agree.  The two
+    #: legacy settles above time "how long to wait"; this one times "whether the
+    #: page is still", which is the question a state read afterwards actually
+    #: answers.
+    computer_state_settle_ms: int = field(default_factory=lambda: int(_get("COMPUTER_STATE_SETTLE_MS", "600")))
 
     # --- How much a single model call is allowed to say ------------------------
     # Computer control is a loop of one-tool decisions, so the only thing a

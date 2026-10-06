@@ -91,9 +91,18 @@ from .tools import (
     parse_arguments,
     tool_to_command,
 )
-from .ui_state import UI_STATE_UNAVAILABLE, format_ui_state
+from .ui_state import UI_STATE_UNAVAILABLE, format_ui_state, state_signature
 
 log = logging.getLogger(__name__)
+
+#: How many times the *same* state-changing action may have succeeded in a row
+#: with the page reporting no change before the loop refuses the next identical
+#: call instead of executing it.  Deliberately > 1: a genuine action can run
+#: twice with no visible page change (a double click, a second press of a
+#: toggle), so the first repeats are allowed; the identical call that arrives
+#: after the page has still not changed is not another attempt but a loop that
+#: is not reading what it is told.
+NO_PROGRESS_LIMIT = 2
 
 # The only states a run can be in, and the only strings the frontend renders.
 STATUS_IDLE = "idle"
@@ -473,6 +482,19 @@ class ComputerRun:
     #: request is told about, so the model learns what happened from the machine
     #: rather than from its own memory of what it asked for.
     last_action: Dict[str, Any] = field(default_factory=dict)
+    #: The last accepted state-changing command, as a comparable string, and the
+    #: page as it was after that command ran.  Together with
+    #: `no_progress_streak` these are what let the loop recognise the same action
+    #: succeeding against an unchanged page -- the signature of a click that
+    #: failed to move anything, paid for again.
+    last_action_signature: str = ""
+    state_signature: str = ""
+    no_progress_streak: int = 0
+    #: The signature of the page at the moment the current request was built
+    #: (`_refresh_ui_state`), so the no-progress refusal can be sure the page
+    #: still reports what it did after the last action rather than something a
+    #: later read replaced.
+    ui_state_signature: str = ""
     #: The page's real state, formatted for the model, from the most recent read.
     #:
     #: Held on the run so every request carries the same rule: refresh before the
@@ -890,6 +912,7 @@ class ComputerRunner:
             manager,
             settle_ms=settings.computer_settle_ms,
             settle_ms_click=settings.computer_settle_ms_click,
+            state_settle_ms=settings.computer_state_settle_ms,
         )
         self._runs: Dict[str, ComputerRun] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
@@ -1106,12 +1129,14 @@ class ComputerRunner:
         model already had, not the basis of any decision the loop makes, so an
         exception here costs one line of context and nothing else.
         """
+        run.ui_state_signature = ""
         try:
             state = await self.computer.state()
         except Exception as exc:  # context is never a reason to fail the run
             log.debug("computer: could not read the page state: %s", exc)
             run.ui_state = UI_STATE_UNAVAILABLE
             return
+        run.ui_state_signature = state_signature(state)
         run.ui_state = format_ui_state(state) or UI_STATE_UNAVAILABLE
 
     def _allowed_tools(self, run: ComputerRun) -> List[str]:
@@ -1386,20 +1411,6 @@ class ComputerRunner:
                     run.status = STATUS_DONE
                     run.message = "Task complete."
                     return
-
-                if run.last_action.get("status") == "SUCCESS":
-                    # Read the machine back only after it said yes.  On a
-                    # failure the previous URL is still the truthful one: a
-                    # navigation that timed out did not land, and reporting its
-                    # target as current is how a run ends up acting on a page it
-                    # never reached.
-                    try:
-                        state = await self.computer.state()
-                        verified = str(state.get("url") or "").strip()
-                        if verified:
-                            run.last_url = verified
-                    except ComputerError:
-                        pass
 
             run.status = STATUS_ERROR
             run.message = (
@@ -1918,6 +1929,27 @@ class ComputerRunner:
                 run.message = refusal
                 return None, refusal
 
+            if (
+                command.type in STATE_CHANGING_TOOLS
+                and run.no_progress_streak >= NO_PROGRESS_LIMIT
+                and run.last_action_signature == command.to_json()
+                # The state read at request-build time must be the same one the
+                # streak was counted on; a page that has since changed is a new
+                # situation, and an action that followed it is an attempt again.
+                and run.ui_state_signature
+                and run.state_signature == run.ui_state_signature
+            ):
+                refusal = (
+                    "the page did not change after repeated identical calls, so "
+                    "this call was not executed; read the page state and make a "
+                    "different call rather than repeating the same one"
+                )
+                turn.tool_error = refusal
+                if self._refuse(run, turn, raw, refusal, signature, attempt,
+                                "the model repeated a call that is making no progress"):
+                    continue
+                return None, refusal
+
             turn.parse_ok = True
             turn.command = command.to_json()
             turn.tool_result = command.to_json()
@@ -2000,11 +2032,12 @@ class ComputerRunner:
     async def _perform(self, run: ComputerRun, command: Command) -> bool:
         """Execute one command.  The only place a command reaches the machine.
 
-        This is the only writer of `run.last_action` and `run.facts`, which is
-        the whole point: the run's *evidence* of what happened is produced here,
-        by the code that can see whether it happened, and not by the model that
-        asked.  A caller cannot learn that an action succeeded except by reading
-        what this method recorded.
+        This is the only writer of `run.last_action`, `run.facts` and the
+        post-action progress bookkeeping, which is the whole point: the run's
+        *evidence* of what happened is produced here, by the code that can see
+        whether it happened, and not by the model that asked.  A caller cannot
+        learn that an action succeeded except by reading what this method
+        recorded.
 
         It is deliberately not the only writer of `run.ai_history`.  The AI
         history is the model's own sentence about the action it issued and is
@@ -2081,10 +2114,71 @@ class ComputerRunner:
             # lost just because it failed.
             return False
 
-        run.last_action = {"tool": command.type, "status": "SUCCESS", "detail": ""}
-        self._remember(run, command, "SUCCESS", "")
+        detail = ""
+        if command.type in STATE_CHANGING_TOOLS:
+            # The command ran; read the machine back only after it said yes, and
+            # keep the verdict SUCCESS either way.  What the machine reports now
+            # is delivered as a `detail` beside that verdict, so "the click
+            # executed" and "the page did not change" are two facts rather than
+            # one claim that the click worked.
+            detail = await self._observe_after_action(run, command) or ""
+        run.last_action = {"tool": command.type, "status": "SUCCESS", "detail": detail}
+        self._remember(run, command, "SUCCESS", detail)
         self._record(run, command.to_json(), "", "ok", trace=trace)
         return False
+
+    async def _observe_after_action(
+        self, run: ComputerRun, command: Command
+    ) -> Optional[str]:
+        """Read the settled page after a state-changing action, and judge progress.
+
+        Returns a detail line for the executor's verdict, or ``None`` when the
+        page could not be read.  The observation must never fail the run: the
+        state is context for the next request, and context is never a reason to
+        stop a run that already acted.
+
+        Two rules are judged here:
+
+        - a `type` that executed while the page reports it has focus but no
+          editable field that could have received the text is reported as
+          unverified, so the model does not trust success it cannot tie to a
+          field (and address-bar typing is not touched: there the page reports
+          *no* focus, which is neutral);
+        - the same state-changing command succeeding against an unchanged page
+          is counted, so `_next_command` can refuse the repeat instead of paying
+          for a loop that is not reading what it is told.
+        """
+        try:
+            state = await self.computer.state()
+        except Exception as exc:
+            log.debug("computer: could not read the page state: %s", exc)
+            return None
+
+        verified = str(state.get("url") or "").strip()
+        if verified:
+            run.last_url = verified
+
+        signature = state_signature(state)
+        same_action = run.last_action_signature == command.to_json()
+        # "No progress" is the same command run again against a page that
+        # reports the same state it did before the command ran.  A different
+        # command, or the same command that changed something, is progress.
+        unchanged = bool(signature) and bool(run.state_signature) and signature == run.state_signature
+        run.no_progress_streak = run.no_progress_streak + 1 if same_action and unchanged else 0
+        run.last_action_signature = command.to_json()
+        run.state_signature = signature
+
+        if command.type == "type" and state.get("focused") is True:
+            focus = state.get("focus") or {}
+            caret = state.get("caret") or {}
+            if not (focus.get("editable") is True or caret.get("editable") is True):
+                return (
+                    "typed, but the page reports no editable field focused, so "
+                    "the text may not have been received"
+                )
+        if run.no_progress_streak >= 1:
+            return "the page reported no change after the last action, so an identical repeat may not help"
+        return None
 
     def _remember(self, run: ComputerRun, command: Command, status: str, detail: str) -> None:
         """Write one executor-produced fact, and nothing else.

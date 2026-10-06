@@ -308,6 +308,16 @@ def _cdp_send(ws, mid: int, method: str, params: dict | None = None) -> None:
 #: node accepts text at all.  `editable` is derived from the tag, its input type
 #: and `contentEditable` -- no site, no selector, no control name.
 #:
+#: Two more fields help the caller tell an action that *did* something from one
+#: that only reported success.  `value_length` is how much text the focused (or
+#: caret-carrying) field holds, a count that moves when a `type` lands and is
+#: safe to send about a password field.  `caret` names the editable node the
+#: selection anchor sits inside when `activeElement` is its wrapper or something
+#: else entirely -- browser evidence, not a search for something typeable.  And
+#: `scroll` sums the offsets of every element reporting one (bounded to 64), so
+#: a scroll of an inner panel changes it even though the window itself did not
+#: move.
+#:
 #: Every step is wrapped: a page that throws (a cross-origin frame, a CSP quirk, a
 #: detached node) yields an absent field, never an exception and never a guess.
 #: An absent field is the truthful answer, and the caller renders it as absent.
@@ -368,6 +378,17 @@ _UI_STATE_JS = r"""
     if (t === "INPUT") return TEXTUAL[(attr(el, "type") || "text").toLowerCase()] === 1;
     return false;
   }
+  function valueLength(el) {
+    // How much text the field already holds, never the text itself: a count is
+    // what says whether the last `type` landed, and a count is safe to send
+    // about a password field.
+    try {
+      var vl = (typeof el.value === "string")
+        ? el.value.length
+        : (el.textContent || "").replace(/\s+/g, " ").length;
+      return Math.max(0, Math.round(vl));
+    } catch (e) { return null; }
+  }
   function deepest(el) {
     for (var i = 0; el && i < 32; i++) {
       var inner = null;
@@ -396,8 +417,59 @@ _UI_STATE_JS = r"""
     // answer from "the body is focused" and the one the model needs.
     ae = (ae && ae !== document.body) ? deepest(ae) : null;
     out.focus = describe(ae);
-    if (out.focus) out.focus.editable = editable(ae);
+    if (out.focus) {
+      out.focus.editable = editable(ae);
+      if (out.focus.editable) {
+        var vl = valueLength(ae);
+        if (vl !== null) out.focus.value_length = vl;
+      }
+    }
   } catch (e) { out.focus = null; }
+  try {
+    // The editable node the caret is really in, when it is not the node
+    // `activeElement` named: a wrapper that carries the caret inside it, or a
+    // field the caret was left in when focus moved elsewhere.  Reported from a
+    // selection anchored inside an editable node and from nothing else -- the
+    // page is never searched for a field that merely looks typeable, because a
+    // guess here reads exactly like a fact to the model downstream.
+    if (!(out.focus && out.focus.editable)) {
+      var csel = window.getSelection();
+      var node = csel && csel.anchorNode;
+      var el = node ? (node.nodeType === 1 ? node : node.parentNode) : null;
+      for (var ci = 0; el && ci < 32; ci++) {
+        if (editable(el)) {
+          var cd = describe(el);
+          if (cd) {
+            cd.editable = true;
+            var cvl = valueLength(el);
+            if (cvl !== null) cd.value_length = cvl;
+            out.caret = cd;
+          }
+          break;
+        }
+        el = el.parentElement;
+      }
+    }
+  } catch (e) { out.caret = null; }
+  try {
+    // Where the page is scrolled to, summed over the first 64 elements that
+    // report a non-zero offset.  The window's own scroll is one of them, and
+    // the sum also moves when an inner panel scrolls -- which is most of
+    // scrolling on a real page, and without it a scroll that worked would look
+    // like one that did not.
+    var els = document.querySelectorAll("*");
+    var sumX = 0, sumY = 0, counted = 0;
+    for (var k = 0; k < els.length && counted < 64; k++) {
+      var ox = 0, oy = 0;
+      try { ox = Math.round(els[k].scrollLeft) || 0; oy = Math.round(els[k].scrollTop) || 0; }
+      catch (e) {}
+      if (!ox && !oy) continue;
+      counted++;
+      sumX += ox;
+      sumY += oy;
+    }
+    out.scroll = { x: sumX, y: sumY };
+  } catch (e) { out.scroll = null; }
   try {
     var dlg = document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]');
     out.dialog = dlg ? { name: name(dlg) } : null;
@@ -2537,10 +2609,11 @@ class Handler(BaseHTTPRequestHandler):
                             pass
                 except Exception:
                     pass
-            # `focus`, `dialog` and `selected` are null when the page could not
-            # report them, and the caller renders that as absent.  They are never
-            # filled in from what the page looked like: this route reports the
-            # DOM, and a guess here would be indistinguishable from a fact.
+            # `focus`, `dialog`, `selected`, `caret` and `scroll` are null when
+            # the page could not report them, and the caller renders that as
+            # absent.  They are never filled in from what the page looked like:
+            # this route reports the DOM, and a guess here would be
+            # indistinguishable from a fact.
             # `focused` is tri-state for the same reason: `None` means the page
             # could not answer whether it holds focus, which is different from
             # both "it does" and "it does not".
@@ -2553,8 +2626,10 @@ class Handler(BaseHTTPRequestHandler):
                 "height": _desktop_height(),
                 "focused": focused if isinstance(focused, bool) else None,
                 "focus": info.get("focus") or None,
+                "caret": info.get("caret") or None,
                 "dialog": info.get("dialog") or None,
                 "selected": info.get("selected") or None,
+                "scroll": info.get("scroll") if isinstance(info.get("scroll"), dict) else None,
             })
             return
         if path in ("/display/restart", "/display/chromium/restart", "/display/ensure"):

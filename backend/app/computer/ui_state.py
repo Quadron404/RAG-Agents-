@@ -38,6 +38,7 @@ role mapping, so the same block describes any page.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
 #: Sent instead of a state that could not be read.  Distinct from "read, and the
@@ -66,13 +67,63 @@ def _descriptor(raw: Any) -> Dict[str, Any]:
     ``editable`` is carried only when the agent actually answered it: a bool
     means "read, and this is the answer", an absent key means "not reported",
     and the caller leaves the line out rather than inventing one.
+    ``value_length`` is carried the same way: an int means the field's text was
+    counted, and an absent key means the agent did not count it.
     """
     if not isinstance(raw, dict):
         return {}
     out: Dict[str, Any] = {"role": _clean(raw.get("role")), "name": _clean(raw.get("name"))}
     if isinstance(raw.get("editable"), bool):
         out["editable"] = raw["editable"]
+    vl = raw.get("value_length")
+    if isinstance(vl, int) and not isinstance(vl, bool):
+        out["value_length"] = int(vl)
     return out
+
+
+def _sig_field(raw: Any) -> list:
+    """One descriptor as a comparable list, empty fields as None.
+
+    Nothing here is for display: it is what a signature compares, so a field
+    the agent legitimately did not report (``None``) compares differently from
+    one it reported as empty, and editable/value_length ride along where the
+    agent answered them.
+    """
+    d = _descriptor(raw)
+    return [
+        d.get("role") or None,
+        d.get("name") or None,
+        d.get("editable") if isinstance(d.get("editable"), bool) else None,
+        d.get("value_length") if isinstance(d.get("value_length"), int) else None,
+    ]
+
+
+def state_signature(state: Optional[Dict[str, Any]]) -> str:
+    """The page as a stable string two reads can be compared on.
+
+    Distinct from `format_ui_state`: that is for the model, this is for the
+    loop.  Every field that could move when an action lands is in the signature
+    -- url, title, the focused node and how much text it holds, the caret's
+    target, dialog, selection and scroll -- and nothing that does not move is,
+    so an unchanged signature is a truthful "the page did not change", which is
+    the evidence a repeated action is spinning rather than working.
+    """
+    if not isinstance(state, dict):
+        return ""
+    focused = state.get("focused")
+    scroll = state.get("scroll")
+    scroll = scroll if isinstance(scroll, dict) else {}
+    body = {
+        "url": _clean(state.get("url")),
+        "title": _clean(state.get("title")),
+        "focused": focused if isinstance(focused, bool) else None,
+        "focus": _sig_field(state.get("focus")),
+        "caret": _sig_field(state.get("caret")),
+        "dialog": _clean(state.get("dialog", {}).get("name")) if isinstance(state.get("dialog"), dict) else None,
+        "selected": _sig_field(state.get("selected")),
+        "scroll": [scroll.get("x"), scroll.get("y")],
+    }
+    return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
 
 def _focus_lines(raw: Any, focused: Any) -> list:
@@ -95,7 +146,10 @@ def _focus_lines(raw: Any, focused: Any) -> list:
     if focus.get("name"):
         lines.append(f'- Accessible name: "{focus["name"]}"')
     if "editable" in focus:
-        lines.append(f"- Editable: {'yes' if focus['editable'] else 'no'}")
+        editable = "yes" if focus["editable"] else "no"
+        if focus.get("editable") and isinstance(focus.get("value_length"), int):
+            editable += f" ({focus['value_length']} characters)"
+        lines.append(f"- Editable: {editable}")
     return lines
 
 
@@ -124,6 +178,21 @@ def format_ui_state(state: Optional[Dict[str, Any]]) -> str:
     focus_lines = _focus_lines(focus_raw, focused)
     if focus_lines:
         lines.extend(focus_lines)
+
+    # The caret's editable field, reported by the agent only when the caret is
+    # *in* an editable node that is not the focused one.  The focused element
+    # carries its own "Editable: yes" when it is the text receiver, so this line
+    # exists precisely for the case that is otherwise hidden: focus is on a tab
+    # or a wrapper while the caret is in the composer that was just clicked.
+    caret = _descriptor(state.get("caret"))
+    if caret.get("role") and not focus.get("editable"):
+        label = "Last focused editable field" if focused is False else "Focused editable field"
+        line = f"- {label}: {caret['role']}"
+        if caret.get("name"):
+            line += f' "{caret["name"]}"'
+        if isinstance(caret.get("value_length"), int):
+            line += f" ({caret['value_length']} characters)"
+        lines.append(line)
 
     dialog = _descriptor(state.get("dialog"))
     if dialog:
@@ -156,4 +225,4 @@ def format_ui_state(state: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["MAX_NAME_CHARS", "UI_STATE_UNAVAILABLE", "format_ui_state"]
+__all__ = ["MAX_NAME_CHARS", "UI_STATE_UNAVAILABLE", "format_ui_state", "state_signature"]

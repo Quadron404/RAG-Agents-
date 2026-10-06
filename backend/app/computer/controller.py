@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from ..workspace.manager import WorkspaceManager
+
+from .ui_state import state_signature
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +67,7 @@ class RemoteComputer:
         settle_ms: int = 1400,
         settle_ms_click: int = 900,
         settle_ms_typing: int = 700,
+        state_settle_ms: int = 600,
     ) -> None:
         self.manager = manager
         self.settle_ms = settle_ms
@@ -73,6 +77,9 @@ class RemoteComputer:
         # at a time with a delay between them, and the last few land after the
         # call has already returned.
         self.settle_ms_typing = settle_ms_typing
+        # How long a state-changing action may take to stop changing the page,
+        # measured by polling the page itself rather than by a fixed sleep.
+        self.state_settle_ms = state_settle_ms
 
     async def _post(
         self, path: str, payload: Dict[str, Any], timeout: float = 30.0
@@ -92,11 +99,44 @@ class RemoteComputer:
         if ms > 0:
             await asyncio.sleep(ms / 1000.0)
 
+    async def _settle_state(self) -> None:
+        """Wait for the page to stop changing, or give up trying.
+
+        A fixed sleep settles an action that hangs the page, but it cannot say
+        whether the page has actually stopped -- so the state read that follows
+        can capture a page that is still half-way through reacting, and a model
+        that trusts it acts on a state that no longer exists.
+
+        This polls the page itself: two consecutive reads that agree mean it is
+        still, and the ``state_settle_ms`` budget bounds the wait when it is
+        not.  A browser that will not answer cannot be waited on, so a read that
+        fails ends the wait immediately rather than burning the budget hunting.
+        """
+        budget = self.state_settle_ms
+        if budget <= 0:
+            return
+        deadline = time.monotonic() + budget / 1000.0
+        interval = 0.1
+        previous = ""
+        while True:
+            try:
+                current = await self.state()
+                signature = state_signature(current)
+            except Exception:
+                return
+            if previous and signature and signature == previous:
+                return
+            previous = signature
+            if time.monotonic() + interval >= deadline:
+                return
+            await asyncio.sleep(interval)
+
     async def navigate(self, url: str) -> Dict[str, Any]:
         result = await self._post("/computer/navigate", {"url": url})
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "navigation failed"))
         await self._settle(self.settle_ms)
+        await self._settle_state()
         return result
 
     async def search(self, query: str) -> Dict[str, Any]:
@@ -104,6 +144,7 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "search failed"))
         await self._settle(self.settle_ms)
+        await self._settle_state()
         return result
 
     async def click(self, x: float, y: float) -> Dict[str, Any]:
@@ -120,9 +161,13 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "click failed"))
         _trace_click("CLICK", x, y, result)
-        # The agent already delivered the synchronous X event. Do not add an
-        # application-level settle delay after a click: the live desktop and
-        # the next control step should see it immediately.
+        # The agent already delivered the synchronous X event, so there is no
+        # fixed application-level sleep after a click -- but the *page* it
+        # landed on can still be mid-reaction, and the next state read must be
+        # of the page after the click settled, not of one that is still
+        # changing.  That is what polling the page measures; a fixed sleep
+        # cannot.
+        await self._settle_state()
         return result
 
     async def type_text(self, text: str) -> Dict[str, Any]:
@@ -131,6 +176,7 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "typing failed"))
         await self._settle(self.settle_ms_typing)
+        await self._settle_state()
         return result
 
     async def key(self, combo: str) -> Dict[str, Any]:
@@ -147,6 +193,7 @@ class RemoteComputer:
         # search box is usually a navigation, and a screenshot taken before the
         # page has moved is a screenshot of the old page.
         await self._settle(self.settle_ms)
+        await self._settle_state()
         return result
 
     async def scroll(self, delta_y: int) -> Dict[str, Any]:
@@ -155,6 +202,7 @@ class RemoteComputer:
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "scroll failed"))
         await self._settle(self.settle_ms_click)
+        await self._settle_state()
         return result
 
     async def move(self, x: float, y: float) -> Dict[str, Any]:
