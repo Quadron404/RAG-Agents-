@@ -290,6 +290,24 @@ def _cdp_send(ws, mid: int, method: str, params: dict | None = None) -> None:
 #: resolves them -- `aria-label`, `aria-labelledby`, a `<label for>`, then
 #: title/placeholder/alt -- and the role falls back to the tag's implicit role.
 #:
+#: Two things about focus have to be read or the report is wrong in a way the
+#: model cannot detect:
+#:
+#: - `document.activeElement` only answers for the tree it is asked about.  It
+#:   stops at the edge of a shadow root (returning the host) and at the edge of a
+#:   frame (returning the iframe), so a composer built from web components or
+#:   nested documents is described as its container -- a div, an article, a tab
+#:   bar -- while the field really does hold the caret.  `deepest` walks inward
+#:   until there is nothing further inside, and that node is what gets described.
+#: - `document.activeElement` keeps naming a node even when the page holds no
+#:   focus at all, in which case it is the node that held focus *last* and
+#:   nothing typed now would reach it.  `document.hasFocus()` travels alongside
+#:   it so the caller can label the two apart instead of asserting one of them.
+#:
+#: And one fact is decisive for what the model does next: whether the focused
+#: node accepts text at all.  `editable` is derived from the tag, its input type
+#: and `contentEditable` -- no site, no selector, no control name.
+#:
 #: Every step is wrapped: a page that throws (a cross-origin frame, a CSP quirk, a
 #: detached node) yields an absent field, never an exception and never a guess.
 #: An absent field is the truthful answer, and the caller renders it as absent.
@@ -341,6 +359,28 @@ _UI_STATE_JS = r"""
     if (t === "INPUT") return INPUTS[(attr(el, "type") || "text").toLowerCase()] || "textbox";
     return TAGS[t] || t.toLowerCase();
   }
+  var TEXTUAL = { text: 1, search: 1, email: 1, tel: 1, url: 1, password: 1, number: 1 };
+  function editable(el) {
+    if (!el) return false;
+    try { if (el.isContentEditable) return true; } catch (e) {}
+    var t = (el.tagName || "").toUpperCase();
+    if (t === "TEXTAREA" || t === "SELECT") return true;
+    if (t === "INPUT") return TEXTUAL[(attr(el, "type") || "text").toLowerCase()] === 1;
+    return false;
+  }
+  function deepest(el) {
+    for (var i = 0; el && i < 32; i++) {
+      var inner = null;
+      try { inner = el.shadowRoot && el.shadowRoot.activeElement; } catch (e) {}
+      if (inner) { el = inner; continue; }
+      var sub = null;
+      try { sub = el.contentDocument || (el.contentWindow && el.contentWindow.document); }
+      catch (e) {}
+      if (sub && sub.activeElement && sub.activeElement !== sub.body) { el = sub.activeElement; continue; }
+      break;
+    }
+    return el;
+  }
   function describe(el) {
     if (!el) return null;
     var r = role(el), n = name(el);
@@ -349,18 +389,32 @@ _UI_STATE_JS = r"""
   }
   try { out.url = location.href || ""; } catch (e) { out.url = ""; }
   try { out.title = document.title || ""; } catch (e) { out.title = ""; }
+  try { out.focused = !!document.hasFocus(); } catch (e) { out.focused = null; }
   try {
     var ae = document.activeElement;
     // A focused <body> means nothing on the page has focus, which is a different
     // answer from "the body is focused" and the one the model needs.
-    out.focus = describe(ae && ae !== document.body ? ae : null);
+    ae = (ae && ae !== document.body) ? deepest(ae) : null;
+    out.focus = describe(ae);
+    if (out.focus) out.focus.editable = editable(ae);
   } catch (e) { out.focus = null; }
   try {
     var dlg = document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]');
     out.dialog = dlg ? { name: name(dlg) } : null;
   } catch (e) { out.dialog = null; }
   try {
-    var sel = document.querySelector('[aria-selected="true"], [aria-pressed="true"], [aria-checked="true"], option:checked');
+    // `aria-selected` sits on every tab of a tab bar whether or not anyone chose
+    // one, so the first match in document order is normally an incidental tab
+    // and not a selection.  Prefer the states a user actually toggles; fall back
+    // to `aria-selected` only when it belongs to what is focused, which is the
+    // one selection that can be tied to something just done.
+    var sel = document.querySelector('[aria-checked="true"], [aria-pressed="true"], option:checked');
+    if (!sel) {
+      var cand = document.querySelector('[aria-selected="true"]');
+      var ae2 = null;
+      try { ae2 = document.activeElement; } catch (e) {}
+      if (cand && ae2 && (cand === ae2 || (ae2.contains && ae2.contains(cand)))) sel = cand;
+    }
     out.selected = describe(sel);
   } catch (e) { out.selected = null; }
   return JSON.stringify(out);
@@ -2487,12 +2541,17 @@ class Handler(BaseHTTPRequestHandler):
             # report them, and the caller renders that as absent.  They are never
             # filled in from what the page looked like: this route reports the
             # DOM, and a guess here would be indistinguishable from a fact.
+            # `focused` is tri-state for the same reason: `None` means the page
+            # could not answer whether it holds focus, which is different from
+            # both "it does" and "it does not".
+            focused = info.get("focused")
             self._json(200, {
                 "ok": True,
                 "url": url,
                 "title": title,
                 "width": _desktop_width(),
                 "height": _desktop_height(),
+                "focused": focused if isinstance(focused, bool) else None,
                 "focus": info.get("focus") or None,
                 "dialog": info.get("dialog") or None,
                 "selected": info.get("selected") or None,
