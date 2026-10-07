@@ -170,9 +170,9 @@ class Command:
     message: str = ""
     #: The few words a click claimed to be aiming at, checked against what the
     #: page actually holds at the point before the click runs.  Empty for every
-    #: command that is not a click and for every click that named nothing,
-    #: which is what keeps that check off the path of a click that claimed
-    #: nothing -- there is no promise to contradict when there was no promise.
+    #: command that is not a click -- a click itself never has it empty, since
+    #: both parsers refuse one that names nothing, and there is no promise to
+    #: contradict when there was no promise.
     #:
     #: Deliberately absent from `to_json()`: the log records what the machine
     #: was asked to do, which is a coordinate, and `target` is a claim the
@@ -387,9 +387,17 @@ def parse_command(
         target = ""
         if kind == "click":
             raw_target = data.get("target")
-            if raw_target is not None and not isinstance(raw_target, str):
-                return None, 'click "target" must be a string'
+            if not isinstance(raw_target, str):
+                return None, (
+                    'click requires "target": a few words naming the control to '
+                    'press, such as "Post button"'
+                )
             target = clean_target(raw_target)
+            if not target:
+                return None, (
+                    'click requires a non-empty "target" naming the control to '
+                    'press, such as "Post button"'
+                )
         return Command(type=kind, x=x, y=y, target=target), ""
 
     if kind == "type":

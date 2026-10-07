@@ -261,6 +261,38 @@ def history_line(note: str) -> str:
     return json.dumps({HISTORY_ARGUMENT: " ".join(str(note or "").split())}, ensure_ascii=False)
 
 
+def compact_history(entries, max_lines: int = 0) -> List[str]:
+    """The stored notes as the next request should receive them: bounded and deduped.
+
+    Two things a run's memory accumulates and a request must not pay for:
+
+    - *repetition*.  A model that writes the same sentence after every step
+      spends one line of every remaining request on a fact the first line
+      already carried.  Only *consecutive* repeats collapse, so a control
+      pressed, left, and pressed again still reads as two separate moments --
+      the repetition being collapsed is the same note written twice in a row,
+      which is memory failing rather than memory reporting.
+    - *length*.  The newest lines are the useful ones, so the bound keeps them
+      and drops from the front.  Applied after the collapse, so a run of
+      identical notes costs one line rather than consuming the budget that
+      would have held the distinct entries behind it.
+
+    Returns plain sentences; `history_block` is what turns them into the
+    `{"history": ...}` lines of the request.
+    """
+    compact: List[str] = []
+    for entry in entries:
+        note = " ".join(str(entry or "").split())
+        if not note:
+            continue
+        if compact and compact[-1] == note:
+            continue
+        compact.append(note)
+    if max_lines > 0 and len(compact) > max_lines:
+        compact = compact[-max_lines:]
+    return compact
+
+
 def history_block(entries, limit_chars: int = 12000) -> str:
     """The stored entries as one block, newest last, bounded.
 
@@ -287,6 +319,7 @@ def history_block(entries, limit_chars: int = 12000) -> str:
 
 __all__ = [
     "MAX_HISTORY_NOTE_CHARS",
+    "compact_history",
     "extract_history",
     "extract_history_argument",
     "extract_history_note",

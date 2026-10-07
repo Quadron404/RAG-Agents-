@@ -10,7 +10,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -355,77 +355,136 @@ _DOM_HELPERS_JS = r"""(function () {
 
 #: What is under a point, read from the live DOM before the click runs.
 #:
-#: The caller converts a display pixel into viewport coordinates and asks the
-#: page what is there; the whole point of the exercise is to refuse a click
-#: whose target the model named but the page does not hold.  The coordinate
-#: conversion is the one that has to survive a real desktop: a display pixel is
-#: not a CSS pixel (HiDPI), the browser window is not the page (its chrome sits
-#: between them), and the window is not at the origin of the display.
+#: The caller supplies the requested display pixel (`__CLICK_X__`/`__CLICK_Y__`),
+#: the size of the full-display screenshot it was read from (`__DISPLAY_W__`/
+#: `__DISPLAY_H__`) and the X rectangle of the browser's own window
+#: (`__WIN_X__`/`__WIN_Y__`/`__WIN_W__`/`__WIN_H__`, or -1 when X could not name
+#: one).  The script turns those into viewport coordinates and reports what the
+#: page holds there -- which is the one conversion that has to survive a real
+#: desktop: a display pixel is not a CSS pixel (HiDPI), the browser window is
+#: not the page (its chrome sits between them), and the window is not at the
+#: origin of the display.
+#:
+#: Nothing here is a heuristic.  The scale is the window's own width in display
+#: pixels over that same window's `outerWidth` in CSS pixels -- two measurements
+#: of one rectangle -- so a 200% display and a 100% one agree about where the
+#: toolbar ends.  The window's position on the display comes from the X server
+#: rather than from `screenX`, because the X server is also what will receive
+#: the click.  The only estimates left are the browser's own furniture
+#: (`outer`-minus-`inner`), and those are the window's measurements of itself.
+#:
+#: Three answers are possible and all three are honest:
+#:
+#: - outside the window's rectangle: browser chrome or another window, and the
+#:   page has nothing to say about it;
+#: - inside the window but outside the viewport: the tab strip, address bar or
+#:   toolbar, which is chrome a click would land on;
+#: - otherwise the point is in the page, so `elementFromPoint` is asked, then
+#:   pierced: an open shadow root and a nested document both answer for their
+#:   own contents, so the walk continues inward while the same point keeps
+#:   resolving to something new.
+#:
+#: What is reported is the nearest *interesting* ancestor of that node -- the
+#: control a person would say they clicked (a link, a button, a field) rather
+#: than the span or path element the pixel happened to land on -- and, when
+#: there is no such ancestor, the nearest node with a name at all.  Every
+#: field a stated target is matched against rides on that element: role,
+#: accessible name, visible text, placeholder, title, aria-label, tag, type,
+#: editability and nearby context, all read from the DOM, none of them specific
+#: to any site.
 #:
 #: Everything is wrapped: a page that throws, a target that refuses to answer,
 #: a value that is not JSON, all yield an unreadable answer and never an
 #: exception out of this script.
-#: - `scale` converts display pixels to CSS pixels (`devicePixelRatio` when the
-#:   display size is unknown, and 1 when neither is).
-#: - `chrome_left`/`chrome_top` are the browser's own furniture around the
-#:   viewport -- toolbars on top, a scrollbar or the window edge at the side --
-#:   estimated from the outer/inner difference so no pixel of it is mistaken for
-#:   page content.
-#: - the point is read with `elementFromPoint`, then pierced: an open shadow root
-#:   and a nested document both answer for their own contents, so the walk
-#:   continues inward while the same point keeps resolving to something new.
-#: - what is reported is the nearest *interesting* ancestor of that node -- the
-#:   control a person would say they clicked (a link, a button, a field) rather
-#:   than the span or path element the pixel happened to land on -- and, when
-#:   there is no such ancestor, the nearest node with a name at all.
-#: - a point outside the viewport is not a failure: it is browser chrome or
-#:   another window, and the answer says so instead of inventing a control.
 _HIT_TEST_JS = r"""(function () {
   var H = __HELPERS__;
   var DX = __DISPLAY_W__, DY = __DISPLAY_H__;
+  var CX = __CLICK_X__, CY = __CLICK_Y__;
+  var WX = __WIN_X__, WY = __WIN_Y__, WW = __WIN_W__, WH = __WIN_H__;
   var out = { ok: false };
-  var sw = 0, sh = 0, sx = 0, sy = 0, ow = 0, oh = 0, iw = 0, ih = 0, cw = 0, ch = 0;
+  var sw = 0, sh = 0, sx = 0, sy = 0, ow = 0, oh = 0, iw = 0, ih = 0, cw = 0, ch = 0, dpr = 1;
   try { sw = screen.width || 0; sh = screen.height || 0; } catch (e) {}
   try { sx = window.screenX || 0; sy = window.screenY || 0; } catch (e) {}
   try { ow = window.outerWidth || 0; oh = window.outerHeight || 0; } catch (e) {}
   try { iw = window.innerWidth || 0; ih = window.innerHeight || 0; } catch (e) {}
   try { cw = document.documentElement.clientWidth || 0; ch = document.documentElement.clientHeight || 0; } catch (e) {}
-  // The scrollbar sits between the inner size and the client size; on the other
-  // axis, the outer and inner sizes differ by the window's own chrome.
-  var vscroll = Math.max(0, iw - cw);
-  var hscroll = Math.max(0, ih - ch);
-  var scale = (sw && DX) ? (DX / sw) : (window.devicePixelRatio || 1);
-  if (!(scale > 0)) scale = 1;
-  var leftChrome = Math.max(0, Math.round((ow - iw - vscroll) / 2));
-  var topChrome = Math.max(0, Math.round(oh - ih - hscroll));
-  var vx = DX / scale - sx - leftChrome;
-  var vy = DY / scale - sy - topChrome;
+  try { dpr = window.devicePixelRatio || 1; } catch (e) {}
+  if (!(dpr > 0)) dpr = 1;
+  // Display pixels per CSS pixel.  The preferred source is the browser window
+  // itself: the X rectangle and `outerWidth` describe one rectangle in two
+  // units, so their ratio is the scale.  The screen and the device pixel ratio
+  // are the fallbacks for a window X could not name.
+  var scale = 0;
+  if (WW > 0 && ow > 0) scale = WW / ow;
+  else if (sw > 0 && DX > 0) scale = DX / sw;
+  else scale = dpr;
+  if (!(scale > 0) || scale > 8 || scale < 0.125) scale = dpr > 0 ? dpr : 1;
+  // The browser's own furniture around the viewport, in CSS pixels: the window
+  // border left and right, and the whole stack of tab strip, toolbar and
+  // bookmarks bar above the page.  Both come from the window's measurements of
+  // itself, so no pixel of either is mistaken for page content.
+  var leftChrome = Math.max(0, Math.round((ow - iw) / 2));
+  var topChrome = Math.max(0, Math.round(oh - ih));
+  // Where the window sits on the display and where its viewport starts, both
+  // in display pixels -- the same grid the screenshot and the click are in.
+  var winX, winY, winW, winH, originX, originY;
+  if (WW > 0 && WH > 0) {
+    winX = WX; winY = WY; winW = WW; winH = WH;
+    originX = WX + leftChrome * scale;
+    originY = WY + topChrome * scale;
+  } else {
+    winX = sx * scale; winY = sy * scale; winW = ow * scale; winH = oh * scale;
+    originX = winX + leftChrome * scale;
+    originY = winY + topChrome * scale;
+  }
   out.mapping = {
     scale: scale,
-    viewport_x: Math.round(vx),
-    viewport_y: Math.round(vy),
-    viewport_w: iw,
-    viewport_h: ih,
+    dpr: dpr,
+    display_w: DX,
+    display_h: DY,
+    window_x: Math.round(winX),
+    window_y: Math.round(winY),
+    window_w: Math.round(winW),
+    window_h: Math.round(winH),
+    viewport_x: Math.round(originX),
+    viewport_y: Math.round(originY),
+    viewport_w: Math.round(iw * scale),
+    viewport_h: Math.round(ih * scale),
+    viewport_css_w: iw,
+    viewport_css_h: ih,
+    chrome_left: leftChrome,
+    chrome_top: topChrome,
     screen_w: sw,
     screen_h: sh,
     screen_x: sx,
-    screen_y: sy,
-    chrome_left: leftChrome,
-    chrome_top: topChrome
+    screen_y: sy
   };
-  // A point a few pixels past the edge is the same edge the click will be
-  // clamped to, but a point far outside is another window entirely and the
-  // caller must not be told about page content that is not there.
-  var MARGIN = 24;
-  if (!(iw > 0 && ih > 0) || vx < -MARGIN || vy < -MARGIN ||
-      vx > iw + MARGIN || vy > ih + MARGIN) {
+  // Outside the window's own rectangle the point is not the browser's page: it
+  // is the frame, the titlebar, or a different window entirely.  The margin is
+  // the edge the pointer will be clamped to, not a licence to read page
+  // content from a point that is off the window.
+  var MARGIN_WINDOW = 6;
+  var MARGIN_PAGE = 4;
+  if (!(winW > 0 && winH > 0) ||
+      CX < winX - MARGIN_WINDOW || CY < winY - MARGIN_WINDOW ||
+      CX > winX + winW + MARGIN_WINDOW || CY > winY + winH + MARGIN_WINDOW) {
     out.ok = true;
     out.in_page = false;
-    out.reason = "the point is outside the page viewport";
+    out.reason = "the point is not on the page -- it is browser chrome or another window";
+    return JSON.stringify(out);
+  }
+  var vx = (CX - originX) / scale;
+  var vy = (CY - originY) / scale;
+  if (!(iw > 0 && ih > 0) || vx < -MARGIN_PAGE || vy < -MARGIN_PAGE ||
+      vx > iw + MARGIN_PAGE || vy > ih + MARGIN_PAGE) {
+    out.ok = true;
+    out.in_page = false;
+    out.reason = "the point is browser chrome -- the tab strip, address bar or toolbar -- and not the page";
     return JSON.stringify(out);
   }
   var px = Math.min(Math.max(0, Math.round(vx)), Math.max(0, iw - 1));
   var py = Math.min(Math.max(0, Math.round(vy)), Math.max(0, ih - 1));
+  out.point = { x: px, y: py };
   var el = null;
   try { el = document.elementFromPoint(px, py); } catch (e) {}
   function hostOf(node) {
@@ -488,14 +547,38 @@ _HIT_TEST_JS = r"""(function () {
   var textValue = "";
   try { textValue = (chosen.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200); }
   catch (e) {}
+  // Nearby context: the nearest ancestor whose own text is short enough to be
+  // about one control.  This is what lets a target naming the row a control
+  // sits in match a control whose accessible name is only "View", and it is
+  // read from the DOM like every other field -- no site, no selector, no label
+  // of any kind appears in the search for it.
+  var contextValue = "";
+  var anc = chosen.parentElement;
+  for (var k = 0; anc && k < 5; k++) {
+    var near = "";
+    try { near = (anc.textContent || "").replace(/\s+/g, " ").trim(); } catch (e) {}
+    if (near && near.length <= 160 && near !== textValue) {
+      contextValue = near.slice(0, 160);
+      break;
+    }
+    anc = anc.parentElement;
+  }
+  function clean(value) {
+    return (value || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  }
   out.element = {
     role: H.role(chosen) || "",
     name: H.name(chosen) || "",
     tag: (chosen.tagName || "").toLowerCase(),
+    type: clean(H.attr(chosen, "type")),
+    placeholder: clean(H.attr(chosen, "placeholder")),
+    title: clean(H.attr(chosen, "title")),
+    aria_label: clean(H.attr(chosen, "aria-label")),
+    text: textValue,
+    context: contextValue,
     editable: H.editable(chosen),
     disabled: (chosen.disabled === true ||
-               (chosen.getAttribute && chosen.getAttribute("aria-disabled") === "true")),
-    text: textValue
+               (chosen.getAttribute && chosen.getAttribute("aria-disabled") === "true"))
   };
   return JSON.stringify(out);
 })()"""
@@ -1315,6 +1398,106 @@ def _active_window_id() -> Optional[str]:
         return None
 
 
+#: The window classes a browser is identified by, matched against X's WM_CLASS.
+#: Generic on purpose: a window is found by what kind of program it is, never
+#: by which page it is showing, so the same rule works for every site and for
+#: every browser the remote machine might be running.
+_BROWSER_WINDOW_CLASS_RE = re.compile(r"chrom|firefox|brave|epiphany|webkit", re.IGNORECASE)
+
+
+def _window_rect(wid: str) -> Optional[Tuple[int, int, int, int]]:
+    """One window's rectangle on the display, as (x, y, width, height).
+
+    Asked of the X server rather than of the browser, because the X server is
+    also what will receive the click: a position read from anywhere else lives
+    in a different coordinate system and would have to be reconciled with this
+    one -- by a guess, which is exactly what this replaces.
+    """
+    try:
+        r = _xdotool("getwindowgeometry", "--shell", wid, timeout=10)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    raw = r.stdout
+    text = raw if isinstance(raw, str) else str(raw or "")
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip().upper()] = value.strip()
+    try:
+        x = int(values["X"])
+        y = int(values["Y"])
+        width = int(values["WIDTH"])
+        height = int(values["HEIGHT"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return (x, y, width, height)
+
+
+def _browser_window_rect() -> Optional[Tuple[int, int, int, int]]:
+    """Where the browser's window is on the display, or None if X cannot say.
+
+    Found by window class.  Several candidates are possible (the main window, a
+    popup, a settings window), so the active one wins when it is among them and
+    the largest is taken otherwise: the largest is the window the full-display
+    screenshot is showing.
+
+    The active window is also a fallback, but only after X itself has confirmed
+    it is a browser.  A rectangle belonging to some other program would map
+    every click to the wrong place without a word about it, which is strictly
+    worse than reporting that the point could not be read.
+    """
+    if not _x_running():
+        return None
+    ids = []
+    seen = set()
+    for pattern in ("chrom", "firefox", "brave", "epiphany"):
+        try:
+            found = _xdotool("search", "--onlyvisible", "--class", pattern, timeout=10)
+        except Exception:
+            continue
+        if found.returncode != 0:
+            continue
+        raw = found.stdout
+        text = raw if isinstance(raw, str) else str(raw or "")
+        for token in text.split():
+            if token.isdigit() and token not in seen:
+                seen.add(token)
+                ids.append(token)
+    if not ids:
+        active = _active_window_id()
+        if not active:
+            return None
+        try:
+            cls = _xdotool("getwindowclassname", active, timeout=10)
+        except Exception:
+            return None
+        if cls.returncode != 0:
+            return None
+        raw = cls.stdout
+        name = raw if isinstance(raw, str) else str(raw or "")
+        if not _BROWSER_WINDOW_CLASS_RE.search(name):
+            return None
+        ids = [active]
+
+    rects = []
+    for wid in ids:
+        rect = _window_rect(wid)
+        if rect:
+            rects.append((wid, rect))
+    if not rects:
+        return None
+    active = _active_window_id()
+    for wid, rect in rects:
+        if active and wid == active:
+            return rect
+    return max(rects, key=lambda item: item[1][2] * item[1][3])[1]
+
+
 def _focus_window_under_cursor() -> bool:
     """Focus the target under the pointer without changing pointer coordinates."""
     if not DESKTOP_WM or DESKTOP_WM.lower() == "none":
@@ -2051,14 +2234,20 @@ def _capture_display(draw_mouse: bool = True) -> dict:
     }
 
 
-def _computer_click(x: int, y: int) -> dict:
-    """Move and click the exact X-display pixel immediately.
+def _computer_click(x: int, y: int, move: bool = True) -> dict:
+    """Move (if asked) and click the exact X-display pixel immediately.
 
     The server-side action is deliberately synchronous and minimal:
       1. move the real X pointer to (x, y) and wait for X to confirm it,
       2. verify the pointer is exactly there,
       3. send the left-button event immediately in the same X session,
       4. return without an artificial UI/page sleep.
+
+    `move=False` skips step 1 for a caller that has already moved the pointer
+    there and verified it -- the shape a pre-checked click takes, where the
+    coordinate has been hit-tested in the live DOM and must not be re-derived.
+    The verification still runs: a pointer that is somewhere else is an error,
+    never a click at a coordinate nothing checked.
 
     No browser/window activation happens here. Activating a window can move the
     pointer through WM focus policy and adds latency between the model's chosen
@@ -2076,24 +2265,29 @@ def _computer_click(x: int, y: int) -> dict:
             "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display",
         }
 
-    try:
-        moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
-    except FileNotFoundError:
-        return {"ok": False, "error": "xdotool is not installed on the remote computer"}
-    except Exception as exc:
-        return {"ok": False, "error": f"could not move pointer for click: {exc}"}
+    if move:
+        try:
+            moved = _xdotool("mousemove", "--sync", str(x), str(y), timeout=10)
+        except FileNotFoundError:
+            return {"ok": False, "error": "xdotool is not installed on the remote computer"}
+        except Exception as exc:
+            return {"ok": False, "error": f"could not move pointer for click: {exc}"}
 
-    if moved.returncode != 0:
-        return {
-            "ok": False,
-            "error": (moved.stderr or "pointer move failed").strip()[:200],
-        }
+        if moved.returncode != 0:
+            return {
+                "ok": False,
+                "error": (moved.stderr or "pointer move failed").strip()[:200],
+            }
 
     px, py = _pointer_position()
     if (px, py) != (x, y):
         return {
             "ok": False,
-            "error": f"pointer did not reach ({x},{y}); X reports ({px},{py})",
+            "error": (
+                f"the pointer is not at ({x},{y}); X reports ({px},{py})"
+                if not move
+                else f"pointer did not reach ({x},{y}); X reports ({px},{py})"
+            ),
             "actual_x": px,
             "actual_y": py,
             "display_width": disp_w,
@@ -2158,6 +2352,12 @@ def _computer_hit(x: int, y: int) -> dict:
     empty hit: a page that will not talk (a frame that blocks the debugger, a
     window that is not a browser) is a reason to run the click unverified, not a
     reason to refuse it.
+
+    What the page holds at a point is the page's answer; where the point *is* on
+    the display is the X server's.  The browser's window rectangle comes from
+    the X server too, so the two are in one coordinate system before any number
+    is computed -- a position read from anywhere else would have to be
+    reconciled with the click by a guess.
     """
     disp_w, disp_h = _display_geometry()
     if not (0 <= x < disp_w and 0 <= y < disp_h):
@@ -2165,10 +2365,22 @@ def _computer_hit(x: int, y: int) -> dict:
     wsurl = _cdp_target_wsurl()
     if not wsurl:
         return {"ok": False, "error": "chrome is not running on the debug port"}
+    # The browser's window as X knows it: the position the click will land on,
+    # and the width the page's own `outerWidth` is measured against.  Both are
+    # absent only when X has nothing to say about the window, and then the
+    # script falls back to the browser's own `screenX` -- a weaker source that
+    # the same script knows how to use, rather than a guess made here.
+    rect = _browser_window_rect() or (-1, -1, -1, -1)
     expression = (
         _HIT_TEST_JS
         .replace("__DISPLAY_W__", str(disp_w))
         .replace("__DISPLAY_H__", str(disp_h))
+        .replace("__CLICK_X__", str(x))
+        .replace("__CLICK_Y__", str(y))
+        .replace("__WIN_X__", str(rect[0]))
+        .replace("__WIN_Y__", str(rect[1]))
+        .replace("__WIN_W__", str(rect[2]))
+        .replace("__WIN_H__", str(rect[3]))
     )
     try:
         reply = _cdp_cmd("Runtime.evaluate",
@@ -2189,6 +2401,12 @@ def _computer_hit(x: int, y: int) -> dict:
         return {"ok": False, "error": "the page could not be asked"}
     info["display_width"] = disp_w
     info["display_height"] = disp_h
+    info["window_rect"] = (
+        {"x": rect[0], "y": rect[1], "width": rect[2], "height": rect[3]}
+        if rect[0] >= 0 and rect[2] > 0
+        else None
+    )
+    info["display_pixel"] = {"x": x, "y": y}
     return info
 
 
@@ -2810,7 +3028,11 @@ class Handler(BaseHTTPRequestHandler):
             if not (0 <= x < width and 0 <= y < height):
                 self._json(400, {"ok": False, "error": f"outside the {width}x{height} display"})
                 return
-            self._json(200, _computer_click(x, y))
+            # `move: false` is the second half of a pre-checked click: the caller
+            # has already put the pointer there, verified where it is and read
+            # what the page holds under it, so this sends the button event only.
+            move = req.get("move", True)
+            self._json(200, _computer_click(x, y, move=bool(move)))
             return
         if path == "/computer/hit":
             try:

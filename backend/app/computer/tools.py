@@ -171,17 +171,17 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "click",
-            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. When you know what you mean to press, name it in `target`: a point holding a different control is refused instead of clicked.",
+            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. `target` is required: a few words naming the control to press, checked against what is really at x,y before the click is sent, so a point holding a different control is refused instead of clicked.",
             "parameters": object_schema(
                 {
                     "x": {"type": "number"},
                     "y": {"type": "number"},
                     "target": {
                         "type": "string",
-                        "description": "Optional. A few words naming the control, such as \"Post button\". Checked against what is really at x,y before the click is sent.",
+                        "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". Checked against what is really at x,y from the live page before the click is sent; a click that does not name what it means to press is refused.",
                     },
                 },
-                ["x", "y"],
+                ["x", "y", "target"],
             ),
         },
         {
@@ -372,13 +372,24 @@ def tool_to_command(
             )
         # `target` is the claim being made about this coordinate, and it is only
         # a claim for a click: naming a control to move the pointer to would
-        # promise something the click check never verifies.
+        # promise something the click check never verifies.  Required for a
+        # click: a coordinate without a claim about what belongs there is a
+        # click on whatever happens to be under it, and the check downstream has
+        # nothing to check.
         target = ""
         if name == "click":
             raw_target = args.get("target")
-            if raw_target is not None and not isinstance(raw_target, str):
-                return None, 'click "target" must be a string'
+            if not isinstance(raw_target, str):
+                return None, (
+                    'click requires "target": a few words naming the control to '
+                    'press, such as "Post button"'
+                )
             target = clean_target(raw_target)
+            if not target:
+                return None, (
+                    'click requires a non-empty "target" naming the control to '
+                    'press, such as "Post button"'
+                )
         return Command(type=name, x=float(ix), y=float(iy), target=target), ""
 
     if name == "type":

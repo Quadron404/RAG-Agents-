@@ -147,7 +147,7 @@ class RemoteComputer:
         await self._settle_state()
         return result
 
-    async def click(self, x: float, y: float) -> Dict[str, Any]:
+    async def click(self, x: float, y: float, move: bool = True) -> Dict[str, Any]:
         """Click a point in the screenshot's own pixel grid.
 
         The coordinates go to the agent unchanged and become
@@ -156,8 +156,16 @@ class RemoteComputer:
         reply carries the pointer position read back from X afterwards, logged
         here so a click that drifted off its target is visible rather than
         silent.
+
+        `move=False` is the second half of a pre-checked click: the pointer was
+        already moved there and verified by the caller, and what the page holds
+        at that exact pixel was read from the live DOM a moment ago.  The agent
+        still checks where the pointer actually is and refuses if it is
+        somewhere else -- it skips only the move, never the verification.
         """
-        result = await self._post("/computer/click", {"x": int(x), "y": int(y)})
+        result = await self._post(
+            "/computer/click", {"x": int(x), "y": int(y), "move": bool(move)}
+        )
         if not result.get("ok"):
             raise ComputerError(str(result.get("error") or "click failed"))
         _trace_click("CLICK", x, y, result)
@@ -219,11 +227,13 @@ class RemoteComputer:
 
         The only method that reads without acting: no pointer movement, no
         click, no settle, because the answer has to describe the page as it is
-        *now* -- the one the click is about to land on.  It answers None rather
-        than raising whenever the agent cannot say, and None means "unverified,
-        run the click": a page that will not be read is not evidence that the
-        click is wrong, and turning an unreadable browser into a refusal would
-        stop the loop dead on the machines where reading fails.
+        *now* -- the one the click is about to land on.
+
+        It answers None whenever the agent cannot say: the page threw, the
+        browser would not answer, the reply was unreadable.  None is not "the
+        point is fine" -- it is "nothing could be confirmed here", and with a
+        target in hand the caller refuses on that, because a click justified by
+        "this control is the one I named" has to have been confirmed to be it.
         """
         try:
             result = await self._post("/computer/hit", {"x": int(x), "y": int(y)},

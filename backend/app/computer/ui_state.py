@@ -181,6 +181,58 @@ def state_signature(state: Optional[Dict[str, Any]]) -> str:
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
 
+def page_identity(state: Optional[Dict[str, Any]]) -> str:
+    """Which page this is, as one comparable string.
+
+    Distinct from `state_signature`, which answers "did anything move": this one
+    answers "is this still the same place".  URL, title, dialog and the page's
+    own controls -- the four facts that decide whether an action, a coordinate
+    or a plan written a moment ago still refers to something on the screen.
+
+    Focus and scroll are deliberately absent.  A caret that moved or a page
+    scrolled a notch is the same place with the same controls in it, and an
+    identity that fired on those would throw away a frame, a plan and the
+    model's coordinate grid for nothing.
+    """
+    if not isinstance(state, dict):
+        return ""
+    dialog = state.get("dialog")
+    body = {
+        "url": _clean(state.get("url")),
+        "title": _clean(state.get("title")),
+        "dialog": _clean(dialog.get("name")) if isinstance(dialog, dict) else "",
+        "controls": _controls_sig(state.get("controls")),
+    }
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def frame_identity(state: Optional[Dict[str, Any]]) -> str:
+    """What a screenshot taken now would be a picture of, as one string.
+
+    Narrower than `page_identity` on purpose: only the URL and whether a dialog
+    is open, because those are the two transitions that make a captured frame a
+    picture of a page that no longer exists -- a navigation and a modal opening
+    or closing.  Controls are absent because they move on every keystroke, and a
+    rule that dropped the frame whenever a field's text changed would demand a
+    new screenshot after every character the model typed.
+
+    This is what decides when a coordinate the model read is stale: not the
+    coordinate itself, which is unchanged and passes every bounds check, but the
+    page underneath it.
+    """
+    if not isinstance(state, dict):
+        return ""
+    dialog = state.get("dialog")
+    body = {
+        "url": _clean(state.get("url")),
+        "dialog": _clean(dialog.get("name")) if isinstance(dialog, dict) else "",
+        "dialog_open": isinstance(dialog, dict) and bool(dialog),
+    }
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:24]
+
+
 def _focus_lines(raw: Any, focused: Any) -> list:
     """The focus block, labelled for whether the page holds focus now.
 
@@ -286,5 +338,7 @@ __all__ = [
     "UI_STATE_UNAVAILABLE",
     "focus_key",
     "format_ui_state",
+    "frame_identity",
+    "page_identity",
     "state_signature",
 ]
