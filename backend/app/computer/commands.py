@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
+from .hit_target import clean_target
+
 #: The complete set of capabilities in this phase.  Every entry maps to exactly
 #: one method on RemoteComputer and one route on the agent, so the allowlist
 #: cannot grow a capability the loop has no way to perform.
@@ -166,6 +168,16 @@ class Command:
     key: str = ""
     delta_y: int = 0
     message: str = ""
+    #: The few words a click claimed to be aiming at, checked against what the
+    #: page actually holds at the point before the click runs.  Empty for every
+    #: command that is not a click and for every click that named nothing,
+    #: which is what keeps that check off the path of a click that claimed
+    #: nothing -- there is no promise to contradict when there was no promise.
+    #:
+    #: Deliberately absent from `to_json()`: the log records what the machine
+    #: was asked to do, which is a coordinate, and `target` is a claim the
+    #: model made about that coordinate rather than part of the command.
+    target: str = ""
 
     def to_json(self) -> Dict[str, Any]:
         """The canonical record of what was issued, for the event log.
@@ -372,7 +384,13 @@ def parse_command(
                 f"x from 0 to {int(bounds.width) - 1} and y from 0 to "
                 f"{int(bounds.height) - 1}, read off the latest screenshot"
             )
-        return Command(type=kind, x=x, y=y), ""
+        target = ""
+        if kind == "click":
+            raw_target = data.get("target")
+            if raw_target is not None and not isinstance(raw_target, str):
+                return None, 'click "target" must be a string'
+            target = clean_target(raw_target)
+        return Command(type=kind, x=x, y=y, target=target), ""
 
     if kind == "type":
         text = data.get("text")

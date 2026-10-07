@@ -50,6 +50,7 @@ from .commands import (
     normalize_key,
 )
 from .next_step import NEXT_STEP_ARGUMENT, next_step_schema
+from .hit_target import clean_target
 
 #: The complete tool surface, in the order the prompt lists it.  Every name here
 #: is dispatched in `_perform_tool`; a name that is in the schemas but not in
@@ -170,8 +171,18 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "click",
-            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot.",
-            "parameters": object_schema({"x": {"type": "number"}, "y": {"type": "number"}}, ["x", "y"]),
+            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. When you know what you mean to press, name it in `target`: a point holding a different control is refused instead of clicked.",
+            "parameters": object_schema(
+                {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                    "target": {
+                        "type": "string",
+                        "description": "Optional. A few words naming the control, such as \"Post button\". Checked against what is really at x,y before the click is sent.",
+                    },
+                },
+                ["x", "y"],
+            ),
         },
         {
             "name": "type",
@@ -359,7 +370,16 @@ def tool_to_command(
                 f"from 0 to {int(bounds.height) - 1}, read off the screenshot in "
                 f"this message"
             )
-        return Command(type=name, x=float(ix), y=float(iy)), ""
+        # `target` is the claim being made about this coordinate, and it is only
+        # a claim for a click: naming a control to move the pointer to would
+        # promise something the click check never verifies.
+        target = ""
+        if name == "click":
+            raw_target = args.get("target")
+            if raw_target is not None and not isinstance(raw_target, str):
+                return None, 'click "target" must be a string'
+            target = clean_target(raw_target)
+        return Command(type=name, x=float(ix), y=float(iy), target=target), ""
 
     if name == "type":
         text = args.get("text")

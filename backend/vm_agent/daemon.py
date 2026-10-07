@@ -276,54 +276,13 @@ def _cdp_send(ws, mid: int, method: str, params: dict | None = None) -> None:
     ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
 
 
-#: The page's own state, read from the live DOM rather than from a picture of it.
-#:
-#: `location.href` and `document.title` were already read here; this adds what a
-#: screenshot cannot carry -- which element actually holds focus, what it is
-#: called, whether a dialog is open, and what is selected.  Those are the four
-#: facts that separate "the composer is still on screen" from "the composer is
-#: focused and waiting for text", and a screenshot shows both identically.
-#:
-#: Everything here is generic and derives from ARIA plus the platform's own
-#: mapping: no site, no selector, no control name is named anywhere in it, so the
-#: same expression describes any page.  Names are resolved the way a screen reader
-#: resolves them -- `aria-label`, `aria-labelledby`, a `<label for>`, then
-#: title/placeholder/alt -- and the role falls back to the tag's implicit role.
-#:
-#: Two things about focus have to be read or the report is wrong in a way the
-#: model cannot detect:
-#:
-#: - `document.activeElement` only answers for the tree it is asked about.  It
-#:   stops at the edge of a shadow root (returning the host) and at the edge of a
-#:   frame (returning the iframe), so a composer built from web components or
-#:   nested documents is described as its container -- a div, an article, a tab
-#:   bar -- while the field really does hold the caret.  `deepest` walks inward
-#:   until there is nothing further inside, and that node is what gets described.
-#: - `document.activeElement` keeps naming a node even when the page holds no
-#:   focus at all, in which case it is the node that held focus *last* and
-#:   nothing typed now would reach it.  `document.hasFocus()` travels alongside
-#:   it so the caller can label the two apart instead of asserting one of them.
-#:
-#: And one fact is decisive for what the model does next: whether the focused
-#: node accepts text at all.  `editable` is derived from the tag, its input type
-#: and `contentEditable` -- no site, no selector, no control name.
-#:
-#: Two more fields help the caller tell an action that *did* something from one
-#: that only reported success.  `value_length` is how much text the focused (or
-#: caret-carrying) field holds, a count that moves when a `type` lands and is
-#: safe to send about a password field.  `caret` names the editable node the
-#: selection anchor sits inside when `activeElement` is its wrapper or something
-#: else entirely -- browser evidence, not a search for something typeable.  And
-#: `scroll` sums the offsets of every element reporting one (bounded to 64), so
-#: a scroll of an inner panel changes it even though the window itself did not
-#: move.
-#:
-#: Every step is wrapped: a page that throws (a cross-origin frame, a CSP quirk, a
-#: detached node) yields an absent field, never an exception and never a guess.
-#: An absent field is the truthful answer, and the caller renders it as absent.
-_UI_STATE_JS = r"""
-(function () {
-  var out = {};
+#: The DOM reading the hit test shares with the state report below: attributes,
+#: accessible names, roles and editability, written once so both scripts answer
+#: the same question the same way.  Everything is returned from an IIFE and
+#: therefore lives in that closure: `name`, `text` and `role` are all real
+#: properties of `window`, and a script that declared them at top level would
+#: clobber them for every script that ran after it.
+_DOM_HELPERS_JS = r"""(function () {
   function attr(el, name) {
     try { return (el.getAttribute && el.getAttribute(name)) || ""; } catch (e) { return ""; }
   }
@@ -389,6 +348,209 @@ _UI_STATE_JS = r"""
       return Math.max(0, Math.round(vl));
     } catch (e) { return null; }
   }
+  return { attr: attr, text: text, name: name, role: role,
+           editable: editable, valueLength: valueLength };
+})()"""
+
+
+#: What is under a point, read from the live DOM before the click runs.
+#:
+#: The caller converts a display pixel into viewport coordinates and asks the
+#: page what is there; the whole point of the exercise is to refuse a click
+#: whose target the model named but the page does not hold.  The coordinate
+#: conversion is the one that has to survive a real desktop: a display pixel is
+#: not a CSS pixel (HiDPI), the browser window is not the page (its chrome sits
+#: between them), and the window is not at the origin of the display.
+#:
+#: Everything is wrapped: a page that throws, a target that refuses to answer,
+#: a value that is not JSON, all yield an unreadable answer and never an
+#: exception out of this script.
+#: - `scale` converts display pixels to CSS pixels (`devicePixelRatio` when the
+#:   display size is unknown, and 1 when neither is).
+#: - `chrome_left`/`chrome_top` are the browser's own furniture around the
+#:   viewport -- toolbars on top, a scrollbar or the window edge at the side --
+#:   estimated from the outer/inner difference so no pixel of it is mistaken for
+#:   page content.
+#: - the point is read with `elementFromPoint`, then pierced: an open shadow root
+#:   and a nested document both answer for their own contents, so the walk
+#:   continues inward while the same point keeps resolving to something new.
+#: - what is reported is the nearest *interesting* ancestor of that node -- the
+#:   control a person would say they clicked (a link, a button, a field) rather
+#:   than the span or path element the pixel happened to land on -- and, when
+#:   there is no such ancestor, the nearest node with a name at all.
+#: - a point outside the viewport is not a failure: it is browser chrome or
+#:   another window, and the answer says so instead of inventing a control.
+_HIT_TEST_JS = r"""(function () {
+  var H = __HELPERS__;
+  var DX = __DISPLAY_W__, DY = __DISPLAY_H__;
+  var out = { ok: false };
+  var sw = 0, sh = 0, sx = 0, sy = 0, ow = 0, oh = 0, iw = 0, ih = 0, cw = 0, ch = 0;
+  try { sw = screen.width || 0; sh = screen.height || 0; } catch (e) {}
+  try { sx = window.screenX || 0; sy = window.screenY || 0; } catch (e) {}
+  try { ow = window.outerWidth || 0; oh = window.outerHeight || 0; } catch (e) {}
+  try { iw = window.innerWidth || 0; ih = window.innerHeight || 0; } catch (e) {}
+  try { cw = document.documentElement.clientWidth || 0; ch = document.documentElement.clientHeight || 0; } catch (e) {}
+  // The scrollbar sits between the inner size and the client size; on the other
+  // axis, the outer and inner sizes differ by the window's own chrome.
+  var vscroll = Math.max(0, iw - cw);
+  var hscroll = Math.max(0, ih - ch);
+  var scale = (sw && DX) ? (DX / sw) : (window.devicePixelRatio || 1);
+  if (!(scale > 0)) scale = 1;
+  var leftChrome = Math.max(0, Math.round((ow - iw - vscroll) / 2));
+  var topChrome = Math.max(0, Math.round(oh - ih - hscroll));
+  var vx = DX / scale - sx - leftChrome;
+  var vy = DY / scale - sy - topChrome;
+  out.mapping = {
+    scale: scale,
+    viewport_x: Math.round(vx),
+    viewport_y: Math.round(vy),
+    viewport_w: iw,
+    viewport_h: ih,
+    screen_w: sw,
+    screen_h: sh,
+    screen_x: sx,
+    screen_y: sy,
+    chrome_left: leftChrome,
+    chrome_top: topChrome
+  };
+  // A point a few pixels past the edge is the same edge the click will be
+  // clamped to, but a point far outside is another window entirely and the
+  // caller must not be told about page content that is not there.
+  var MARGIN = 24;
+  if (!(iw > 0 && ih > 0) || vx < -MARGIN || vy < -MARGIN ||
+      vx > iw + MARGIN || vy > ih + MARGIN) {
+    out.ok = true;
+    out.in_page = false;
+    out.reason = "the point is outside the page viewport";
+    return JSON.stringify(out);
+  }
+  var px = Math.min(Math.max(0, Math.round(vx)), Math.max(0, iw - 1));
+  var py = Math.min(Math.max(0, Math.round(vy)), Math.max(0, ih - 1));
+  var el = null;
+  try { el = document.elementFromPoint(px, py); } catch (e) {}
+  function hostOf(node) {
+    try {
+      var root = node.getRootNode ? node.getRootNode() : null;
+      if (root && root !== document && root.host) return root.host;
+    } catch (e) {}
+    return null;
+  }
+  for (var i = 0; el && i < 8; i++) {
+    var sub = null;
+    try {
+      if (el.shadowRoot && el.shadowRoot.elementFromPoint) {
+        sub = el.shadowRoot.elementFromPoint(px, py);
+      }
+    } catch (e) {}
+    if (!sub) {
+      try {
+        var root = el.getRootNode ? el.getRootNode() : null;
+        if (root && root !== document && root.elementFromPoint) sub = root.elementFromPoint(px, py);
+      } catch (e) {}
+    }
+    if (sub && sub !== el) { el = sub; continue; }
+    break;
+  }
+  out.ok = true;
+  out.in_page = true;
+  if (!el) {
+    out.element = null;
+    return JSON.stringify(out);
+  }
+  var INTERACTIVE = { button: 1, link: 1, checkbox: 1, radio: 1, switch: 1, tab: 1,
+                      menuitem: 1, menuitemcheckbox: 1, menuitemradio: 1,
+                      textbox: 1, searchbox: 1, combobox: 1, listbox: 1, option: 1,
+                      slider: 1, spinbutton: 1, treeitem: 1 };
+  function isInteractive(node) {
+    if (!node || !node.tagName) return false;
+    var r = H.role(node);
+    if (r && INTERACTIVE[r]) return true;
+    var t = node.tagName.toUpperCase();
+    if (t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" || t === "SELECT" ||
+        t === "OPTION" || t === "SUMMARY") return true;
+    try { if (node.isContentEditable) return true; } catch (e) {}
+    try { if (node.getAttribute && node.getAttribute("onclick")) return true; } catch (e) {}
+    return false;
+  }
+  // The pixel lands on whatever the page painted there -- a path inside an
+  // icon, the label inside a button, a span inside a link.  The control a
+  // person means is the nearest interactive ancestor; the nearest named node is
+  // the fallback when nothing in the chain is interactive at all.
+  var chosen = null;
+  var named = null;
+  var cur = el;
+  for (var j = 0; cur && j < 12; j++) {
+    if (!named && H.name(cur)) named = cur;
+    if (isInteractive(cur)) { chosen = cur; break; }
+    cur = cur.parentElement || hostOf(cur);
+  }
+  if (!chosen) chosen = named || el;
+  var textValue = "";
+  try { textValue = (chosen.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200); }
+  catch (e) {}
+  out.element = {
+    role: H.role(chosen) || "",
+    name: H.name(chosen) || "",
+    tag: (chosen.tagName || "").toLowerCase(),
+    editable: H.editable(chosen),
+    disabled: (chosen.disabled === true ||
+               (chosen.getAttribute && chosen.getAttribute("aria-disabled") === "true")),
+    text: textValue
+  };
+  return JSON.stringify(out);
+})()"""
+
+
+#: The page's own state, read from the live DOM rather than from a picture of it.
+#:
+#: `location.href` and `document.title` were already read here; this adds what a
+#: screenshot cannot carry -- which element actually holds focus, what it is
+#: called, whether a dialog is open, and what is selected.  Those are the four
+#: facts that separate "the composer is still on screen" from "the composer is
+#: focused and waiting for text", and a screenshot shows both identically.
+#:
+#: Everything here is generic and derives from ARIA plus the platform's own
+#: mapping: no site, no selector, no control name is named anywhere in it, so the
+#: same expression describes any page.  Names are resolved the way a screen reader
+#: resolves them -- `aria-label`, `aria-labelledby`, a `<label for>`, then
+#: title/placeholder/alt -- and the role falls back to the tag's implicit role.
+#:
+#: Two things about focus have to be read or the report is wrong in a way the
+#: model cannot detect:
+#:
+#: - `document.activeElement` only answers for the tree it is asked about.  It
+#:   stops at the edge of a shadow root (returning the host) and at the edge of a
+#:   frame (returning the iframe), so a composer built from web components or
+#:   nested documents is described as its container -- a div, an article, a tab
+#:   bar -- while the field really does hold the caret.  `deepest` walks inward
+#:   until there is nothing further inside, and that node is what gets described.
+#: - `document.activeElement` keeps naming a node even when the page holds no
+#:   focus at all, in which case it is the node that held focus *last* and
+#:   nothing typed now would reach it.  `document.hasFocus()` travels alongside
+#:   it so the caller can label the two apart instead of asserting one of them.
+#:
+#: And one fact is decisive for what the model does next: whether the focused
+#: node accepts text at all.  `editable` is derived from the tag, its input type
+#: and `contentEditable` -- no site, no selector, no control name.
+#:
+#: Two more fields help the caller tell an action that *did* something from one
+#: that only reported success.  `value_length` is how much text the focused (or
+#: caret-carrying) field holds, a count that moves when a `type` lands and is
+#: safe to send about a password field.  `caret` names the editable node the
+#: selection anchor sits inside when `activeElement` is its wrapper or something
+#: else entirely -- browser evidence, not a search for something typeable.  And
+#: `scroll` sums the offsets of every element reporting one (bounded to 64), so
+#: a scroll of an inner panel changes it even though the window itself did not
+#: move.
+#:
+#: Every step is wrapped: a page that throws (a cross-origin frame, a CSP quirk, a
+#: detached node) yields an absent field, never an exception and never a guess.
+#: An absent field is the truthful answer, and the caller renders it as absent.
+_UI_STATE_JS = r"""(function () {
+  var H = __HELPERS__;
+  var attr = H.attr, text = H.text, name = H.name, role = H.role;
+  var editable = H.editable, valueLength = H.valueLength;
+  var out = {};
   function deepest(el) {
     for (var i = 0; el && i < 32; i++) {
       var inner = null;
@@ -489,9 +651,40 @@ _UI_STATE_JS = r"""
     }
     out.selected = describe(sel);
   } catch (e) { out.selected = null; }
+  try {
+    // The controls a person could act on, in document order, visible ones only,
+    // bounded so a page with a thousand links still answers quickly.  This is
+    // not for the model: it is a fingerprint of the page's own furniture, so a
+    // read taken after an action that opened a menu differs from one taken
+    // before it -- the case url, title, focus and scroll all miss -- while two
+    // reads of an unchanged page produce the same list.
+    var found = [];
+    var nodes = document.querySelectorAll(
+      'a, button, input, select, textarea, summary, [role], [onclick], [contenteditable="true"]'
+    );
+    for (var ci = 0; ci < nodes.length && ci < 400 && found.length < 40; ci++) {
+      var cel = nodes[ci];
+      try {
+        var rect = cel.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+      } catch (e) { continue; }
+      var cr = role(cel), cn = name(cel);
+      if (!cr && !cn) continue;
+      found.push(((cr || cel.tagName.toLowerCase()) + "\u0001" + cn).slice(0, 160));
+    }
+    out.controls = found;
+  } catch (e) { out.controls = null; }
   return JSON.stringify(out);
 })()
 """
+
+
+# Each script is written against the shared helpers as `__HELPERS__` and gets
+# them inlined once here, at import: the alternative is two copies of the same
+# rules drifting apart, which is exactly how two reads of one page start
+# disagreeing about what is on it.
+_UI_STATE_JS = _UI_STATE_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
+_HIT_TEST_JS = _HIT_TEST_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
 
 
 _cdp_cmd_lock = threading.Lock()
@@ -1643,16 +1836,64 @@ _CAPTURE_LOCK = threading.Lock()
 _SEARCH_ENGINE = os.environ.get("COMPUTER_SEARCH_URL", "https://duckduckgo.com/?q=")
 
 
+#: How many times in a row `_xdotool` has timed out.  A display that has stopped
+#: answering does not answer the next time either, so after three in a row the
+#: call fails at once instead of making every command wait out its own timeout:
+#: a dead input path becomes one clear error rather than a slow chain of them.
+_XDOTOOL_TIMEOUTS = 0
+_XDOTOOL_TIMEOUT_LIMIT = 3
+
+#: How long the input path stays refused once it has timed out three times, and
+#: the one call that is let through at the end of each window.  Refusing
+#: forever would be the wrong answer to a display that comes back -- Xvfb
+#: restarting, a suspended session resuming -- so the block is a deadline, not a
+#: verdict: every call inside it fails immediately, and the first one after it
+#: is the probe.  The probe is the caller's own command rather than a separate
+#: ping, so nothing extra is ever sent to the display to find out whether
+#: sending things to the display works.
+_XDOTOOL_RETRY_AFTER = 15.0
+_XDOTOOL_RETRY_AT = 0.0
+
+
+class InputPathUnhealthy(RuntimeError):
+    """The display has stopped answering xdotool, and it is still not answering.
+
+    Distinct from an ordinary failure of one command: a command that returned a
+    non-zero status, or that could not find its window, says nothing about the
+    next command, while this says every command has timed out in turn and the
+    next one will too.  The input paths raise it so the server can report one
+    clear reason for a run of failures instead of three different slow ones.
+    """
+
+
 def _xdotool(*args: str, timeout: int = 10) -> tuple:
     import subprocess
 
-    return subprocess.run(
-        ["xdotool", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "DISPLAY": DESKTOP_DISPLAY},
-    )
+    global _XDOTOOL_TIMEOUTS, _XDOTOOL_RETRY_AT
+    if _XDOTOOL_TIMEOUTS >= _XDOTOOL_TIMEOUT_LIMIT:
+        if time.time() - _XDOTOOL_RETRY_AT < _XDOTOOL_RETRY_AFTER:
+            raise InputPathUnhealthy(
+                f"xdotool has not answered {_XDOTOOL_TIMEOUTS} times in a row; "
+                "the input path to the display is not working"
+            )
+        # Past the deadline: this call is the probe.  If the display has come
+        # back it returns and the counter resets with it; if it has not, it
+        # times out like the others and the deadline moves forward with it.
+    try:
+        result = subprocess.run(
+            ["xdotool", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "DISPLAY": DESKTOP_DISPLAY},
+        )
+    except subprocess.TimeoutExpired:
+        _XDOTOOL_TIMEOUTS += 1
+        if _XDOTOOL_TIMEOUTS >= _XDOTOOL_TIMEOUT_LIMIT:
+            _XDOTOOL_RETRY_AT = time.time()
+        raise
+    _XDOTOOL_TIMEOUTS = 0
+    return result
 
 
 def _cdp_viewport() -> tuple:
@@ -1903,6 +2144,52 @@ def _computer_click(x: int, y: int) -> dict:
         "clicked_at": clicked_at,
         "execution": "immediate_xdotool",
     }
+
+
+def _computer_hit(x: int, y: int) -> dict:
+    """What the page says is at this display pixel, read before the click runs.
+
+    Read only: no pointer movement, no button event, no page change -- the
+    answer is what makes a click whose control the model named but the page does
+    not hold refuseable before the pointer comes down, rather than discovered
+    afterwards from a screenshot of the wrong thing having happened.
+
+    Anything that cannot be answered is reported as `ok: False` and never as an
+    empty hit: a page that will not talk (a frame that blocks the debugger, a
+    window that is not a browser) is a reason to run the click unverified, not a
+    reason to refuse it.
+    """
+    disp_w, disp_h = _display_geometry()
+    if not (0 <= x < disp_w and 0 <= y < disp_h):
+        return {"ok": False, "error": f"({x}, {y}) is outside the {disp_w}x{disp_h} display"}
+    wsurl = _cdp_target_wsurl()
+    if not wsurl:
+        return {"ok": False, "error": "chrome is not running on the debug port"}
+    expression = (
+        _HIT_TEST_JS
+        .replace("__DISPLAY_W__", str(disp_w))
+        .replace("__DISPLAY_H__", str(disp_h))
+    )
+    try:
+        reply = _cdp_cmd("Runtime.evaluate",
+                         {"expression": expression, "returnByValue": True},
+                         wait=5.0, want_result=True)
+    except Exception as exc:
+        return {"ok": False, "error": f"could not read the page: {exc}"}
+    if not reply.get("ok"):
+        return {"ok": False, "error": f"could not read the page: {reply.get('error')}"}
+    value = (((reply.get("result") or {}).get("result") or {}).get("value"))
+    if not isinstance(value, str) or not value:
+        return {"ok": False, "error": "the page returned no answer"}
+    try:
+        info = json.loads(value)
+    except Exception:
+        return {"ok": False, "error": "the page returned an unreadable answer"}
+    if not isinstance(info, dict) or not info.get("ok"):
+        return {"ok": False, "error": "the page could not be asked"}
+    info["display_width"] = disp_w
+    info["display_height"] = disp_h
+    return info
 
 
 #: The keys a model is allowed to press, mapped to the xdotool keysym.
@@ -2525,6 +2812,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, _computer_click(x, y))
             return
+        if path == "/computer/hit":
+            try:
+                x = int(req.get("x"))
+                y = int(req.get("y"))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "x and y must be integers"})
+                return
+            self._json(200, _computer_hit(x, y))
+            return
         if path == "/computer/navigate":
             url = str(req.get("url") or "").strip()
             if not url:
@@ -2618,6 +2914,7 @@ class Handler(BaseHTTPRequestHandler):
             # could not answer whether it holds focus, which is different from
             # both "it does" and "it does not".
             focused = info.get("focused")
+            controls = info.get("controls")
             self._json(200, {
                 "ok": True,
                 "url": url,
@@ -2630,6 +2927,11 @@ class Handler(BaseHTTPRequestHandler):
                 "dialog": info.get("dialog") or None,
                 "selected": info.get("selected") or None,
                 "scroll": info.get("scroll") if isinstance(info.get("scroll"), dict) else None,
+                # Not shown to the model: it is a fingerprint of what the page
+                # says it is offering, so a read after an action that opened or
+                # closed a menu differs from one before it even when the url,
+                # the title, the focus and the scroll all stayed where they were.
+                "controls": controls if isinstance(controls, list) else None,
             })
             return
         if path in ("/display/restart", "/display/chromium/restart", "/display/ensure"):

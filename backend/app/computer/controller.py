@@ -214,6 +214,26 @@ class RemoteComputer:
         # Pointer movement is already an X event; no artificial delay.
         return result
 
+    async def hit(self, x: float, y: float) -> Optional[Dict[str, Any]]:
+        """What the page holds at a point, read before the click runs.
+
+        The only method that reads without acting: no pointer movement, no
+        click, no settle, because the answer has to describe the page as it is
+        *now* -- the one the click is about to land on.  It answers None rather
+        than raising whenever the agent cannot say, and None means "unverified,
+        run the click": a page that will not be read is not evidence that the
+        click is wrong, and turning an unreadable browser into a refusal would
+        stop the loop dead on the machines where reading fails.
+        """
+        try:
+            result = await self._post("/computer/hit", {"x": int(x), "y": int(y)},
+                                      timeout=15.0)
+        except Exception:
+            return None
+        if not isinstance(result, dict) or not result.get("ok"):
+            return None
+        return result
+
     async def screenshot(self) -> Tuple[Optional[str], int, int]:
         """A JPEG of the real display, as (base64, width, height).
 

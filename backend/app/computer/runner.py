@@ -81,6 +81,7 @@ from ..providers.router import (
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
 from .history import extract_history, history_block
+from .hit_target import clean_target, describe_element, target_mismatch
 from .next_step import NEXT_STEP_ARGUMENT, extract_next_step, format_next_step
 from .prompt import REFUSAL_NOTE, build_prompt, screenshot_note
 from .tools import (
@@ -91,7 +92,12 @@ from .tools import (
     parse_arguments,
     tool_to_command,
 )
-from .ui_state import UI_STATE_UNAVAILABLE, format_ui_state, state_signature
+from .ui_state import (
+    UI_STATE_UNAVAILABLE,
+    focus_key,
+    format_ui_state,
+    state_signature,
+)
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +109,14 @@ log = logging.getLogger(__name__)
 #: after the page has still not changed is not another attempt but a loop that
 #: is not reading what it is told.
 NO_PROGRESS_LIMIT = 2
+
+#: How many times the *same* call may come back after the executor refused to
+#: run it, before the loop stops offering it again.  Deliberately 1, and unlike
+#: the limit above it is not about a page that might yet change: a rejected
+#: click was never executed, and the identical call carries the identical point
+#: at the identical page, so the second one is a loop that is not reading what
+#: it is told rather than another attempt.
+NO_PROGRESS_FAILURE_LIMIT = 1
 
 # The only states a run can be in, and the only strings the frontend renders.
 STATUS_IDLE = "idle"
@@ -495,6 +509,25 @@ class ComputerRun:
     #: still reports what it did after the last action rather than something a
     #: later read replaced.
     ui_state_signature: str = ""
+    #: What the page reported at the point of the most recent click, read from
+    #: the live DOM before the pointer came down and refreshed from the read
+    #: taken after it landed.
+    #:
+    #: Evidence for the executor's own detail line: "the point holds button
+    #: 'Post'" is what tells the model the click went where it said it would,
+    #: and a screenshot cannot answer that -- the frame shows the same pixels
+    #: whether the control under them was the one meant or not.  Cleared before
+    #: every action, so a `type` or a `navigate` never reports a hit that
+    #: belonged to an earlier click.
+    last_hit: str = ""
+    #: The focused node as a comparable string, read from the state of the
+    #: request currently being built.
+    #:
+    #: Two reads naming the same node are two reads of one focus, so a change
+    #: between them is a focus the last action actually moved -- which is what
+    #: clicking a field is for, and what is invisible in the frame the model is
+    #: looking at.
+    focus_key: str = ""
     #: The page's real state, formatted for the model, from the most recent read.
     #:
     #: Held on the run so every request carries the same rule: refresh before the
@@ -1130,6 +1163,7 @@ class ComputerRunner:
         exception here costs one line of context and nothing else.
         """
         run.ui_state_signature = ""
+        run.focus_key = ""
         try:
             state = await self.computer.state()
         except Exception as exc:  # context is never a reason to fail the run
@@ -1137,6 +1171,7 @@ class ComputerRunner:
             run.ui_state = UI_STATE_UNAVAILABLE
             return
         run.ui_state_signature = state_signature(state)
+        run.focus_key = focus_key(state)
         run.ui_state = format_ui_state(state) or UI_STATE_UNAVAILABLE
 
     def _allowed_tools(self, run: ComputerRun) -> List[str]:
@@ -1380,14 +1415,23 @@ class ComputerRunner:
                 started = time.time()
 
                 # The model described what it just issued; the run remembers it.
-                # Stored before the action runs, and stored whether or not it
-                # succeeds, because the note is a statement about the *request*
-                # ("I've clicked the Post button") and the executor's verdict
-                # about that request is delivered separately on the next turn.
-                # Collapsing the two here is what would turn a refused click into
-                # a successful one.
-                if turn is not None and turn.history_note:
-                    self._remember_ai_history(run, turn.history_note)
+                # Stored before the action runs for every command but `click`,
+                # and stored whether or not it succeeds, because the note is a
+                # statement about the *request* ("I've opened x.com") and the
+                # executor's verdict about that request is delivered separately
+                # on the next turn.  Collapsing the two here is what would turn
+                # a failed navigation into a successful one.
+                #
+                # `click` is the exception, and it is the reason this loop
+                # verifies a point before pressing it: a click the executor
+                # rejected never reached the machine, so a history line claiming
+                # it would be the run's memory asserting an action that was
+                # prevented -- the one claim neither record is allowed to make.
+                # The note is therefore held back until the click has been
+                # accepted, and dropped with it when it has not.
+                note = turn.history_note if turn is not None else ""
+                if note and command.type != "click":
+                    self._remember_ai_history(run, note)
 
                 if command.type == "screenshot":
                     # Nothing was performed; the screen was read.  Recorded as an
@@ -1400,6 +1444,17 @@ class ComputerRunner:
                     continue
 
                 terminal = await self._perform(run, command)
+                if note and command.type == "click" and run.last_action.get("status") == "SUCCESS":
+                    self._remember_ai_history(run, note)
+                # The frame the model asked for is spent by the action that
+                # followed it, and only by an action that landed.  Spending it
+                # earlier -- on accepting the command rather than on running it
+                # -- is what made a refused click drop the one picture the model
+                # needed to choose a corrected coordinate, so a rejected click
+                # now keeps the frame and carries it into the next request.
+                if run.last_action.get("status") == "SUCCESS":
+                    run.pending_image = ""
+                    run.pending_screenshot_call_id = ""
                 if command.type not in ("screenshot", "done", "error") and run.last_action.get("status") == "SUCCESS":
                     run.action_count += 1
                 if turn is not None:
@@ -1519,6 +1574,19 @@ class ComputerRunner:
             "screen_width": pointer.get("screen_width"),
             "screen_height": pointer.get("screen_height"),
         }
+        if command.type == "click":
+            # What the click claimed and what the page held at that point.  The
+            # target is not in `Command.to_json()` -- it is an argument the
+            # executor consumed rather than something to replay -- so this is
+            # where it survives into the trace, beside the answer that decided
+            # whether the click ran at all.
+            turn.execution.update(
+                {
+                    "click_target": pointer.get("click_target"),
+                    "click_rejected": pointer.get("click_rejected"),
+                    "click_hit": pointer.get("click_hit"),
+                }
+            )
 
     async def _next_command(self, run: ComputerRun):
         """Ask for one tool call, refusing a bad one a bounded number of times.
@@ -1929,35 +1997,63 @@ class ComputerRunner:
                 run.message = refusal
                 return None, refusal
 
-            if (
-                command.type in STATE_CHANGING_TOOLS
-                and run.no_progress_streak >= NO_PROGRESS_LIMIT
-                and run.last_action_signature == command.to_json()
+            # Two ways an identical call has already gone nowhere, bounded
+            # separately because they mean different things.  A call the
+            # executor refused to run was never executed, so the page has no
+            # say in whether the next identical one would be: the point and the
+            # target were already contradicted once.  A call that ran and left
+            # the page unchanged is the opposite -- it worked, and it is the
+            # page's own report that says it did nothing, so that branch is
+            # judged against the state read at request-build time and only
+            # counts once the same call has succeeded twice.
+            refused_before = (
+                run.last_action.get("status") == "FAILED"
+                and run.no_progress_streak >= NO_PROGRESS_FAILURE_LIMIT
+            )
+            unchanged_page = (
+                run.no_progress_streak >= NO_PROGRESS_LIMIT
                 # The state read at request-build time must be the same one the
                 # streak was counted on; a page that has since changed is a new
                 # situation, and an action that followed it is an attempt again.
                 and run.ui_state_signature
                 and run.state_signature == run.ui_state_signature
+            )
+            if (
+                command.type in STATE_CHANGING_TOOLS
+                and run.last_action_signature == command.to_json()
+                and (refused_before or unchanged_page)
             ):
-                refusal = (
-                    "the page did not change after repeated identical calls, so "
-                    "this call was not executed; read the page state and make a "
-                    "different call rather than repeating the same one"
-                )
+                where = f" ({run.last_hit})" if run.last_hit else ""
+                if refused_before:
+                    refusal = (
+                        "this identical call was not executed: the last one at "
+                        f"these coordinates was refused{where}; read the page "
+                        "state and make a different call rather than repeating "
+                        "the same one"
+                    )
+                    give_up = "the model repeated a call the executor had already refused"
+                else:
+                    refusal = (
+                        "the page did not change after repeated identical calls, so "
+                        "this call was not executed; read the page state and make a "
+                        f"different call rather than repeating the same one{where}"
+                    )
+                    give_up = "the model repeated a call that is making no progress"
                 turn.tool_error = refusal
-                if self._refuse(run, turn, raw, refusal, signature, attempt,
-                                "the model repeated a call that is making no progress"):
+                if self._refuse(run, turn, raw, refusal, signature, attempt, give_up):
                     continue
                 return None, refusal
 
             turn.parse_ok = True
             turn.command = command.to_json()
             turn.tool_result = command.to_json()
-            # The image is spent exactly once after we have accepted a real
-            # command. Empty/malformed recovery is the only path allowed to reuse
-            # it, and only for one retry.
-            run.pending_image = ""
-            run.pending_screenshot_call_id = ""
+            # The frame is not spent here.  It belongs to the action that used
+            # it and is dropped once that action has run -- in `_execute` -- so
+            # a click the executor refused keeps the picture the model needs to
+            # choose a corrected coordinate instead of arriving on the next
+            # request with no image and no memory of what it was looking at.
+            # The empty/malformed recovery above is still the one path allowed
+            # to reuse a frame, and only for one retry.
             refusal = ""
             run.last_refused = ""
             return command, ""
@@ -2077,6 +2173,11 @@ class ComputerRunner:
             "move": "Moving the cursor",
         }[command.type]
 
+        # What is at the point belongs to the action that read it.  Cleared
+        # here, after the terminal commands have returned, so nothing below can
+        # report the point of a click from turns ago as if it were this one's.
+        run.last_hit = ""
+
         trace: Dict[str, Any] = {}
         try:
             if command.type == "navigate":
@@ -2084,8 +2185,56 @@ class ComputerRunner:
             elif command.type == "search":
                 await self.computer.search(command.query)
             elif command.type == "click":
+                # Read the live DOM at the point *before* the pointer comes
+                # down.  A click cannot be checked afterwards: by then the wrong
+                # control has already been pressed and the only record left is a
+                # picture of the consequence.  The read is what the model's
+                # stated target is compared against, and a page that contradicts
+                # that claim stops the click where it stands -- no pointer
+                # movement, no button event, no history line, and no claim that
+                # it happened.  Nothing here knows or cares which site it is:
+                # the rules are ARIA roles and accessible names, so they hold
+                # for any page the browser can be asked about.
+                target = clean_target(command.target or "")
+                hit = await self._hit(command.x, command.y)
+                reason = target_mismatch(target, hit, command.x, command.y)
+                if reason:
+                    detail = (
+                        reason
+                        + "; choose corrected coordinates from the latest screenshot"
+                    )
+                    run.last_hit = _hit_text(hit)
+                    run.last_action = {
+                        "tool": command.type,
+                        "status": "FAILED",
+                        "detail": detail,
+                    }
+                    self._remember(run, command, "FAILED", detail)
+                    self._record(
+                        run,
+                        command.to_json(),
+                        "",
+                        "failed",
+                        error=detail,
+                        trace={
+                            "click_target": target,
+                            "click_rejected": True,
+                            "click_hit": run.last_hit,
+                            "screen_width": (hit or {}).get("display_width"),
+                            "screen_height": (hit or {}).get("display_height"),
+                        },
+                    )
+                    # `_observe_after_action` never runs for a click that was
+                    # not performed, so the bookkeeping it does for every other
+                    # action is done here as well -- without it the identical
+                    # rejected call would be offered again as though it had
+                    # never been refused.
+                    self._mark_not_progress(run, command)
+                    run.message = detail
+                    return False
                 result = await self.computer.click(command.x, command.y)
                 trace = _pointer_trace("click", command.x, command.y, result)
+                trace.update({"click_target": target, "click_rejected": False})
             elif command.type == "type":
                 await self.computer.type_text(command.text)
             elif command.type == "key":
@@ -2104,6 +2253,14 @@ class ComputerRunner:
             # The action was refused or failed.  Reported as a normal event so
             # the model sees the evidence and can recover, rather than the run
             # dying on a transient click that landed on a moving page.
+            #
+            # Deliberately *not* counted as a call that has already gone
+            # nowhere, unlike a click the executor rejected for a reason the
+            # model can act on.  A failure is the case where the identical retry
+            # is the right next move -- a navigation that timed out and is
+            # offered again has to be allowed through, and refusing it would
+            # turn one transient error into a dead run -- and the step budget
+            # already bounds a machine that keeps failing the same way.
             detail = str(exc)
             run.last_action = {"tool": command.type, "status": "FAILED", "detail": detail}
             self._remember(run, command, "FAILED", detail)
@@ -2122,6 +2279,12 @@ class ComputerRunner:
             # executed" and "the page did not change" are two facts rather than
             # one claim that the click worked.
             detail = await self._observe_after_action(run, command) or ""
+        if command.type == "click":
+            # The settled answer about the point, written after the observation
+            # so the record shows what is there *now* -- with the read taken
+            # before the click kept when the second one had nothing to say,
+            # which is still true about the point the model aimed at.
+            trace["click_hit"] = run.last_hit
         run.last_action = {"tool": command.type, "status": "SUCCESS", "detail": detail}
         self._remember(run, command, "SUCCESS", detail)
         self._record(run, command.to_json(), "", "ok", trace=trace)
@@ -2133,17 +2296,23 @@ class ComputerRunner:
         """Read the settled page after a state-changing action, and judge progress.
 
         Returns a detail line for the executor's verdict, or ``None`` when the
-        page could not be read.  The observation must never fail the run: the
-        state is context for the next request, and context is never a reason to
-        stop a run that already acted.
+        page could not be read or there is nothing true to add to it.  The
+        observation must never fail the run: the state is context for the next
+        request, and context is never a reason to stop a run that already acted.
 
-        Two rules are judged here:
+        Three things are judged here, and they are joined rather than returned
+        one at a time because they are independent facts about one action:
 
         - a `type` that executed while the page reports it has focus but no
           editable field that could have received the text is reported as
           unverified, so the model does not trust success it cannot tie to a
           field (and address-bar typing is not touched: there the page reports
           *no* focus, which is neutral);
+        - for a `click`, what is at the point now, re-read after the click
+          landed, and whether focus went with it.  A click that opened or
+          closed something changes its own point, and a click that focused a
+          field is judged by a fact no screenshot carries -- an unfocused and a
+          focused textbox are the same rectangle;
         - the same state-changing command succeeding against an unchanged page
           is counted, so `_next_command` can refuse the repeat instead of paying
           for a loop that is not reading what it is told.
@@ -2168,17 +2337,85 @@ class ComputerRunner:
         run.last_action_signature = command.to_json()
         run.state_signature = signature
 
+        notes: List[str] = []
+
         if command.type == "type" and state.get("focused") is True:
             focus = state.get("focus") or {}
             caret = state.get("caret") or {}
             if not (focus.get("editable") is True or caret.get("editable") is True):
-                return (
+                notes.append(
                     "typed, but the page reports no editable field focused, so "
                     "the text may not have been received"
                 )
+
+        if command.type == "click":
+            # Re-read the point the click just landed on.  The first read was
+            # taken before the pointer came down, and a click that opened or
+            # closed a menu changes what sits at its own coordinate -- so the
+            # model is told what holds the point *now*, which is what decides
+            # whether the next click there is a correction or a repeat.  When
+            # the second read says nothing, the pre-read is kept: it is still
+            # true about the point the model aimed at, and dropping it would
+            # read as "the page could not say", which is a different claim.
+            hit = await self._hit(command.x, command.y)
+            run.last_hit = _hit_text(hit) or run.last_hit
+            if run.last_hit:
+                notes.append(f"the point holds {run.last_hit}")
+            # And whether the click moved focus, which is what clicking a field
+            # is *for*.  Both keys have to be present and different: an absent
+            # one is a page that could not answer, and two reads of the same
+            # node are not a movement to report.
+            now_key = focus_key(state)
+            described = describe_element(state.get("focus")) or describe_element(
+                state.get("caret")
+            )
+            if run.focus_key and now_key and run.focus_key != now_key and described:
+                notes.append(f"focus moved to {described}")
+            run.focus_key = now_key
+
         if run.no_progress_streak >= 1:
-            return "the page reported no change after the last action, so an identical repeat may not help"
-        return None
+            notes.append(
+                "the page reported no change after the last action, so an "
+                "identical repeat may not help"
+            )
+        return "; ".join(notes) or None
+
+    async def _hit(self, x: float, y: float) -> Optional[Dict[str, Any]]:
+        """What the page says is at this display point, or None if it cannot say.
+
+        The only read in the loop that happens without acting: no pointer
+        movement, no button event, so the answer describes the page the click
+        is about to land on rather than the one it has already changed.
+
+        None is the important answer and it never blocks anything.  A computer
+        that cannot be asked -- a double that has no `hit`, a browser that will
+        not talk to the debugger -- means the click runs unverified, never that
+        it is refused: refusing here would stop the loop dead on exactly the
+        machines where reading fails.
+        """
+        read = getattr(self.computer, "hit", None)
+        if read is None:
+            return None
+        try:
+            result = await read(x, y)
+        except Exception as exc:  # reading is context, never a reason to fail
+            log.debug("computer: could not read the point: %s", exc)
+            return None
+        return result if isinstance(result, dict) else None
+
+    def _mark_not_progress(self, run: ComputerRun, command: Command) -> None:
+        """Count a command the executor refused to run as the same call again.
+
+        `_observe_after_action` does this bookkeeping for every action that
+        actually ran, and it cannot do it here: a refused click never reaches
+        it.  Without this the signature of the refused call would stay at
+        whatever the previous *successful* action left behind, and
+        `_next_command` would have nothing to compare the repeat against -- so
+        the identical call would be offered a second time, and a third, exactly
+        as though it had never been refused for a reason the model was given.
+        """
+        run.no_progress_streak += 1
+        run.last_action_signature = command.to_json()
 
     def _remember(self, run: ComputerRun, command: Command, status: str, detail: str) -> None:
         """Write one executor-produced fact, and nothing else.
@@ -2244,6 +2481,23 @@ class ComputerRunner:
         except Exception:
             # A log write failing must not change what happened on screen.
             pass
+
+
+def _hit_text(hit: Optional[Dict[str, Any]]) -> str:
+    """What to report was at the point, or "" when the page said nothing.
+
+    Described through `describe_element` on purpose: what a click is said to
+    have landed on and what a click was refused for are the same description of
+    the same control, so the two cannot drift into naming one control two ways.
+    """
+    if not isinstance(hit, dict) or not hit.get("ok"):
+        return ""
+    if hit.get("in_page") is False:
+        return "nothing on the page (browser chrome or another window)"
+    element = hit.get("element")
+    if not isinstance(element, dict) or not element:
+        return "empty page space"
+    return describe_element(element)
 
 
 def _fact_line(command: Command) -> str:

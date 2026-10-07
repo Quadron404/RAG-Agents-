@@ -38,6 +38,7 @@ role mapping, so the same block describes any page.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Dict, Optional
 
@@ -52,6 +53,11 @@ UI_STATE_UNAVAILABLE = (
 #: a container's text content can be the whole page, and this is sent on every
 #: request of the run.
 MAX_NAME_CHARS = 120
+
+#: How many of the page's own controls go into the signature.  The agent
+#: already bounds the list it reads; this is the second bound, so the signature
+#: stays the size of a comparison rather than the size of the page.
+MAX_SIGNED_CONTROLS = 40
 
 
 def _clean(value: Any) -> str:
@@ -98,15 +104,63 @@ def _sig_field(raw: Any) -> list:
     ]
 
 
+def _controls_sig(raw: Any) -> Optional[str]:
+    """The page's controls as one comparable string, or None when unreported.
+
+    A digest rather than the list itself: the list carries up to forty
+    accessible names and is read on every request, while the only question the
+    signature asks of it is whether two reads saw the same furniture.  That is
+    the field url, title, focus and scroll all miss -- a menu that opened, a
+    button that became pressed, a panel that appeared -- without which a click
+    that revealed something reads as a click that changed nothing.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    payload = json.dumps(
+        raw[:MAX_SIGNED_CONTROLS], sort_keys=True, default=str, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def focus_key(state: Optional[Dict[str, Any]]) -> str:
+    """Focus as one string two reads can be compared on, or "" when there is none.
+
+    Distinct from `state_signature`, which answers "did the page change": this
+    one answers "is focus on the same node", and only that.  Role, accessible
+    name and editability of the focused node, plus the editable node the caret
+    sits in -- the pair a click on a field is meant to move, and the pair a
+    screenshot shows identically whether it moved or not.
+
+    Text length is deliberately absent.  Typing changes it without focus going
+    anywhere, and a key that moved on typing would report a movement that did
+    not happen.
+    """
+    if not isinstance(state, dict):
+        return ""
+    focus = _descriptor(state.get("focus"))
+    caret = _descriptor(state.get("caret"))
+    key = "\u0001".join(
+        [
+            focus.get("role") or "",
+            focus.get("name") or "",
+            str(focus.get("editable")) if isinstance(focus.get("editable"), bool) else "",
+            caret.get("role") or "",
+            caret.get("name") or "",
+        ]
+    )
+    return key.strip("\u0001")
+
+
 def state_signature(state: Optional[Dict[str, Any]]) -> str:
     """The page as a stable string two reads can be compared on.
 
     Distinct from `format_ui_state`: that is for the model, this is for the
     loop.  Every field that could move when an action lands is in the signature
     -- url, title, the focused node and how much text it holds, the caret's
-    target, dialog, selection and scroll -- and nothing that does not move is,
-    so an unchanged signature is a truthful "the page did not change", which is
-    the evidence a repeated action is spinning rather than working.
+    target, dialog, selection, scroll and the page's own controls -- and nothing
+    that does not move is, so an unchanged signature is a truthful "the page
+    did not change", which is the evidence a repeated action is spinning rather
+    than working.
     """
     if not isinstance(state, dict):
         return ""
@@ -122,6 +176,7 @@ def state_signature(state: Optional[Dict[str, Any]]) -> str:
         "dialog": _clean(state.get("dialog", {}).get("name")) if isinstance(state.get("dialog"), dict) else None,
         "selected": _sig_field(state.get("selected")),
         "scroll": [scroll.get("x"), scroll.get("y")],
+        "controls": _controls_sig(state.get("controls")),
     }
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
@@ -225,4 +280,11 @@ def format_ui_state(state: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["MAX_NAME_CHARS", "UI_STATE_UNAVAILABLE", "format_ui_state", "state_signature"]
+__all__ = [
+    "MAX_NAME_CHARS",
+    "MAX_SIGNED_CONTROLS",
+    "UI_STATE_UNAVAILABLE",
+    "focus_key",
+    "format_ui_state",
+    "state_signature",
+]
