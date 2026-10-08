@@ -10,17 +10,19 @@ than guessing where one lives.
 Three claims are proved here, each for a different reason it could silently
 break:
 
-- **What the model sees is bounded and honest.**  Biggest visible controls
-  first, nearest offscreen first, hard caps, document order for reading, and
+- **What the model sees is bounded and honest.**  Actionable controls only,
+  ranked (named, editable, near the viewport centre), duplicates collapsed,
+  nearest named offscreen first, hard caps, document order for reading, and
   nothing that cannot be clicked -- an entry the page cannot describe never
   reaches the map, and a failed read produces no map at all rather than a
   stale one.
-- **An id is a name for one snapshot, never a position.**  Resolution re-reads
+- **An id is a name for one control, never a position.**  Resolution re-reads
   the page at click time and refuses -- every time, with a reason the model
   can act on -- an id whose page changed, whose entry is gone, whose control
-  changed identity, which is offscreen, or which is disabled.  The point that
-  does come back is the centre of the *fresh* box, so a control that moved is
-  still clicked where it now is.
+  changed identity, which is offscreen, or which is disabled.  A fresh read
+  that merely renumbered itself is re-found by identity and still clicked.
+  The point that does come back is the centre of the *fresh* box, so a
+  control that moved is still clicked where it now is.
 - **The loop carries it end to end.**  A fake machine whose `uimap` answers
   like the agent's proves the map reaches the request, the id reaches the
   executor, the refusal reaches the model as `click was not performed: ...`,
@@ -144,9 +146,9 @@ def sent_and_fresh() -> tuple:
 class BuildTheMapTheModelSees(unittest.TestCase):
     """Selection, caps, ids and the block itself."""
 
-    def test_ids_are_stamped_in_document_order_over_the_largest_entries(self):
-        # 45 visible entries whose areas grow with their index: the 40 kept are
-        # the 40 largest, and after selection they are numbered top-to-bottom.
+    def test_ids_are_stamped_in_document_order_over_the_best_ranked_entries(self):
+        # 45 visible entries whose areas grow with their index: the 20 kept are
+        # the 20 largest, and after selection they are numbered top-to-bottom.
         entries = [
             visible("button", f"Item {i}", 10, 10 + i * 14, 10, i + 1)
             for i in range(45)
@@ -156,30 +158,43 @@ class BuildTheMapTheModelSees(unittest.TestCase):
         kept = ui_map["visible"]
         self.assertEqual(len(kept), MAX_VISIBLE_ENTRIES)
         self.assertNotIn("Item 0", [e["name"] for e in kept])
-        self.assertEqual(kept[0]["name"], "Item 5")
+        self.assertEqual(kept[0]["name"], "Item 25")
         self.assertEqual(kept[-1]["name"], "Item 44")
         self.assertEqual(
             [e["id"] for e in kept],
             [f"V{i}" for i in range(1, MAX_VISIBLE_ENTRIES + 1)],
         )
-        # Document order for reading, even though selection was by area.
+        # Document order for reading, even though selection was by rank.
         names = [e["name"] for e in kept]
         self.assertEqual(names, sorted(names, key=lambda n: int(n.split()[1])))
 
-    def test_offscreen_is_nearest_first_capped_and_drops_the_disabled(self):
+    def test_offscreen_is_named_nearest_first_capped_and_barely_interactive(self):
         entries = [
             offscreen("link", f"Far {i}", 5000 - i * 100, disabled=(i == 0))
             for i in range(25)
         ]
         entries.append(offscreen("button", "Also disabled", 10, disabled=True))
+        # A nearer but unnamed link, and two merely structural wrappers: never
+        # a slot worth taking from a control the model can name.
+        entries.append(offscreen("link", "", 5))
+        entries.append(offscreen("div", "", 10, tag="div"))
+        entries.append(offscreen("article", "", 10, tag="article"))
         ui_map = build_ui_map(raw_map([], entries))
 
         kept = ui_map["offscreen"]
         self.assertEqual(len(kept), MAX_OFFSCREEN_ENTRIES)
         self.assertNotIn("Far 0", [e["name"] for e in kept])
         self.assertNotIn("Also disabled", [e["name"] for e in kept])
-        # Nearest first for selection: the ten largest distances never make it.
-        self.assertIn("Far 24", [e["name"] for e in kept])
+        # Structural wrappers never reach the map at all.
+        self.assertEqual(
+            [e["role"] for e in kept], ["link"] * MAX_OFFSCREEN_ENTRIES
+        )
+        # Named controls rank ahead of nearer anonymous ones: the eight kept
+        # are the eight nearest named links, numbered in document order.
+        self.assertEqual(
+            [e["name"] for e in kept],
+            [f"Far {i}" for i in range(17, 17 + MAX_OFFSCREEN_ENTRIES)],
+        )
         # Numbered in document order among the chosen.
         self.assertEqual(
             [e["id"] for e in kept],
@@ -223,11 +238,11 @@ class BuildTheMapTheModelSees(unittest.TestCase):
 
         self.assertIn("element_id", text)
         self.assertIn("screenshot pixels", text)
-        self.assertIn('an id belongs only to this map', text)
-        self.assertIn('[V1] button "Send" (100,100)-(180,140)', text)
+        self.assertIn("an id is this map's only", text)
+        self.assertIn('[V1] button "Send" 100,100-180,140', text)
         self.assertIn("editable", text)
         self.assertIn("disabled", text)
-        self.assertIn('[O1] link "Terms" offscreen below, ~830px', text)
+        self.assertIn('[O1] link "Terms" below ~830', text)
         # Coordinates appear in the entry lines, never in the header.
         header = text.splitlines()[0]
         self.assertNotIn("(100,100)", header)
@@ -301,7 +316,7 @@ class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
         self.assertIn("offscreen", reason)
         self.assertIn('link "Terms"', reason)
         self.assertIn("below", reason)
-        self.assertIn("~830px", reason)
+        self.assertIn("~830", reason)
         self.assertIn("scroll first", reason)
 
     def test_a_disabled_control_is_refused(self):
@@ -354,6 +369,51 @@ class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
         self.assertIsNone(point)
         self.assertIn("different element", reason)
         self.assertIn('button "Send"', reason)
+
+    def test_a_map_that_renumbered_itself_is_re_found_by_identity(self):
+        # The same page re-rendered: a new control pushed the numbering down,
+        # so the id the request carried (V1 = Send) now sits on the new
+        # control.  The Send button is re-found by identity and clicked at its
+        # fresh box -- the id was a name for a control, never a position.
+        sent, page, _, _ = sent_and_fresh()
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("link", "Logo", 10, 10, 40, 20, tag="a"),
+                    visible("button", "Send", 400, 300, 80, 40),
+                    visible("textbox", "Write a message", 100, 160, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [offscreen("link", "Terms", 830)],
+            )
+        )
+        point, reason = resolve_entry(sent, page, fresh, page, "V1")
+
+        self.assertEqual(reason, "")
+        self.assertEqual(point, (440, 320))
+        # The fresh box, not the one the request carried at 140,120.
+        self.assertNotEqual(point, (140, 120))
+
+    def test_an_id_whose_control_is_now_duplicated_is_ambiguous(self):
+        # Identity searching is only safe when the match is unique: two "Send"
+        # buttons now exist, so neither can be claimed as the same control.
+        sent, page, _, _ = sent_and_fresh()
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 100, 100, 80, 40),
+                    visible("button", "Send", 400, 100, 80, 40),
+                    visible("textbox", "Write a message", 100, 160, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [offscreen("link", "Terms", 830)],
+            )
+        )
+        point, reason = resolve_entry(sent, page, fresh, page, "V1")
+
+        self.assertIsNone(point)
+        self.assertIn("ambiguous", reason)
+        self.assertIn("2 controls", reason)
 
     def test_every_refusal_reads_as_one_kind_of_failure(self):
         self.assertEqual(
@@ -596,7 +656,7 @@ class AnElementIdReachesTheMachine(unittest.TestCase):
         # request's box.
         self.assertGreaterEqual(runner.computer.uimap_reads, 2)
         self.assertIn("UI map (live DOM)", user_text(provider.calls[1]))
-        self.assertIn('[V1] button "Send" (100,100)-(180,140)',
+        self.assertIn('[V1] button "Send" 100,100-180,140',
                       user_text(provider.calls[1]))
 
         # Resolved centre of V1's box, then the four phases, then the press.

@@ -1112,7 +1112,7 @@ class ComputerRunner:
             # The map rides with the other facts about the present, between the
             # state it was read alongside and the screenshot the boxes are
             # measured against -- because that is what makes a box mean
-            # something: `(x0,y0)-(x1,y1)` only says "in this picture" when the
+            # something: `x,y-x1,y1` only says "in this picture" when the
             # picture follows it.  Absent whenever the read failed, so no
             # request ever carries ids from a page that could not be confirmed.
             parts.append(run.ui_map_text)

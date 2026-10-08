@@ -18,11 +18,13 @@ So this module turns the agent's raw read of the page into two things:
 
 Four rules keep it honest:
 
-- Ids are per snapshot and are never remapped.  An id means "the entry this
-  request's map showed", and an id that no longer resolves -- the page
-  navigated, the control moved, the entry is gone -- is refused rather than
-  pointed at whatever now sits in its position.  Stale is the failure mode
-  this design exists to remove; reinterpreting an id would reintroduce it.
+- Ids are per snapshot.  An id means "the entry this request's map showed",
+  and it only ever resolves to the same control: the page's identity must
+  match, then the exact id is tried, then the fresh entries are searched by
+  identity (role, name, tag, type, text).  One unique match means the render
+  merely renumbered the map and the control is still itself; no match means
+  it is gone or replaced; several matches mean it is ambiguous -- all three
+  refuse rather than point at a guess.
 - Visible, offscreen and hidden are three different answers.  A visible entry
   carries a real box clipped to what is actually on screen; an offscreen entry
   carries no box at all (a coordinate for something not on the screen is a
@@ -30,14 +32,17 @@ Four rules keep it honest:
   a hidden entry -- display:none, visibility:hidden, zero-size -- is not
   rendered and therefore not mapped, because it cannot be clicked.
 - The model never sees raw output.  The agent reports everything it found, in
-  document order; this module decides what is worth sending (biggest visible
-  controls first, nearest offscreen first, hard caps) and stamps ids only on
-  that choice, so an id is always bounded and always means one of the entries
-  the model was actually shown.
+  document order; this module decides what is worth sending (actionable
+  controls only, the best of them ranked by name, editability, closeness to
+  the viewport centre and area, duplicates collapsed, hard caps) and stamps
+  ids only on that choice, so an id is always bounded and always means one of
+  the entries the model was actually shown.
 - Resolution re-reads the page instead of trusting the map.  The box in the
   request is where the control *was*; the click point is the centre of where
   it is now, with role, name, tag, type and text compared in between so a
-  control that changed underneath the id is refused, not reinterpreted.
+  control that changed underneath the id is refused, not reinterpreted -- and
+  a map that merely renumbered itself is re-found by identity rather than
+  treated as gone.
 
 Nothing here is site-specific: roles come from ARIA and the platform's own
 implicit role mapping, boxes from the DOM's own geometry, and the same block
@@ -58,25 +63,45 @@ from typing import Any, Dict, List, Optional, Tuple
 #: exactly the position-based identity that goes stale silently.
 ELEMENT_ID_RE = re.compile(r"^[VO][0-9]{1,4}$")
 
-#: How many visible entries the model is shown.  Forty covers a dense page's
-#: real controls while keeping the block smaller than the screenshot it sits
-#: next to; the selection is by area, so the things a person would actually
-#: press -- the primary button, the nav links -- are the ones that survive.
-MAX_VISIBLE_ENTRIES = 40
+#: How many visible entries the model is shown.  Twenty covers a page's real
+#: controls while keeping the block smaller than the screenshot it sits next
+#: to; the choice is ranked (see `build_ui_map`), so the things a person would
+#: actually press first -- the primary button, the nav links -- are the ones
+#: that survive.
+MAX_VISIBLE_ENTRIES = 20
 
-#: How many offscreen entries the model is shown, nearest first.  They cost
-#: more text than a visible entry (no box to point at) and are less likely to
-#: be the next action, so they get the smaller budget.
-MAX_OFFSCREEN_ENTRIES = 20
+#: How many offscreen entries the model is shown, named nearest first.  They
+#: cost more text than a visible entry (no box to point at) and are less
+#: likely to be the next action, so they get the smaller budget.
+MAX_OFFSCREEN_ENTRIES = 8
 
 #: Longest name on one line.  A name is a label, not a paragraph: containers
 #: fall back to their text content, and that can be the whole page.
-MAX_NAME_CHARS = 60
+MAX_NAME_CHARS = 36
 
 #: Longest text carried for identity comparison.  Longer than the displayed
 #: name on purpose: two controls can share a short label and differ in their
 #: text, and identity is what decides whether a click is still safe.
 MAX_TEXT_CHARS = 100
+
+#: Roles a click could target.  Anything else -- containers, layout wrappers,
+#: presentation, plain text -- is not a control, so it never earns a slot that
+#: an actionable one would have taken.
+ACTIONABLE_ROLES = frozenset({
+    "button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio",
+    "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
+    "listbox", "option", "slider", "spinbutton", "treeitem",
+})
+
+#: Tags that are interactive even when the page gives them no role.  A bare
+#: `<a href>` or `<input>` is clickable wherever it appears.
+ACTIONABLE_TAGS = frozenset({
+    "button", "a", "input", "select", "textarea", "summary", "option",
+})
+
+#: Roles the model types into.  Of two otherwise equal controls, the editable
+#: one is the more likely next action, so it ranks ahead.
+EDITOR_ROLES = frozenset({"textbox", "searchbox", "combobox"})
 
 
 def _clean(value: Any, limit: int) -> str:
@@ -149,6 +174,87 @@ def _clamp_box(box: Dict[str, int], display_w: int, display_h: int) -> Dict[str,
     return box
 
 
+def _is_actionable(entry: Dict[str, Any]) -> bool:
+    """Whether a click could ever target this entry."""
+    if entry.get("editable"):
+        return True
+    if entry.get("role") in ACTIONABLE_ROLES:
+        return True
+    if entry.get("tag") in ACTIONABLE_TAGS:
+        return True
+    return False
+
+
+def _is_editor(entry: Dict[str, Any]) -> bool:
+    """Whether this entry is a text field a model types into."""
+    return entry.get("editable") or entry.get("role") in EDITOR_ROLES
+
+
+def _viewport(raw: Any) -> Optional[Dict[str, int]]:
+    """The screenshot viewport boxes are measured in, when the agent sent one."""
+    if not isinstance(raw, dict):
+        return None
+    return _valid_box(raw.get("viewport"))
+
+
+def _vertical_gap(entry: Dict[str, Any], viewport: Optional[Dict[str, int]]) -> int:
+    """How far this entry's centre is from the viewport centre, in display px.
+
+    Zero when no viewport was sent: nothing to measure against, so every entry
+    is equally central.  Used only in ranking -- of two otherwise equal
+    controls, the one nearest the middle of the screen is the one the user has
+    in view and so the more likely next action.
+    """
+    if viewport is None or "box" not in entry:
+        return 0
+    box = entry["box"]
+    cy = box["y"] + box["height"] // 2
+    vy = viewport["y"] + viewport["height"] // 2
+    return abs(cy - vy)
+
+
+def _overlap(left_box: Dict[str, int], right_box: Dict[str, int]) -> bool:
+    """Whether two boxes cover the same ground, for deduplication.
+
+    Two controls that report the same role, name, editability and type and sit
+    on overlapping pixels are usually the same control seen twice -- a labelled
+    link wrapped in a button, an input duplicated by its `<label>` -- and the
+    second copy costs a slot and a line with nothing to add.  `intersection *
+    2 >= smaller area` accepts boxes that mostly coincide while letting two
+    genuinely distinct controls that merely touch pass.
+    """
+    ix = max(0, min(left_box["x"] + left_box["width"], right_box["x"] + right_box["width"])
+             - max(left_box["x"], right_box["x"]))
+    iy = max(0, min(left_box["y"] + left_box["height"], right_box["y"] + right_box["height"])
+             - max(left_box["y"], right_box["y"]))
+    if ix <= 0 or iy <= 0:
+        return False
+    inter = ix * iy
+    small = min(left_box["width"] * left_box["height"], right_box["width"] * right_box["height"])
+    return inter * 2 >= small
+
+
+def _dedupe_visible(ranked: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
+    """Drop duplicate representations, keeping the best-ranked of each."""
+    result: List[Tuple[int, Dict[str, Any]]] = []
+    seen: Dict[Tuple[str, str, bool, str], Dict[str, int]] = {}
+    for item in ranked:
+        _, entry = item
+        key = (
+            entry.get("role") or "",
+            entry.get("name") or "",
+            entry.get("editable"),
+            entry.get("type") or "",
+        )
+        kept = seen.get(key)
+        if kept is not None and _overlap(kept, entry["box"]):
+            continue
+        if kept is None:
+            seen[key] = entry["box"]
+        result.append(item)
+    return result
+
+
 def _entry(raw: Any) -> Optional[Dict[str, Any]]:
     """One raw entry from the agent as a usable one, or None.
 
@@ -191,17 +297,17 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
 
     Selection, capping and id assignment all happen here rather than in the
     agent: the agent reports what exists, and what the model sees is this
-    module's decision -- biggest visible controls first (they are what the
-    screenshot shows largest and what a person presses first), nearest
-    offscreen controls first (they are the ones a scroll can reach), hard caps
-    on both, and the chosen ones re-sorted into document order so the map
+    module's decision -- actionable controls only, ranked by name,
+    editability, closeness to the viewport centre and area, duplicate
+    representations collapsed, nearest named offscreen controls first, hard
+    caps on both, and the chosen ones re-sorted into document order so the map
     reads down the page the way the page does.
 
     Ids are stamped after selection: `V1..Vn` over the visible choice,
     `O1..Om` over the offscreen choice, so an id's number is also a rough
     statement of priority.  Disabled offscreen controls are dropped -- a
     control that is out of view and cannot be acted on is not worth one of the
-    twenty slots -- while disabled visible ones are kept and marked, because
+    eight slots -- while disabled visible ones are kept and marked, because
     the model can see them in the screenshot and should be told why clicking
     them will be refused.
 
@@ -218,10 +324,13 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
 
     visible: List[Tuple[int, Dict[str, Any]]] = []
     raw_visible = raw.get("visible")
+    viewport = _viewport(raw.get("viewport"))
     if isinstance(raw_visible, list):
         for index, candidate in enumerate(raw_visible[:400]):
             entry = _entry(candidate)
             if entry is None or "box" not in entry:
+                continue
+            if not _is_actionable(entry):
                 continue
             _clamp_box(entry["box"], display_w, display_h)
             visible.append((index, entry))
@@ -233,24 +342,39 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
             entry = _entry(candidate)
             if entry is None or "box" in entry:
                 continue
+            if not _is_actionable(entry):
+                continue
             if entry.get("disabled"):
                 continue
             offscreen.append((index, entry))
 
-    # Largest first, ties broken by document order; then back into document
-    # order for output, so the ranking picks the entries and the ordering
-    # still reads top-to-bottom.
+    # Best first: named over unnamed, a text field over other controls of the
+    # same rank, the one nearest the middle of the screen over one out of view,
+    # biggest over smallest -- then duplicate representations collapse and the
+    # hard cap is applied.  The ranking picks the entries; the final
+    # document-order sort makes the map read down the page the way the page
+    # does.
     visible.sort(key=lambda item: (
-        -(item[1]["box"]["width"] * item[1]["box"]["height"]), item[0]
+        0 if item[1].get("name") else 1,
+        0 if _is_editor(item[1]) else 1,
+        _vertical_gap(item[1], viewport),
+        -(item[1]["box"]["width"] * item[1]["box"]["height"]),
+        item[0],
     ))
+    visible = _dedupe_visible(visible)
     chosen_visible = visible[:MAX_VISIBLE_ENTRIES]
     chosen_visible.sort(key=lambda item: item[0])
     for number, (_, entry) in enumerate(chosen_visible, start=1):
         entry["id"] = f"V{number}"
 
     # Nearest first: an offscreen control 200px away is one flick away and a
-    # one 4000px away may not be worth the trip.
-    offscreen.sort(key=lambda item: (item[1].get("dist", 0), item[0]))
+    # one 4000px away may not be worth the trip.  Named controls rank ahead of
+    # anonymous wrappers, which the model cannot say anything useful about.
+    offscreen.sort(key=lambda item: (
+        0 if item[1].get("name") else 1,
+        item[1].get("dist", 0),
+        item[0],
+    ))
     chosen_offscreen = offscreen[:MAX_OFFSCREEN_ENTRIES]
     chosen_offscreen.sort(key=lambda item: item[0])
     for number, (_, entry) in enumerate(chosen_offscreen, start=1):
@@ -312,26 +436,26 @@ def box_point(box: Dict[str, int], display_w: int, display_h: int) -> Tuple[int,
 
 
 def _offscreen_text(entry: Dict[str, Any]) -> str:
-    """`below ~830px` and whether its own panel scrolls, for a line or a refusal."""
+    """`below ~830` and whether its own panel scrolls, for a line or a refusal."""
     parts: List[str] = []
     off = entry.get("off")
     if off:
         parts.append(str(off))
     dist = entry.get("dist")
     if isinstance(dist, int) and dist > 0:
-        parts.append(f"~{dist}px")
+        parts.append(f"~{dist}")
     if entry.get("scroller"):
-        parts.append("in a scrollable panel")
-    return ", ".join(parts)
+        parts.append("[panel]")
+    return " ".join(parts)
 
 
 def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
     """The block the model reads, or "" when there is no map to read.
 
     The header carries the three facts that make the lines interpretable --
-    that ids are the way to click, that an id belongs to this map only, and
-    that boxes are in the screenshot's own pixels -- because a map without
-    those is a list of numbers whose units the model has to guess.
+    that ids are the way to click, that an id is this map's only, and that
+    boxes are in the screenshot's own pixels -- because a map without those is
+    a list of numbers whose units the model has to guess.
 
     An empty page still earns a line: "no clickable elements" is a fact the
     model needs (click by coordinates), and silence would be indistinguishable
@@ -348,10 +472,9 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
         )
 
     lines = [
-        'UI map (live DOM): click with element_id (e.g. "V3"); an id belongs '
-        "only to this map. Boxes are (x0,y0)-(x1,y1) in screenshot pixels. "
-        "Offscreen entries have no box -- scroll first; the map is rebuilt "
-        "after every scroll."
+        'UI map (live DOM): click with element_id (e.g. "V3"); an id is this '
+        "map's only. Boxes are screenshot pixels; offscreen entries have no "
+        "box -- scroll first; the map is rebuilt after every scroll."
     ]
     for entry in visible:
         box = entry.get("box") or {}
@@ -360,9 +483,9 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
         if display_name:
             line += f' "{display_name}"'
         line += (
-            f' ({box.get("x", 0)},{box.get("y", 0)})-'
-            f'({box.get("x", 0) + box.get("width", 0)},'
-            f'{box.get("y", 0) + box.get("height", 0)})'
+            f" {box.get('x', 0)},{box.get('y', 0)}-"
+            f"{box.get('x', 0) + box.get('width', 0)},"
+            f"{box.get('y', 0) + box.get('height', 0)}"
         )
         if entry.get("editable"):
             line += " editable"
@@ -374,7 +497,6 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
         display_name = entry.get("name") or entry.get("text")
         if display_name:
             line += f' "{display_name}"'
-        line += " offscreen"
         where = _offscreen_text(entry)
         if where:
             line += f" {where}"
@@ -405,9 +527,15 @@ def resolve_entry(
 
     The identity comparison in the middle is what makes "same id" mean "same
     control": ids are never reused within a map, but between two reads of a
-    page that re-rendered, `V3` can sit on a different control entirely, and
-    role, name, tag, type and text changing under an id is the page telling us
-    so.
+    page that re-rendered, `V3` can sit on a different control entirely.  A
+    re-render also renumbers the map, so an id that no longer names its
+    control is re-found by identity (role, name, tag, type, text) wherever it
+    now sits before anything is refused: one unique match means the render
+    merely renumbered and the control is still itself, several means the page
+    now shows duplicates and the target is ambiguous, and none means the
+    control is gone -- or, when the exact id still exists but now names
+    something else, replaced.  All three conclusions refuse rather than point
+    at a guess.
     """
     if not ELEMENT_ID_RE.match(element_id or ""):
         return None, f'"{element_id}" is not a valid element id (expected e.g. "V3" or "O2")'
@@ -440,31 +568,50 @@ def resolve_entry(
             "refreshed map will show it with a box"
         )
 
-    fresh = find_entry(fresh_map, element_id)
-    if fresh is None:
+    # The map re-read may have renumbered itself (a banner pushed the layout
+    # down, a list re-sorted), so the id that named this control in the sent
+    # map can sit elsewhere now.  Find the control by identity wherever it is
+    # and require a unique match before committing to a point.
+    matches: List[Dict[str, Any]] = []
+    if isinstance(fresh_map, dict):
+        for key in ("visible", "offscreen"):
+            for entry in fresh_map.get(key) or []:
+                if isinstance(entry, dict) and _identity(entry) == _identity(sent):
+                    matches.append(entry)
+    if len(matches) == 1:
+        candidate = matches[0]
+    elif len(matches) > 1:
         return None, (
-            f"{element_id} is no longer on the page: a fresh read of the UI "
-            "map does not contain it; take a screenshot() and choose again"
+            f"{element_id} is ambiguous: {len(matches)} controls on the page "
+            "match it; take a screenshot() and use a current id or coordinates"
         )
-    if _identity(sent) != _identity(fresh):
+    elif find_entry(fresh_map, element_id) is not None:
+        # The exact id still exists but now sits on a different control: this
+        # element is not gone, it has been replaced.
+        fresh = find_entry(fresh_map, element_id)
         return None, (
             f"{element_id} now describes a different element "
             f"({describe_entry(sent)} -> {describe_entry(fresh)}): the page "
             "changed since the map was read; take a screenshot() and choose "
             "again"
         )
-    if fresh.get("disabled"):
+    else:
+        return None, (
+            f"{element_id} is no longer on the page: a fresh read of the UI "
+            "map does not contain it; take a screenshot() and choose again"
+        )
+    if candidate.get("disabled"):
         return None, (
             f"{element_id} is disabled and cannot be clicked "
-            f"({describe_entry(fresh)})"
+            f"({describe_entry(candidate)})"
         )
-    if "box" not in fresh:
+    if "box" not in candidate:
         return None, (
             f"{element_id} moved offscreen before the click "
-            f"({describe_entry(fresh)}): scroll first, then use the refreshed "
-            "map"
+            f"({describe_entry(candidate)}): scroll first, then use the "
+            "refreshed map"
         )
-    if not fresh["box"].get("width") or not fresh["box"].get("height"):
+    if not candidate["box"].get("width") or not candidate["box"].get("height"):
         return None, f"{element_id} has no usable box on the page right now"
 
     display_w = 0
@@ -472,7 +619,7 @@ def resolve_entry(
     if isinstance(fresh_map, dict):
         display_w = int(fresh_map.get("display_width") or 0)
         display_h = int(fresh_map.get("display_height") or 0)
-    return box_point(fresh["box"], display_w, display_h), ""
+    return box_point(candidate["box"], display_w, display_h), ""
 
 
 def resolution_reason(reason: str) -> str:
@@ -486,9 +633,13 @@ def resolution_reason(reason: str) -> str:
 
 
 __all__ = [
+    "ACTIONABLE_ROLES",
+    "ACTIONABLE_TAGS",
+    "EDITOR_ROLES",
     "ELEMENT_ID_RE",
     "MAX_NAME_CHARS",
     "MAX_OFFSCREEN_ENTRIES",
+    "MAX_TEXT_CHARS",
     "MAX_VISIBLE_ENTRIES",
     "box_point",
     "build_ui_map",

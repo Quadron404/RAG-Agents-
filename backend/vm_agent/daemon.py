@@ -863,7 +863,7 @@ _UI_MAP_JS = r"""(function () {
     if (t === "A" && H.attr(el, "href")) return true;
     try { if (el.getAttribute("onclick")) return true; } catch (e) {}
     try { if (el.isContentEditable) return true; } catch (e) {}
-    try { if (el.hasAttribute("tabindex")) return true; } catch (e) {}
+    try { if (el.tabIndex >= 0) return true; } catch (e) {}
     return false;
   }
   function rendered(el) {
@@ -1003,6 +1003,8 @@ _UI_MAP_JS = r"""(function () {
   }
   out.visible = visible;
   out.offscreen = offscreen;
+  out.viewport = { x: Math.round(originX), y: Math.round(originY),
+    width: Math.round(iw * scale), height: Math.round(ih * scale) };
   out.ok = true;
   return JSON.stringify(out);
 })()

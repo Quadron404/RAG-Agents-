@@ -93,8 +93,8 @@ HISTORY_ARGUMENT = "history"
 #: a rule repeated in all ten schemas is paid for ten times to say one thing, and
 #: this block goes out on every request of every turn.
 HISTORY_DESCRIPTION = (
-    "Required. One short sentence describing the action you are issuing now. No "
-    "coordinates, raw tool arguments, or success/failure claims."
+    "Required. One short sentence about the action you are issuing. No "
+    "coordinates, arguments, or success/failure claims."
 )
 
 #: The other metadata argument every tool carries, and the reason it exists.
@@ -112,11 +112,9 @@ HISTORY_DESCRIPTION = (
 #: and a model that does not know them loses the plan rather than the action --
 #: so two clauses here are cheaper than ten refused replies.
 NEXT_STEP_DESCRIPTION = (
-    "Required. Plan the immediate next model step after this tool finishes. Specify "
-    "the next tool, what it should accomplish, and what to verify first. This is "
-    "guidance, not execution; verify it against the latest task, UI state, "
-    "screenshot, and Last action. Never claim the step already happened. No "
-    "coordinates."
+    "Required. Plan the next step after this tool finishes: the next tool, what "
+    "it should accomplish, and what to verify first. Guidance only; never already "
+    "done; no coordinates."
 )
 
 
@@ -157,12 +155,12 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
     schemas = [
         {
             "name": "screenshot",
-            "description": "Get the current VM screen. Call only when you need to see it. After receiving the screenshot, use it to determine the next task step; do not repeat the previous successful action merely because the same control is still visible.",
+            "description": "Get the current VM screen. Only when you need to see it.",
             "parameters": object_schema({}, []),
         },
         {
             "name": "navigate",
-            "description": "Open a URL in the real remote browser.",
+            "description": "Open a URL in the browser.",
             "parameters": object_schema({"url": {"type": "string", "description": "http(s) URL"}}, ["url"]),
         },
         {
@@ -172,24 +170,24 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "click",
-            "description": "Click a control. Preferred: pass element_id, an id from the UI map in this request (e.g. \"V3\"); the point is then resolved from a fresh read of the live page, so a stale, unknown, offscreen or disabled id is refused and x/y are ignored. Otherwise pass x/y as pixel numbers from the latest screenshot; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. `target` is required either way: a few words naming the control to press, checked against what is really at that point before the click is sent, so a point holding a different control is refused instead of clicked.",
+            "description": "Click a control. Better: element_id from the UI map (e.g. \"V3\"); the point comes from a fresh read of the page, and a stale, unknown, offscreen or disabled id is refused. Otherwise x/y are pixel coordinates from the latest screenshot. target is required either way: a few words naming the control to press, checked against what is really there before the click, so a mismatch is refused.",
             "parameters": object_schema(
                 {
                     "element_id": {
                         "type": "string",
-                        "description": "An id from the UI map in this request, such as \"V3\" (visible) or \"O2\" (offscreen). Preferred over x/y. The click is resolved against a fresh read of the live page; an id that is unknown, stale, offscreen or disabled is refused instead of clicked. When present, x/y are ignored.",
+                        "description": "An id from the UI map in this request, such as \"V3\" or \"O2\". Preferred over x/y; unknown, stale, offscreen or disabled ids are refused.",
                     },
                     "x": {
                         "type": "number",
-                        "description": "Pixel x from the latest screenshot; not needed when element_id is given.",
+                        "description": "Pixel x from the latest screenshot (ignored when element_id is given).",
                     },
                     "y": {
                         "type": "number",
-                        "description": "Pixel y from the latest screenshot; not needed when element_id is given.",
+                        "description": "Pixel y from the latest screenshot (ignored when element_id is given).",
                     },
                     "target": {
                         "type": "string",
-                        "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". Checked against what is really at x,y from the live page before the click is sent; a click that does not name what it means to press is refused.",
+                        "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". Checked against what is really at that point before the click.",
                     },
                 },
                 ["target"],
@@ -217,7 +215,7 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "stop",
-            "description": "Terminal stop. Use when the work is complete or no more model decisions are needed. No further API calls are made for this task.",
+            "description": "Terminal stop when the work is done or no more decisions are needed.",
             "parameters": object_schema({"message": {"type": "string"}}, ["message"]),
         },
         {
