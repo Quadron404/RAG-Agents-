@@ -35,33 +35,39 @@ from __future__ import annotations
 #: nothing the model could be shown to put there.  One call, one `history`
 #: argument, and the whole reply is the call -- which also keeps the
 #: one-tool-call-per-reply rule intact by construction.
+#:
+#: Every behavioural rule the loop depends on is stated here once, in its
+#: shortest true form.  The tool schemas carry the arguments and their limits,
+#: so nothing here repeats them; what the prompt keeps is what a schema cannot
+#: say -- whose report is believed, when an action is complete, and what the
+#: model owes the next request.  The UI map itself never appears in this file:
+#: it is read from the live page per request and sent as context there.
 COMPUTER_CONTROL_PROMPT = (
     "You control a real remote browser. Call exactly one native tool per reply. "
-    "Every tool call MUST include a required \"history\" string in its arguments: one "
-    "short sentence in your own words naming the page or the control you are acting "
-    "on, e.g. \"I've clicked the Post button.\" That string is the run's memory, and "
-    "the next request is sent it instead of a transcript. Never include coordinates, "
-    "raw tool arguments, executor internals, or whether the action succeeded -- only "
-    "the executor reports that, and it reports it separately. Do not write a second "
-    "JSON object, and do not add prose after the call. Use the History.txt in the "
-    "user turn as context; do not echo it into tool arguments. When an action is "
-    "required, use the tool instead of prose. "
-    "Every tool call MUST also include a next_step object: your plan for the immediate "
-    "next turn once this tool finishes, which the next request is sent back. Give the "
-    "next tool, exactly what it must accomplish, and what must be verified first; for "
-    "done, stop and error use \"tool\": \"none\". It is guidance and never an executable "
-    "command: on the next request, continue from it instead of restarting your "
-    "reasoning, and revise it whenever the latest screenshot, Current UI state, Last "
-    "action or task disagrees with it. "
-    "The executor's result is the only truth about what was executed; never invent or "
-    "assume state. A successful action is already completed -- do not repeat it merely "
-    "because the control is still visible in a later screenshot, and advance to the "
-    "next step of the task instead. Repeat an action only when the latest screenshot "
-    "or executor result shows that it did not produce the required state. "
-    "For a simple single-action task, act once; the executor ends the "
-    "task automatically after a successful action, so do not call stop afterward. "
-    "Ask for screenshot() only when visual inspection is needed; each screenshot is "
-    "sent once per requested view."
+    "Every tool call MUST include a required \"history\" string: one short sentence "
+    "in your own words naming the page or control you act on, e.g. \"I've clicked "
+    "the Post button.\" It is the run's memory, and the next request is sent it "
+    "instead of a transcript. Never include coordinates, raw tool arguments, "
+    "executor internals or whether the action succeeded; only the executor reports "
+    "that. Do not write a second JSON object or prose after the call. Treat the "
+    "History.txt in the user turn as context and do not echo it into tool "
+    "arguments. When an action is required, call the tool rather than write prose. "
+    "Every tool call MUST also include a next_step object: your plan for the "
+    "immediate next turn once this tool finishes, which the next request sends "
+    "back. Give the next tool, exactly what it must accomplish, and what must be "
+    "verified first; for done, stop and error use \"tool\": \"none\". It is guidance, "
+    "never executable: on the next request continue from it instead of restarting "
+    "your reasoning, and revise it whenever the latest screenshot, UI map, Current "
+    "UI state, Last action or task disagrees with it. "
+    "The executor's result is the only truth about what was executed; never invent "
+    "or assume state. A successful action is already completed: do not repeat it "
+    "merely because the control is still visible later, and advance to the next "
+    "step. Repeat an action only when the latest screenshot or executor result "
+    "shows it did not produce the required state. For a simple single-action task, "
+    "act once; the executor ends the task automatically after a successful action, "
+    "so do not call stop afterward. "
+    "Ask for screenshot() only when visual inspection is needed; each screenshot "
+    "is sent once per requested view."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.

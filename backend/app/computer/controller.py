@@ -244,6 +244,26 @@ class RemoteComputer:
             return None
         return result
 
+    async def uimap(self) -> Dict[str, Any]:
+        """What the live DOM is showing, read without acting.
+
+        The whole page rather than one point, in the same spirit as `hit`: no
+        pointer movement, no scroll, no settle, because the answer has to
+        describe the page as it is *now* -- the one an element_id click is
+        about to land on.
+
+        Raises `ComputerError` whenever the agent cannot answer.  The caller
+        treats that as "no map this turn" and falls back to coordinates; an
+        unreadable page is never reported as an empty one, because a model
+        told the page has no controls would stop trying to find them.
+        """
+        result = await self._post("/computer/uimap", {}, timeout=15.0)
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise ComputerError(
+                str((result or {}).get("error") or "could not read the UI map")
+            )
+        return result
+
     async def screenshot(self) -> Tuple[Optional[str], int, int]:
         """A JPEG of the real display, as (base64, width, height).
 

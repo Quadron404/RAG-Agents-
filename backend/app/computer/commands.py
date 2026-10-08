@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 from .hit_target import clean_target
+from .ui_map import ELEMENT_ID_RE
 
 #: The complete set of capabilities in this phase.  Every entry maps to exactly
 #: one method on RemoteComputer and one route on the agent, so the allowlist
@@ -178,6 +179,17 @@ class Command:
     #: was asked to do, which is a coordinate, and `target` is a claim the
     #: model made about that coordinate rather than part of the command.
     target: str = ""
+    #: The UI-map id the model chose instead of a coordinate, when it chose
+    #: one.  Resolved against a fresh read of the live page at click time and
+    #: never trusted as a position: an id whose control has moved, changed or
+    #: gone is refused, not reinterpreted.
+    #:
+    #: Absent from `to_json()` like `target`, and for the same reason: the
+    #: record of what the machine was asked to do is the coordinate the
+    #: resolution produced, while the id is the claim that picked it.  On a
+    #: click that could not be resolved at all, the event log carries the id
+    #: itself instead, because there is then no coordinate to record.
+    element_id: str = ""
 
     def to_json(self) -> Dict[str, Any]:
         """The canonical record of what was issued, for the event log.
@@ -367,6 +379,41 @@ def parse_command(
         return Command(type="search", query=query), ""
 
     if kind in ("click", "move"):
+        # Same rules as `tool_to_command` in `tools.py`, deliberately word for
+        # word: the two parsers accept and refuse the same replies, so a model
+        # is never told two different things about one mistake.
+        #
+        # An element id from the UI map is the preferred way to name a control:
+        # the map already carries the control's real box, so the point comes
+        # from a fresh read of the live page at click time rather than from a
+        # number the model estimated out of a picture.  When an id is given,
+        # x/y are not merely unnecessary, they are ignored: two claims about
+        # where one control is is exactly the ambiguity the whole design exists
+        # to remove.
+        raw_element = data.get("element_id")
+        if raw_element is not None and not isinstance(raw_element, str):
+            return None, 'click element_id must be a string such as "V3"'
+        element_id = raw_element.strip() if isinstance(raw_element, str) else ""
+        if kind == "click" and element_id:
+            if not ELEMENT_ID_RE.match(element_id):
+                return None, (
+                    f"click element_id {element_id!r} is not a UI map id; ids "
+                    'look like "V3" (visible) or "O2" (offscreen), exactly as '
+                    "written in the UI map"
+                )
+            raw_target = data.get("target")
+            if not isinstance(raw_target, str):
+                return None, (
+                    'click requires "target": a few words naming the control to '
+                    'press, such as "Post button"'
+                )
+            target = clean_target(raw_target)
+            if not target:
+                return None, (
+                    'click requires a non-empty "target" naming the control to '
+                    'press, such as "Post button"'
+                )
+            return Command(type="click", target=target, element_id=element_id), ""
         x = _finite_number(data.get("x"))
         y = _finite_number(data.get("y"))
         if x is None or y is None:

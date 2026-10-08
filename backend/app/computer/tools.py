@@ -51,6 +51,7 @@ from .commands import (
 )
 from .next_step import NEXT_STEP_ARGUMENT, next_step_schema
 from .hit_target import clean_target
+from .ui_map import ELEMENT_ID_RE
 
 #: The complete tool surface, in the order the prompt lists it.  Every name here
 #: is dispatched in `_perform_tool`; a name that is in the schemas but not in
@@ -171,17 +172,27 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "click",
-            "description": "Click at coordinates from the latest screenshot. x/y may be pixel numbers; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. `target` is required: a few words naming the control to press, checked against what is really at x,y before the click is sent, so a point holding a different control is refused instead of clicked.",
+            "description": "Click a control. Preferred: pass element_id, an id from the UI map in this request (e.g. \"V3\"); the point is then resolved from a fresh read of the live page, so a stale, unknown, offscreen or disabled id is refused and x/y are ignored. Otherwise pass x/y as pixel numbers from the latest screenshot; decimal strings are accepted, and values from 0 to 1 are treated as normalized fractions of the screenshot. `target` is required either way: a few words naming the control to press, checked against what is really at that point before the click is sent, so a point holding a different control is refused instead of clicked.",
             "parameters": object_schema(
                 {
-                    "x": {"type": "number"},
-                    "y": {"type": "number"},
+                    "element_id": {
+                        "type": "string",
+                        "description": "An id from the UI map in this request, such as \"V3\" (visible) or \"O2\" (offscreen). Preferred over x/y. The click is resolved against a fresh read of the live page; an id that is unknown, stale, offscreen or disabled is refused instead of clicked. When present, x/y are ignored.",
+                    },
+                    "x": {
+                        "type": "number",
+                        "description": "Pixel x from the latest screenshot; not needed when element_id is given.",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Pixel y from the latest screenshot; not needed when element_id is given.",
+                    },
                     "target": {
                         "type": "string",
                         "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". Checked against what is really at x,y from the live page before the click is sent; a click that does not name what it means to press is refused.",
                     },
                 },
-                ["x", "y", "target"],
+                ["target"],
             ),
         },
         {
@@ -339,6 +350,37 @@ def tool_to_command(
         return Command(type="search", query=query), ""
 
     if name in ("click", "move"):
+        # An element id from the UI map is the preferred way to name a control:
+        # the map already carries the control's real box, so the point comes
+        # from a fresh read of the live page at click time rather than from a
+        # number the model estimated out of a picture.  When an id is given,
+        # x/y are not merely unnecessary, they are refused as input: two claims
+        # about where one control is is exactly the ambiguity the whole design
+        # exists to remove.
+        raw_element = args.get("element_id")
+        if raw_element is not None and not isinstance(raw_element, str):
+            return None, 'click element_id must be a string such as "V3"'
+        element_id = raw_element.strip() if isinstance(raw_element, str) else ""
+        if name == "click" and element_id:
+            if not ELEMENT_ID_RE.match(element_id):
+                return None, (
+                    f"click element_id {element_id!r} is not a UI map id; ids "
+                    'look like "V3" (visible) or "O2" (offscreen), exactly as '
+                    "written in the UI map"
+                )
+            raw_target = args.get("target")
+            if not isinstance(raw_target, str):
+                return None, (
+                    'click requires "target": a few words naming the control to '
+                    'press, such as "Post button"'
+                )
+            target = clean_target(raw_target)
+            if not target:
+                return None, (
+                    'click requires a non-empty "target" naming the control to '
+                    'press, such as "Post button"'
+                )
+            return Command(type="click", target=target, element_id=element_id), ""
         x = _finite_number(args.get("x"))
         y = _finite_number(args.get("y"))
         if x is None or y is None:

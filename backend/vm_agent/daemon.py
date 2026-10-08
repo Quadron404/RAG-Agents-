@@ -353,25 +353,91 @@ _DOM_HELPERS_JS = r"""(function () {
 })()"""
 
 
+#: The coordinate origin: where the page's viewport sits on the display, in
+#: display pixels, and how many display pixels one CSS pixel is worth.
+#:
+#: Inlined into every script that has to place something from the DOM onto the
+#: screenshot -- the hit test and the UI map -- as `__ORIGIN__` at import,
+#: exactly as the helpers are inlined as `__HELPERS__`.  The alternative is two
+#: copies of this arithmetic, and two copies that disagree by half a pixel are
+#: how an element the map promised is not where the click goes.
+#:
+#: Everything here is either the page's own measurements of itself (`screen`,
+#: `outerWidth`, `innerWidth`, `devicePixelRatio`) or a number substituted per
+#: request by the caller (`__DISPLAY_*__` and `__WIN_*__`, which come from the
+#: X server because the X server is also what will receive the click).  The
+#: latter stay as placeholders through import: the user can drag the window
+#: between requests, so the window's place on the display is read fresh each
+#: time, while the rest of the block is stable for the life of the script.
+#:
+#: The scale is the window's own width in display pixels over that same
+#: window's `outerWidth` in CSS pixels -- two measurements of one rectangle --
+#: so a 200% display and a 100% one agree about where the toolbar ends.  When X
+#: could not name the window, `screen.width` and then the device pixel ratio
+#: stand in, in that order.  The browser's own furniture around the viewport
+#: (`outer`-minus-`inner`) is the window's measurement of itself, so no pixel
+#: of it is mistaken for page content.
+_DISPLAY_ORIGIN_JS = r"""(function () {
+  var sw = 0, sh = 0, sx = 0, sy = 0, ow = 0, oh = 0, iw = 0, ih = 0, dpr = 1;
+  try { sw = screen.width || 0; sh = screen.height || 0; } catch (e) {}
+  try { sx = window.screenX || 0; sy = window.screenY || 0; } catch (e) {}
+  try { ow = window.outerWidth || 0; oh = window.outerHeight || 0; } catch (e) {}
+  try { iw = window.innerWidth || 0; ih = window.innerHeight || 0; } catch (e) {}
+  try { dpr = window.devicePixelRatio || 1; } catch (e) {}
+  if (!(dpr > 0)) dpr = 1;
+  var DX = __DISPLAY_W__, DY = __DISPLAY_H__;
+  var WX = __WIN_X__, WY = __WIN_Y__, WW = __WIN_W__, WH = __WIN_H__;
+  var scale = 0;
+  if (WW > 0 && ow > 0) scale = WW / ow;
+  else if (sw > 0 && DX > 0) scale = DX / sw;
+  else scale = dpr;
+  if (!(scale > 0) || scale > 8 || scale < 0.125) scale = dpr > 0 ? dpr : 1;
+  var leftChrome = Math.max(0, Math.round((ow - iw) / 2));
+  var topChrome = Math.max(0, Math.round(oh - ih));
+  var winX, winY, winW, winH, originX, originY;
+  if (WW > 0 && WH > 0) {
+    winX = WX; winY = WY; winW = WW; winH = WH;
+    originX = WX + leftChrome * scale;
+    originY = WY + topChrome * scale;
+  } else {
+    winX = sx * scale; winY = sy * scale; winW = ow * scale; winH = oh * scale;
+    originX = winX + leftChrome * scale;
+    originY = winY + topChrome * scale;
+  }
+  return {
+    scale: scale,
+    dpr: dpr,
+    display_w: DX,
+    display_h: DY,
+    win_x: winX,
+    win_y: winY,
+    win_w: winW,
+    win_h: winH,
+    origin_x: originX,
+    origin_y: originY,
+    iw: iw,
+    ih: ih,
+    screen_w: sw,
+    screen_h: sh,
+    screen_x: sx,
+    screen_y: sy,
+    chrome_left: leftChrome,
+    chrome_top: topChrome
+  };
+})()"""
+
+
 #: What is under a point, read from the live DOM before the click runs.
 #:
-#: The caller supplies the requested display pixel (`__CLICK_X__`/`__CLICK_Y__`),
-#: the size of the full-display screenshot it was read from (`__DISPLAY_W__`/
-#: `__DISPLAY_H__`) and the X rectangle of the browser's own window
-#: (`__WIN_X__`/`__WIN_Y__`/`__WIN_W__`/`__WIN_H__`, or -1 when X could not name
-#: one).  The script turns those into viewport coordinates and reports what the
-#: page holds there -- which is the one conversion that has to survive a real
-#: desktop: a display pixel is not a CSS pixel (HiDPI), the browser window is
-#: not the page (its chrome sits between them), and the window is not at the
-#: origin of the display.
-#:
-#: Nothing here is a heuristic.  The scale is the window's own width in display
-#: pixels over that same window's `outerWidth` in CSS pixels -- two measurements
-#: of one rectangle -- so a 200% display and a 100% one agree about where the
-#: toolbar ends.  The window's position on the display comes from the X server
-#: rather than from `screenX`, because the X server is also what will receive
-#: the click.  The only estimates left are the browser's own furniture
-#: (`outer`-minus-`inner`), and those are the window's measurements of itself.
+#: The caller supplies the requested display pixel (`__CLICK_X__`/`__CLICK_Y__`)
+#: and, through the shared origin block (`__ORIGIN__`, inlined at import), the
+#: size of the full-display screenshot it was read from and the X rectangle of
+#: the browser's own window (or -1 when X could not name one).  The script turns
+#: those into viewport coordinates and reports what the page holds there -- the
+#: one conversion that has to survive a real desktop: a display pixel is not a
+#: CSS pixel (HiDPI), the browser window is not the page (its chrome sits
+#: between them), and the window is not at the origin of the display.  How the
+#: origin is computed, and why none of it is a heuristic, is said once there.
 #:
 #: Three answers are possible and all three are honest:
 #:
@@ -398,66 +464,32 @@ _DOM_HELPERS_JS = r"""(function () {
 #: exception out of this script.
 _HIT_TEST_JS = r"""(function () {
   var H = __HELPERS__;
-  var DX = __DISPLAY_W__, DY = __DISPLAY_H__;
+  var O = __ORIGIN__;
   var CX = __CLICK_X__, CY = __CLICK_Y__;
-  var WX = __WIN_X__, WY = __WIN_Y__, WW = __WIN_W__, WH = __WIN_H__;
   var out = { ok: false };
-  var sw = 0, sh = 0, sx = 0, sy = 0, ow = 0, oh = 0, iw = 0, ih = 0, cw = 0, ch = 0, dpr = 1;
-  try { sw = screen.width || 0; sh = screen.height || 0; } catch (e) {}
-  try { sx = window.screenX || 0; sy = window.screenY || 0; } catch (e) {}
-  try { ow = window.outerWidth || 0; oh = window.outerHeight || 0; } catch (e) {}
-  try { iw = window.innerWidth || 0; ih = window.innerHeight || 0; } catch (e) {}
-  try { cw = document.documentElement.clientWidth || 0; ch = document.documentElement.clientHeight || 0; } catch (e) {}
-  try { dpr = window.devicePixelRatio || 1; } catch (e) {}
-  if (!(dpr > 0)) dpr = 1;
-  // Display pixels per CSS pixel.  The preferred source is the browser window
-  // itself: the X rectangle and `outerWidth` describe one rectangle in two
-  // units, so their ratio is the scale.  The screen and the device pixel ratio
-  // are the fallbacks for a window X could not name.
-  var scale = 0;
-  if (WW > 0 && ow > 0) scale = WW / ow;
-  else if (sw > 0 && DX > 0) scale = DX / sw;
-  else scale = dpr;
-  if (!(scale > 0) || scale > 8 || scale < 0.125) scale = dpr > 0 ? dpr : 1;
-  // The browser's own furniture around the viewport, in CSS pixels: the window
-  // border left and right, and the whole stack of tab strip, toolbar and
-  // bookmarks bar above the page.  Both come from the window's measurements of
-  // itself, so no pixel of either is mistaken for page content.
-  var leftChrome = Math.max(0, Math.round((ow - iw) / 2));
-  var topChrome = Math.max(0, Math.round(oh - ih));
-  // Where the window sits on the display and where its viewport starts, both
-  // in display pixels -- the same grid the screenshot and the click are in.
-  var winX, winY, winW, winH, originX, originY;
-  if (WW > 0 && WH > 0) {
-    winX = WX; winY = WY; winW = WW; winH = WH;
-    originX = WX + leftChrome * scale;
-    originY = WY + topChrome * scale;
-  } else {
-    winX = sx * scale; winY = sy * scale; winW = ow * scale; winH = oh * scale;
-    originX = winX + leftChrome * scale;
-    originY = winY + topChrome * scale;
-  }
+  var scale = O.scale;
+  var iw = O.iw, ih = O.ih;
   out.mapping = {
-    scale: scale,
-    dpr: dpr,
-    display_w: DX,
-    display_h: DY,
-    window_x: Math.round(winX),
-    window_y: Math.round(winY),
-    window_w: Math.round(winW),
-    window_h: Math.round(winH),
-    viewport_x: Math.round(originX),
-    viewport_y: Math.round(originY),
-    viewport_w: Math.round(iw * scale),
-    viewport_h: Math.round(ih * scale),
-    viewport_css_w: iw,
-    viewport_css_h: ih,
-    chrome_left: leftChrome,
-    chrome_top: topChrome,
-    screen_w: sw,
-    screen_h: sh,
-    screen_x: sx,
-    screen_y: sy
+    scale: O.scale,
+    dpr: O.dpr,
+    display_w: O.display_w,
+    display_h: O.display_h,
+    window_x: Math.round(O.win_x),
+    window_y: Math.round(O.win_y),
+    window_w: Math.round(O.win_w),
+    window_h: Math.round(O.win_h),
+    viewport_x: Math.round(O.origin_x),
+    viewport_y: Math.round(O.origin_y),
+    viewport_w: Math.round(O.iw * scale),
+    viewport_h: Math.round(O.ih * scale),
+    viewport_css_w: O.iw,
+    viewport_css_h: O.ih,
+    chrome_left: O.chrome_left,
+    chrome_top: O.chrome_top,
+    screen_w: O.screen_w,
+    screen_h: O.screen_h,
+    screen_x: O.screen_x,
+    screen_y: O.screen_y
   };
   // Outside the window's own rectangle the point is not the browser's page: it
   // is the frame, the titlebar, or a different window entirely.  The margin is
@@ -465,16 +497,16 @@ _HIT_TEST_JS = r"""(function () {
   // content from a point that is off the window.
   var MARGIN_WINDOW = 6;
   var MARGIN_PAGE = 4;
-  if (!(winW > 0 && winH > 0) ||
-      CX < winX - MARGIN_WINDOW || CY < winY - MARGIN_WINDOW ||
-      CX > winX + winW + MARGIN_WINDOW || CY > winY + winH + MARGIN_WINDOW) {
+  if (!(O.win_w > 0 && O.win_h > 0) ||
+      CX < O.win_x - MARGIN_WINDOW || CY < O.win_y - MARGIN_WINDOW ||
+      CX > O.win_x + O.win_w + MARGIN_WINDOW || CY > O.win_y + O.win_h + MARGIN_WINDOW) {
     out.ok = true;
     out.in_page = false;
     out.reason = "the point is not on the page -- it is browser chrome or another window";
     return JSON.stringify(out);
   }
-  var vx = (CX - originX) / scale;
-  var vy = (CY - originY) / scale;
+  var vx = (CX - O.origin_x) / scale;
+  var vy = (CY - O.origin_y) / scale;
   if (!(iw > 0 && ih > 0) || vx < -MARGIN_PAGE || vy < -MARGIN_PAGE ||
       vx > iw + MARGIN_PAGE || vy > ih + MARGIN_PAGE) {
     out.ok = true;
@@ -762,12 +794,234 @@ _UI_STATE_JS = r"""(function () {
 """
 
 
-# Each script is written against the shared helpers as `__HELPERS__` and gets
-# them inlined once here, at import: the alternative is two copies of the same
-# rules drifting apart, which is exactly how two reads of one page start
-# disagreeing about what is on it.
+#: What the live DOM is showing -- the UI map, read without acting.
+#:
+#: Every control a person could act on is reported in document order, in two
+#: kinds.  A visible one carries the box it currently occupies, clipped to
+#: everything that could hide part of it: the viewport, and every ancestor that
+#: clips its overflow, so an element scrolled out of an inner panel is reported
+#: offscreen rather than "visible" behind the panel's edge.  An offscreen one
+#: carries no box -- a coordinate for something that is not on the screen would
+#: be a guess -- but it carries where it lies relative to the region it could
+#: be shown in (below/above/left/right and by how many CSS pixels) and whether
+#: its own panel scrolls, which is the difference between "scroll down" and
+#: "scroll this list".
+#:
+#: Not rendered is not mapped: display:none, visibility:hidden and zero-size
+#: boxes are left out entirely, because a control that cannot be seen cannot be
+#: clicked and the map's job is what can be.  Everything the same person would
+#: count as clickable is in: buttons, links, fields, checkboxes, menu items,
+#: tabs, anything with an explicit role, an onclick handler, a tabindex or an
+#: editable body -- read from the DOM alone, with nothing specific to any site.
+#:
+#: Boxes are computed in CSS pixels and converted to display pixels by the same
+#: origin the hit test uses (`__ORIGIN__`, inlined at import), which is what
+#: makes a box in this answer and a pixel in the screenshot the same grid.
+#:
+#: Bounds: 400 candidates are scanned (a page with a thousand links still
+#: answers quickly) and at most 160 entries are collected; the caller ranks and
+#: caps further.  Ids are deliberately NOT assigned here: this script reports
+#: what exists, and the Python side chooses what the model is shown and stamps
+#: ids onto that choice, so an id always means "entry from the map this request
+#: was built from" and never a raw DOM position.
+#:
+#: Everything is wrapped: a page that throws, a window that is not a browser,
+#: a value that is not JSON, all yield an unreadable answer and never an
+#: exception out of this script.
+_UI_MAP_JS = r"""(function () {
+  var H = __HELPERS__;
+  var O = __ORIGIN__;
+  var scale = O.scale;
+  var iw = O.iw, ih = O.ih;
+  var originX = O.origin_x, originY = O.origin_y;
+  var dispW = O.display_w, dispH = O.display_h;
+  var out = { ok: false, visible: [], offscreen: [] };
+  var MAX_SCAN = 400;
+  var MAX_COLLECT = 160;
+  var INTERACTIVE = { button: 1, link: 1, checkbox: 1, radio: 1, switch: 1,
+    tab: 1, menuitem: 1, menuitemcheckbox: 1, menuitemradio: 1, textbox: 1,
+    searchbox: 1, combobox: 1, listbox: 1, option: 1, slider: 1,
+    spinbutton: 1, treeitem: 1 };
+  function parentOf(el) {
+    var p = null;
+    try { p = el.parentElement; } catch (e) {}
+    if (p) return p;
+    try {
+      var root = el.getRootNode ? el.getRootNode() : null;
+      if (root && root !== document && root.host) return root.host;
+    } catch (e) {}
+    return null;
+  }
+  function actionable(el) {
+    if (!el || !el.tagName) return false;
+    var r = "";
+    try { r = H.role(el) || ""; } catch (e) {}
+    if (r && INTERACTIVE[r]) return true;
+    var t = (el.tagName || "").toUpperCase();
+    if (t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" || t === "SELECT" ||
+        t === "SUMMARY" || t === "OPTION") return true;
+    if (t === "A" && H.attr(el, "href")) return true;
+    try { if (el.getAttribute("onclick")) return true; } catch (e) {}
+    try { if (el.isContentEditable) return true; } catch (e) {}
+    try { if (el.hasAttribute("tabindex")) return true; } catch (e) {}
+    return false;
+  }
+  function rendered(el) {
+    var cs = null;
+    try { cs = window.getComputedStyle(el); } catch (e) { return false; }
+    if (!cs) return false;
+    if (cs.display === "none") return false;
+    if (cs.visibility === "hidden" || cs.visibility === "collapse") return false;
+    if (cs.pointerEvents === "none") return false;
+    return true;
+  }
+  function rectOf(el) {
+    try {
+      var b = el.getBoundingClientRect();
+      if (!(b.width > 0) || !(b.height > 0)) return null;
+      return [b.left, b.top, b.right, b.bottom];
+    } catch (e) { return null; }
+  }
+  // The region this element could be shown in: the viewport, cut by every
+  // ancestor that clips its overflow, walking out through shadow hosts.
+  function clipRegion(el) {
+    var box = [0, 0, iw, ih];
+    var node = parentOf(el);
+    var guard = 0;
+    while (node && guard++ < 40) {
+      var cs = null;
+      try { cs = window.getComputedStyle(node); } catch (e) { break; }
+      if (cs) {
+        var ox = cs.overflowX, oy = cs.overflowY;
+        if (ox !== "visible" || oy !== "visible") {
+          var cb = null;
+          try { cb = node.getBoundingClientRect(); } catch (e) { break; }
+          if (ox !== "visible") {
+            box[0] = Math.max(box[0], cb.left);
+            box[2] = Math.min(box[2], cb.right);
+          }
+          if (oy !== "visible") {
+            box[1] = Math.max(box[1], cb.top);
+            box[3] = Math.min(box[3], cb.bottom);
+          }
+        }
+      }
+      if (node === document.documentElement) break;
+      node = parentOf(node);
+    }
+    if (!(box[2] > box[0]) || !(box[3] > box[1])) return null;
+    return box;
+  }
+  // Which way and how far past the shown region the element's own box lies.
+  // Vertical wins when both axes have a gap, because a page scrolls down more
+  // often than it scrolls sideways.
+  function gap(raw, clip) {
+    if (raw[1] >= clip[3]) return { off: "below", dist: Math.round(raw[1] - clip[3]) };
+    if (raw[3] <= clip[1]) return { off: "above", dist: Math.round(clip[1] - raw[3]) };
+    if (raw[0] >= clip[2]) return { off: "right", dist: Math.round(raw[0] - clip[2]) };
+    if (raw[2] <= clip[0]) return { off: "left", dist: Math.round(clip[0] - raw[2]) };
+    return { off: "below", dist: 0 };
+  }
+  // CSS pixels -> display pixels through the shared origin, then clamped to
+  // the display the screenshot was taken of, so no box ever points off it.
+  function toDisplay(v) {
+    var x = Math.round(originX + v[0] * scale);
+    var y = Math.round(originY + v[1] * scale);
+    var w = Math.max(1, Math.round((v[2] - v[0]) * scale));
+    var h = Math.max(1, Math.round((v[3] - v[1]) * scale));
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > dispW) w = dispW - x;
+    if (y + h > dispH) h = dispH - y;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    return { x: x, y: y, width: w, height: h };
+  }
+  // The nearest scrolling ancestor that is not the page itself: the page's own
+  // scroll is the `scroll` tool's business, an inner panel's is a hint the
+  // model cannot get from anywhere else.
+  function scrollable(el) {
+    var node = parentOf(el);
+    var guard = 0;
+    while (node && guard++ < 40) {
+      if (node === document.documentElement || node === document.body) return null;
+      var cs = null;
+      try { cs = window.getComputedStyle(node); } catch (e) { return null; }
+      if (cs && (cs.overflowX !== "visible" || cs.overflowY !== "visible")) {
+        var more = false;
+        try {
+          more = node.scrollHeight > node.clientHeight + 1 ||
+                 node.scrollWidth > node.clientWidth + 1;
+        } catch (e) {}
+        if (more) return node;
+      }
+      node = parentOf(node);
+    }
+    return null;
+  }
+  var nodes = [];
+  try {
+    nodes = document.querySelectorAll(
+      'a, button, input, select, textarea, summary, [role], [onclick], ' +
+      '[contenteditable="true"], [tabindex]'
+    );
+  } catch (e) {}
+  var visible = [], offscreen = [];
+  for (var ci = 0; ci < nodes.length && ci < MAX_SCAN; ci++) {
+    var el = nodes[ci];
+    try {
+      if (!actionable(el)) continue;
+      if (!rendered(el)) continue;
+      var raw = rectOf(el);
+      if (!raw) continue;
+      var clip = clipRegion(el);
+      var entry = {
+        role: H.role(el) || "",
+        name: H.name(el) || "",
+        text: H.text(el) || "",
+        tag: (el.tagName || "").toLowerCase(),
+        type: H.attr(el, "type") || "",
+        editable: !!H.editable(el),
+        disabled: (el.disabled === true || H.attr(el, "aria-disabled") === "true")
+      };
+      if (clip) {
+        var vbox = [Math.max(raw[0], clip[0]), Math.max(raw[1], clip[1]),
+                    Math.min(raw[2], clip[2]), Math.min(raw[3], clip[3])];
+        if (vbox[2] > vbox[0] && vbox[3] > vbox[1]) {
+          entry.box = toDisplay(vbox);
+          visible.push(entry);
+          continue;
+        }
+      }
+      var g = gap(raw, clip || [0, 0, iw, ih]);
+      entry.off = g.off;
+      entry.dist = g.dist;
+      entry.scroller = scrollable(el) ? "panel" : "";
+      offscreen.push(entry);
+    } catch (e) {}
+    if (visible.length + offscreen.length >= MAX_COLLECT) break;
+  }
+  out.visible = visible;
+  out.offscreen = offscreen;
+  out.ok = true;
+  return JSON.stringify(out);
+})()
+"""
+
+
+# Each script is written against the shared helpers as `__HELPERS__` and the
+# shared coordinate origin as `__ORIGIN__`, and both are inlined once here, at
+# import: the alternative is two copies of the same rules drifting apart, which
+# is exactly how two reads of one page start disagreeing about what is on it.
+# The display size and window rectangle inside the origin stay as placeholders
+# until a request substitutes them, because the window can move between reads.
 _UI_STATE_JS = _UI_STATE_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
-_HIT_TEST_JS = _HIT_TEST_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
+_HIT_TEST_JS = (_HIT_TEST_JS
+                .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
+                .replace("__HELPERS__", _DOM_HELPERS_JS))
+_UI_MAP_JS = (_UI_MAP_JS
+              .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
+              .replace("__HELPERS__", _DOM_HELPERS_JS))
 
 
 _cdp_cmd_lock = threading.Lock()
@@ -2410,6 +2664,65 @@ def _computer_hit(x: int, y: int) -> dict:
     return info
 
 
+def _computer_uimap() -> dict:
+    """What the live DOM says it is showing, read without acting.
+
+    The same kind of answer as `_computer_hit`, but for the whole page rather
+    than one point: every control worth clicking with the box it occupies now,
+    plus what is currently scrolled out of view, so the model can name a
+    control instead of estimating a pixel.  Read only -- no pointer movement,
+    no scroll, no page change -- and the boxes it reports are on the same
+    display-pixel grid as the screenshot and the click, because they are
+    converted by the same origin the hit test uses.
+
+    Anything that cannot be answered is `ok: False` with a reason, and the
+    caller treats that as "no map on this turn", never as "the page has
+    nothing on it".
+    """
+    disp_w, disp_h = _display_geometry()
+    wsurl = _cdp_target_wsurl()
+    if not wsurl:
+        return {"ok": False, "error": "chrome is not running on the debug port"}
+    # The window rectangle X knows is what puts the reported boxes onto the
+    # screenshot's grid; -1 is the honest answer when X has nothing to say,
+    # and the script then falls back to the browser's own view of itself.
+    rect = _browser_window_rect() or (-1, -1, -1, -1)
+    expression = (
+        _UI_MAP_JS
+        .replace("__DISPLAY_W__", str(disp_w))
+        .replace("__DISPLAY_H__", str(disp_h))
+        .replace("__WIN_X__", str(rect[0]))
+        .replace("__WIN_Y__", str(rect[1]))
+        .replace("__WIN_W__", str(rect[2]))
+        .replace("__WIN_H__", str(rect[3]))
+    )
+    try:
+        reply = _cdp_cmd("Runtime.evaluate",
+                         {"expression": expression, "returnByValue": True},
+                         wait=5.0, want_result=True)
+    except Exception as exc:
+        return {"ok": False, "error": f"could not read the page: {exc}"}
+    if not reply.get("ok"):
+        return {"ok": False, "error": f"could not read the page: {reply.get('error')}"}
+    value = (((reply.get("result") or {}).get("result") or {}).get("value"))
+    if not isinstance(value, str) or not value:
+        return {"ok": False, "error": "the page returned no answer"}
+    try:
+        info = json.loads(value)
+    except Exception:
+        return {"ok": False, "error": "the page returned an unreadable answer"}
+    if not isinstance(info, dict) or not info.get("ok"):
+        return {"ok": False, "error": "the page could not be asked"}
+    info["display_width"] = disp_w
+    info["display_height"] = disp_h
+    info["window_rect"] = (
+        {"x": rect[0], "y": rect[1], "width": rect[2], "height": rect[3]}
+        if rect[0] >= 0 and rect[2] > 0
+        else None
+    )
+    return info
+
+
 #: The keys a model is allowed to press, mapped to the xdotool keysym.
 #:
 #: This table is the whole of the keyboard surface.  There is no code path from
@@ -3042,6 +3355,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "x and y must be integers"})
                 return
             self._json(200, _computer_hit(x, y))
+            return
+        if path == "/computer/uimap":
+            # Takes nothing from the caller: what is on the page is the page's
+            # answer, not a parameter, so there is nothing here a model could
+            # shape into a different one.
+            self._json(200, _computer_uimap())
             return
         if path == "/computer/navigate":
             url = str(req.get("url") or "").strip()

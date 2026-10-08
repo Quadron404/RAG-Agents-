@@ -30,6 +30,15 @@ TESTS = (
     # next to test_computer_control rather than with the provider checks because it
     # drives none of them: the timing it proves is the loop's, not a provider's.
     "test_computer_next_step",
+    # The UI map: what the model is shown, the id it picks, the point that runs.
+    # Paired with the check above on purpose: `history` and `next_step` are the
+    # model's memory of a run and this is its evidence about the page -- the
+    # boxes and ids that turn "click the button" into a named control instead
+    # of a guessed coordinate.  It drives the loop itself with a fake machine
+    # whose `uimap` answers like the agent's, so the map's journey (request,
+    # fresh read, refusal, resolved point) is proved end to end, not just in
+    # the pure functions.
+    "test_computer_ui_map",
     # The real xdotool layer on the agent.  Paired with the check above on
     # purpose: that one proves the loop only asks for allowed commands, and this
     # one proves the agent cannot be talked into running anything else.  Either

@@ -100,6 +100,7 @@ from .ui_state import (
     page_identity,
     state_signature,
 )
+from .ui_map import build_ui_map, format_ui_map, resolution_reason, resolve_entry
 
 log = logging.getLogger(__name__)
 
@@ -558,6 +559,19 @@ class ComputerRun:
     #: In memory only, like the pending screenshot: it is context for a request
     #: about to be made, not a record of the run.
     ui_state: str = ""
+    #: The UI map for the request currently being built: the structured map,
+    #: the text the model is sent, and the page identity the map was read on.
+    #:
+    #: All three are refreshed together and cleared together, by the same read
+    #: that refreshes `ui_state`, so a map can never be paired with a state from
+    #: a different moment -- and the id the model sends back is resolved
+    #: against a *fresh* read at click time, with `ui_map_page` as the identity
+    #: that decides whether the page the id came from is still the page on
+    #: screen.  In memory only, for the same reason `ui_state` is: it is what a
+    #: request about to be made carries, not a record of the run.
+    ui_map: Dict[str, Any] = field(default_factory=dict)
+    ui_map_text: str = ""
+    ui_map_page: str = ""
     #: The plan the model wrote for its next turn, from its most recent reply.
     #:
     #: Only ever the newest one: every response replaces it, and a response that
@@ -1094,6 +1108,14 @@ class ComputerRunner:
             # already doing.  Empty on the first request of a run, which is the
             # one request that has no action to be the consequence of.
             parts.append(run.ui_state)
+        if run.ui_map_text:
+            # The map rides with the other facts about the present, between the
+            # state it was read alongside and the screenshot the boxes are
+            # measured against -- because that is what makes a box mean
+            # something: `(x0,y0)-(x1,y1)` only says "in this picture" when the
+            # picture follows it.  Absent whenever the read failed, so no
+            # request ever carries ids from a page that could not be confirmed.
+            parts.append(run.ui_map_text)
         if image:
             # Only the current screenshot, stated with its own size so the
             # coordinates that follow are measured in this image's grid.
@@ -1198,11 +1220,120 @@ class ComputerRunner:
         except Exception as exc:  # context is never a reason to fail the run
             log.debug("computer: could not read the page state: %s", exc)
             run.ui_state = UI_STATE_UNAVAILABLE
+            # The map goes with the state that gave it its page identity: a
+            # map whose page cannot be named is a map whose ids cannot be
+            # confirmed, so it is dropped rather than sent as clickable fact.
+            self._clear_ui_map(run)
             return
         run.ui_state_signature = state_signature(state)
         run.focus_key = focus_key(state)
         run.ui_state = format_ui_state(state) or UI_STATE_UNAVAILABLE
         self._track_page(run, state)
+        await self._refresh_ui_map(run, state)
+
+    def _clear_ui_map(self, run: ComputerRun) -> None:
+        """Drop the map so no request can carry it or act on an id from it."""
+        run.ui_map = {}
+        run.ui_map_text = ""
+        run.ui_map_page = ""
+
+    async def _refresh_ui_map(self, run: ComputerRun, state: Any) -> None:
+        """Read the page's controls for the request now being built.
+
+        Called from `_refresh_ui_state` on every request after the first, so
+        the map the model reads and the ids it can choose from describe the
+        page at the moment that request is built -- after the last action,
+        re-read on a retry, never carried over from an earlier moment.
+
+        The replacement is unconditional, for the same reason the state
+        replacement is: keeping a previous map when a read fails would hand
+        the model ids that belong to a page it is no longer looking at, and an
+        id that resolves to a different control is worse than no id at all.
+        So a failed read clears the map and the request carries no block --
+        the model falls back to coordinates, which are checked against the
+        screenshot it was actually given.
+
+        A read must never fail the run, and the agent may not even have the
+        route (an older daemon): `getattr` on the method is what makes the
+        feature degrade to "no map" instead of an exception.
+        """
+        self._clear_ui_map(run)
+        reader = getattr(self.computer, "uimap", None)
+        if reader is None:
+            return
+        try:
+            raw = await reader()
+            ui_map = build_ui_map(raw)
+        except Exception as exc:  # context is never a reason to fail the run
+            log.debug("computer: could not read the UI map: %s", exc)
+            return
+        if not ui_map:
+            return
+        run.ui_map = ui_map
+        run.ui_map_text = format_ui_map(ui_map)
+        run.ui_map_page = page_identity(state)
+
+    async def _resolve_element(self, run: ComputerRun, element_id: str) -> Any:
+        """Where to click for this UI-map id, or the reason not to click it.
+
+        Returns ``(x, y)`` as display pixels to click, or a refusal string
+        that is written for the model.  The two are distinguished by type
+        because they are genuinely different answers: a point means every
+        check passed, and a string means the click stops here.
+
+        Nothing here trusts the map the request carried.  That map is where
+        the control *was* when the request was built; this reads the page
+        again now -- state first, because the page identity decides whether
+        the id's map still describes this page, then the map itself, because
+        the box is where the control is *now* -- and hands the pair to
+        `resolve_entry`, which compares the two and decides.  The point that
+        comes back is the fresh box's centre, so a control that moved between
+        the map and the click is still clicked where it actually is.
+
+        Every failure is a refusal rather than a fallback: an id that cannot
+        be confirmed does not silently become a coordinate, because the model
+        named a control and has to be told whether that control was found.
+        """
+        if not run.ui_map or not run.ui_map_page:
+            return (
+                f"{element_id} cannot be used: no UI map is available on this "
+                "request; call screenshot() and click by coordinates"
+            )
+        reader = getattr(self.computer, "uimap", None)
+        if reader is None:
+            return (
+                f"{element_id} could not be confirmed: the live page could not "
+                "be re-read; click by coordinates instead"
+            )
+        try:
+            state = await self.computer.state()
+        except Exception as exc:
+            log.debug("computer: could not re-read the page for %s: %s", element_id, exc)
+            return (
+                f"{element_id} could not be confirmed: the live page could not "
+                "be re-read; click by coordinates instead"
+            )
+        fresh_page = page_identity(state)
+        try:
+            raw = await reader()
+            fresh_map = build_ui_map(raw)
+        except Exception as exc:
+            log.debug("computer: could not re-read the UI map for %s: %s", element_id, exc)
+            return (
+                f"{element_id} could not be confirmed: the live page could not "
+                "be re-read; click by coordinates instead"
+            )
+        if not fresh_map:
+            return (
+                f"{element_id} could not be confirmed: the live UI map could "
+                "not be read; click by coordinates instead"
+            )
+        point, reason = resolve_entry(
+            run.ui_map, run.ui_map_page, fresh_map, fresh_page, element_id
+        )
+        if point is None:
+            return reason
+        return (int(point[0]), int(point[1]))
 
     def _track_page(self, run: ComputerRun, state: Any) -> str:
         """Record which page a read describes, and drop what only fitted the old one.
@@ -1703,6 +1834,11 @@ class ComputerRunner:
                     "pointer_actual_y": pointer.get("pointer_actual_y"),
                 }
             )
+            if pointer.get("click_element_id"):
+                # Only for an element click: the id is what named the control,
+                # while a coordinate click has no id and adding an empty one
+                # would be a field that answers nothing.
+                turn.execution["click_element_id"] = pointer["click_element_id"]
 
     async def _next_command(self, run: ComputerRun):
         """Ask for one tool call, refusing a bad one a bounded number of times.
@@ -2077,11 +2213,21 @@ class ComputerRunner:
             args.pop(HISTORY_ARGUMENT, None)
             args.pop(NEXT_STEP_ARGUMENT, None)
 
-            if call.name == "click" and not run.seen_width:
+            wants_element = isinstance(args.get("element_id"), str) and bool(
+                args.get("element_id", "").strip()
+            )
+            if call.name == "click" and not run.seen_width and not wants_element:
                 # A click needs a frame to be a coordinate in.  Refusing it is
                 # not pedantry: a coordinate chosen without having seen anything
                 # lands on whatever happens to occupy that pixel, which on a real
                 # user's browser is a button nobody intended to press.
+                #
+                # An element_id click is the one exception, because it carries
+                # no coordinate: the id came from a UI map the request itself
+                # carried, and the point is resolved from a fresh read of the
+                # page at click time -- a map read is looking, in the same
+                # sense a screenshot is, and a map the read could not produce
+                # refuses the click in `_resolve_element` rather than here.
                 refusal = (
                     "you have not seen the screen yet; call screenshot() and read "
                     "it before clicking"
@@ -2167,8 +2313,19 @@ class ComputerRunner:
                 return None, refusal
 
             turn.parse_ok = True
-            turn.command = command.to_json()
-            turn.tool_result = command.to_json()
+            # An element_id click records what was actually issued: an id, not
+            # a coordinate.  The point does not exist until the executor
+            # resolves it from a fresh read of the page, and writing (0, 0)
+            # here would put a coordinate in the log that nobody asked for.
+            # The resolved coordinate lands in the execution record instead,
+            # when and if the click runs.
+            issued = (
+                {"type": "click", "element_id": command.element_id}
+                if command.element_id
+                else command.to_json()
+            )
+            turn.command = issued
+            turn.tool_result = issued
             # The frame is not spent here.  It belongs to the action that used
             # it and is dropped once that action has run -- in `_execute` -- so
             # a click the executor refused keeps the picture the model needs to
@@ -2310,6 +2467,45 @@ class ComputerRunner:
             elif command.type == "search":
                 await self.computer.search(command.query)
             elif command.type == "click":
+                # An element id is resolved before anything else happens: the
+                # point phases 1-4 work with does not exist until the live
+                # page says where the named control currently is, and every
+                # reason not to click it is decided here, with no pointer
+                # movement and no button event behind it.
+                if command.element_id:
+                    resolved = await self._resolve_element(run, command.element_id)
+                    if isinstance(resolved, str):
+                        # The refusal is the whole action.  The bookkeeping
+                        # mirrors a target-mismatch refusal exactly, because
+                        # it is the same kind of event: the executor declined
+                        # to press anything, and the identical call must not
+                        # be offered again as though nothing had happened.
+                        detail = resolution_reason(resolved)
+                        run.last_action = {
+                            "tool": command.type,
+                            "status": "FAILED",
+                            "detail": detail,
+                            "executed": False,
+                            "target_verified": False,
+                            "post_state_changed": False,
+                        }
+                        self._remember(run, command, "FAILED", detail)
+                        self._record(
+                            run,
+                            {"type": "click", "element_id": command.element_id},
+                            "",
+                            "failed",
+                            error=detail,
+                            trace={
+                                "click_element_id": command.element_id,
+                                "click_rejected": True,
+                                "click_target": clean_target(command.target or ""),
+                            },
+                        )
+                        self._mark_not_progress(run, command)
+                        run.message = detail
+                        return False
+                    command.x, command.y = float(resolved[0]), float(resolved[1])
                 # Four phases, in the order that keeps a wrong click from ever
                 # reaching the machine.  Nothing here knows or cares which site
                 # it is: the rules are ARIA roles and accessible names, so they
@@ -2463,6 +2659,10 @@ class ComputerRunner:
                         "pointer_actual_y": int(actual_y),
                     }
                 )
+                if command.element_id:
+                    # Present only for an element click, so coordinate traces
+                    # stay byte-identical to what they have always been.
+                    trace["click_element_id"] = command.element_id
                 run.last_hit = _hit_text(live) or _hit_text(hit)
             elif command.type == "type":
                 await self.computer.type_text(command.text)
@@ -2822,6 +3022,13 @@ def _fact_line(command: Command) -> str:
     if kind == "search":
         return f"search {command.query!r}"
     if kind == "click":
+        # An element click is recorded as the id that named it: before the
+        # resolution the coordinate does not exist yet, and after it the id is
+        # still the more useful half of the diagnosis -- it is what ties the
+        # fact line to the map the model was reading, while the point itself
+        # lives in the event's trace.
+        if command.element_id:
+            return f"click element {command.element_id}"
         return f"click ({_coord(command.x)},{_coord(command.y)})"
     if kind == "move":
         return f"move ({_coord(command.x)},{_coord(command.y)})"
