@@ -55,7 +55,7 @@ from tests.test_computer_provider_failures import FakeProvider as ScriptedProvid
 #: "OpenRouter works" mean the same loop ran rather than two loops that differ.
 SCRIPT = [
     '{"type":"navigate","url":"https://example.com/computer-test.html"}',
-    '{"type":"click","x":700,"y":350}',
+    '{"type":"click","x":700,"y":350,"target":"a test button"}',
     '{"type":"type","text":"example.com"}',
     '{"type":"key","key":"ENTER"}',
     '{"type":"done","message":"Example Domain"}',

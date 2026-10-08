@@ -263,7 +263,7 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
             payload = {
                 "navigate": '{"type":"navigate","url":"https://google.com"}',
                 "search": '{"type":"search","query":"x.com"}',
-                "click": '{"type":"click","x":742,"y":418}',
+                "click": '{"type":"click","x":742,"y":418,"target":"a button in the corner"}',
                 "type": '{"type":"type","text":"hello"}',
                 "key": '{"type":"key","key":"ENTER"}',
                 "scroll": '{"type":"scroll","delta_y":500}',

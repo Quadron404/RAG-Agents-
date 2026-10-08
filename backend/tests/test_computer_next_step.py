@@ -122,7 +122,7 @@ class FakeComputer:
         self.actions.append(("search", query))
         return {"ok": True}
 
-    async def click(self, x, y):
+    async def click(self, x, y, move=False):
         self.actions.append(("click", x, y))
         return {
             "ok": True,
@@ -131,6 +131,18 @@ class FakeComputer:
             "landed": True,
             "display_width": SCREEN_WIDTH,
             "display_height": SCREEN_HEIGHT,
+        }
+
+    async def hit(self, x, y):
+        # The click contract reads the page at the point before the press, so
+        # the fixture has to answer what is under the cursor.  Whatever point
+        # is asked about, the element here is the composer those runs click.
+        return {
+            "ok": True,
+            "in_page": True,
+            "display_width": SCREEN_WIDTH,
+            "display_height": SCREEN_HEIGHT,
+            "element": {"role": "textbox", "name": "the composer", "text": ""},
         }
 
     async def type_text(self, text):
@@ -392,7 +404,7 @@ class NextStepReachesOnlyTheModel(NextStepTestCase):
                  plan("screenshot", "Look.", "Read it.")),
             call("screenshot", {}, "Looking.",
                  plan("click", "Activate.", "This frame.")),
-            call("click", {"x": 40, "y": 50}, "Clicking.",
+            call("click", {"x": 40, "y": 50, "target": "the composer"}, "Clicking.",
                  plan("type", "Type it.", "Focused first.")),
             call("done", {"message": "ok"}, "Done.",
                  plan("none", "Terminal response; no further model action is required.", "This run is finished.")),
@@ -413,6 +425,7 @@ class NextStepReachesOnlyTheModel(NextStepTestCase):
             {
                 "x": 10,
                 "y": 20,
+                "target": "the Post button",
                 "history": "I've clicked it.",
                 NEXT_STEP_ARGUMENT: plan("type", "Type it.", "Focused first."),
             },
