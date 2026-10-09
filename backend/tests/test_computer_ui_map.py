@@ -394,6 +394,65 @@ class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
         # The fresh box, not the one the request carried at 140,120.
         self.assertNotEqual(point, (140, 120))
 
+    def test_a_dom_change_on_the_same_page_is_not_a_new_page(self):
+        # The live failure this fixes: a page that re-renders between the map
+        # and the click changes its controls digest, and a page identity that
+        # included that digest called the fresh read a *different page* -- so
+        # the stale gate fired before the renumbering re-find had a chance to
+        # run.  The boundary is navigation/document and the dialog; which
+        # furniture is on the page is state change, tracked by
+        # `state_signature`, not an identity.  The identity is built the way
+        # the runner builds it, from `page_identity`, so the two map reads in
+        # the live failure really do share a page.
+        from app.computer.ui_state import page_identity, state_signature
+
+        before = {
+            "url": "https://example.test/page",
+            "title": "Example",
+            "dialog": None,
+            "controls": [{"role": "button", "name": "Send"}],
+        }
+        rerendered = {
+            "url": "https://example.test/page",
+            "title": "Example",
+            "dialog": None,
+            "controls": [
+                {"role": "link", "name": "Logo", "tag": "a"},
+                {"role": "button", "name": "Send"},
+                {"role": "textbox", "name": "Write a message", "editable": True},
+            ],
+        }
+
+        self.assertEqual(page_identity(before), page_identity(rerendered))
+        self.assertNotEqual(state_signature(before), state_signature(rerendered))
+
+        sent = build_ui_map(default_raw())
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("link", "Logo", 10, 10, 40, 20, tag="a"),
+                    visible("button", "Send", 400, 300, 80, 40),
+                    visible("textbox", "Write a message", 100, 160, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [offscreen("link", "Terms", 830)],
+            )
+        )
+        point, reason = resolve_entry(
+            sent, page_identity(before), fresh, page_identity(rerendered), "V1"
+        )
+        self.assertEqual(reason, "")
+        self.assertEqual(point, (440, 320))
+
+        # A genuine navigation is still a boundary: the map read before it
+        # cannot confirm a control on the page that came after it.
+        navigated = dict(before, url="https://example.test/elsewhere")
+        point, reason = resolve_entry(
+            sent, page_identity(before), fresh, page_identity(navigated), "V1"
+        )
+        self.assertIsNone(point)
+        self.assertIn("stale", reason)
+
     def test_an_id_whose_control_is_now_duplicated_is_ambiguous(self):
         # Identity searching is only safe when the match is unique: two "Send"
         # buttons now exist, so neither can be claimed as the same control.

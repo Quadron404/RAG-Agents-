@@ -185,14 +185,21 @@ def page_identity(state: Optional[Dict[str, Any]]) -> str:
     """Which page this is, as one comparable string.
 
     Distinct from `state_signature`, which answers "did anything move": this one
-    answers "is this still the same place".  URL, title, dialog and the page's
-    own controls -- the four facts that decide whether an action, a coordinate
-    or a plan written a moment ago still refers to something on the screen.
+    answers "is this still the same place".  URL, title and dialog -- the three
+    facts that decide whether an action, a coordinate or a plan written a
+    moment ago still refers to something on the screen.
 
-    Focus and scroll are deliberately absent.  A caret that moved or a page
-    scrolled a notch is the same place with the same controls in it, and an
-    identity that fired on those would throw away a frame, a plan and the
-    model's coordinate grid for nothing.
+    Controls are deliberately absent.  The page's furniture changes on nearly
+    every click that reveals something -- a menu opens, a list re-sorts, a
+    button becomes pressed -- and that is a change *within* the page, not a
+    move to another place.  The controls digest still matters; it lives in
+    `state_signature`, where the loop answers "did the last action change the
+    page" and spots an action that is spinning.  An identity that fired on it
+    would throw away the map, the frame and a valid click on a render that
+    renumbered the very control being clicked.
+
+    Focus and scroll are absent for the same reason: a caret that moved or a
+    page scrolled a notch is the same place with the same controls in it.
     """
     if not isinstance(state, dict):
         return ""
@@ -201,7 +208,6 @@ def page_identity(state: Optional[Dict[str, Any]]) -> str:
         "url": _clean(state.get("url")),
         "title": _clean(state.get("title")),
         "dialog": _clean(dialog.get("name")) if isinstance(dialog, dict) else "",
-        "controls": _controls_sig(state.get("controls")),
     }
     payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:24]
