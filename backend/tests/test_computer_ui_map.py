@@ -55,6 +55,7 @@ from app.computer.ui_map import (  # noqa: E402
     format_ui_map,
     resolution_reason,
     resolve_entry,
+    resolved_entry,
 )
 from app.config import load_settings  # noqa: E402
 from app.providers.base import Done, ToolCall, ToolCallEvent  # noqa: E402
@@ -167,6 +168,30 @@ class BuildTheMapTheModelSees(unittest.TestCase):
         # Document order for reading, even though selection was by rank.
         names = [e["name"] for e in kept]
         self.assertEqual(names, sorted(names, key=lambda n: int(n.split()[1])))
+
+    def test_a_dialog_control_outranks_the_background_and_survives_the_cap(self):
+        # The live failure: the open composer's Post button was missing from
+        # the map because a page of background controls crowded it out.  An
+        # entry the agent marks `in_dialog` ranks ahead of every background
+        # control, so the dialog's primary action always makes the map.
+        entries = [
+            visible("link", f"Background {i}", 10, 10 + i * 12, 800, 40, tag="a")
+            for i in range(25)
+        ]
+        entries.append(
+            visible("button", "Post", 500, 700, 80, 40, in_dialog=True)
+        )
+        ui_map = build_ui_map(raw_map(entries, []))
+
+        by_name = {e["name"]: e for e in ui_map["visible"]}
+        self.assertIn("Post", by_name)
+        self.assertTrue(by_name["Post"].get("in_dialog"))
+        # The background entries are not marked as the dialog's.
+        self.assertFalse(by_name["Background 0"].get("in_dialog"))
+        # The button is the very line the model reads and can name back.
+        self.assertIn(
+            f'[{by_name["Post"]["id"]}] button "Post"', format_ui_map(ui_map)
+        )
 
     def test_offscreen_is_named_nearest_first_capped_and_barely_interactive(self):
         entries = [
@@ -554,6 +579,126 @@ class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
         self.assertIsNone(point)
         self.assertIn("ambiguous", reason)
         self.assertIn("2 controls", reason)
+
+    def test_a_dom_token_disambiguates_two_identically_described_controls(self):
+        # The live failure: the open composer's textbox and the background
+        # "Post text" textbox share role, name, tag, type and text, so the
+        # identity tuple cannot tell them apart and the click was refused as
+        # ambiguous.  Their DOM tokens are one apart, and the token decides.
+        sent = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True, dom_id=7),
+                    visible("textbox", "Post text", 400, 300, 300, 90,
+                            tag="textarea", editable=True, dom_id=9),
+                ],
+                [],
+            )
+        )
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 400, 300, 300, 90,
+                            tag="textarea", editable=True, dom_id=9),
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True, dom_id=7),
+                ],
+                [],
+            )
+        )
+        point, reason = resolve_entry(sent, "page", fresh, "page", "V1")
+
+        self.assertEqual(reason, "")
+        # V1 carried token 7, so the click goes to the token-7 box (centre
+        # 250,145), never the token-9 one (centre 550,345).
+        self.assertEqual(point, (250, 145))
+
+    def test_a_dom_token_is_used_even_when_the_map_renumbered(self):
+        # Same token, different place: the render moved the control and the
+        # token still names it, so the click follows it to its fresh box.
+        sent = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 100, 100, 80, 40, dom_id=3),
+                    visible("button", "Send", 400, 100, 80, 40, dom_id=4),
+                ],
+                [],
+            )
+        )
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 400, 500, 80, 40, dom_id=4),
+                    visible("button", "Send", 100, 300, 80, 40, dom_id=3),
+                ],
+                [],
+            )
+        )
+        point, reason = resolve_entry(sent, "page", fresh, "page", "V1")
+
+        self.assertEqual(reason, "")
+        # V1 = token 3, now centred at (140, 320).
+        self.assertEqual(point, (140, 320))
+
+    def test_two_identically_described_controls_without_tokens_stay_ambiguous(self):
+        # With no token to decide, the descriptive fallback keeps its
+        # fail-closed contract: two indistinguishable matches refuse.
+        sent = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [],
+            )
+        )
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True),
+                    visible("textbox", "Post text", 400, 300, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [],
+            )
+        )
+        point, reason = resolve_entry(sent, "page", fresh, "page", "V1")
+
+        self.assertIsNone(point)
+        self.assertIn("ambiguous", reason)
+
+    def test_resolved_entry_returns_the_token_matched_control(self):
+        # Resolution accepts the token match; the control it hands the click
+        # guard must be that same token-matched entry, not None, so the DOM
+        # check runs instead of falling back to the model's wording.
+        sent = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True, dom_id=7),
+                    visible("textbox", "Post text", 400, 300, 300, 90,
+                            tag="textarea", editable=True, dom_id=9),
+                ],
+                [],
+            )
+        )
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("textbox", "Post text", 100, 100, 300, 90,
+                            tag="textarea", editable=True, dom_id=7),
+                    visible("textbox", "Post text", 400, 300, 300, 90,
+                            tag="textarea", editable=True, dom_id=9),
+                ],
+                [],
+            )
+        )
+        found = resolved_entry(sent, fresh, "V1")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.get("dom_id"), 7)
 
     def test_every_refusal_reads_as_one_kind_of_failure(self):
         self.assertEqual(

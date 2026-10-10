@@ -167,6 +167,52 @@ def same_control(left: Any, right: Any) -> bool:
     return _identity(ours) == _identity(theirs)
 
 
+def _dom_token(entry: Any) -> Optional[int]:
+    """The entry's DOM identity token, or None when it carries no usable one.
+
+    The token is an opaque number the page's own DOM minted while the UI map
+    was read.  It is not a name or a position: two elements can only share one
+    when they are one element, which is exactly the fact a role/name/tag/type/
+    text tuple cannot give when two controls happen to be described
+    identically -- the open composer's textbox and a background "Post text"
+    textbox being the case that produced an ambiguous refusal.
+    """
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("dom_id")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def _fresh_matches(
+    sent: Dict[str, Any], fresh_map: Optional[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Fresh entries that are the sent control, token first, identity second.
+
+    The page's own DOM token is the strongest identity and is used whenever
+    the sent entry carries one and any fresh entry shares it: a shared token
+    means one element, so two controls described identically are no longer
+    ambiguous.  Only when a token is unavailable on either side does the
+    descriptive identity (role, name, tag, type, text) stand in, so a render
+    that merely renumbered the map is still re-found and a page that ships no
+    tokens behaves exactly as before.
+    """
+    if not isinstance(fresh_map, dict):
+        return []
+    entries: List[Dict[str, Any]] = []
+    for key in ("visible", "offscreen"):
+        for entry in fresh_map.get(key) or []:
+            if isinstance(entry, dict):
+                entries.append(entry)
+    sent_token = _dom_token(sent)
+    if sent_token is not None:
+        token_hits = [entry for entry in entries if _dom_token(entry) == sent_token]
+        if token_hits:
+            return token_hits
+    return [entry for entry in entries if same_control(sent, entry)]
+
+
 def _valid_box(raw: Any) -> Optional[Dict[str, int]]:
     """A box as four ints with a non-zero size, or None when it is unusable."""
     if not isinstance(raw, dict):
@@ -269,12 +315,14 @@ def _vertical_gap(entry: Dict[str, Any], viewport: Optional[Dict[str, int]]) -> 
 def _overlap(left_box: Dict[str, int], right_box: Dict[str, int]) -> bool:
     """Whether two boxes cover the same ground, for deduplication.
 
-    Two controls that report the same role, name, editability and type and sit
-    on overlapping pixels are usually the same control seen twice -- a labelled
-    link wrapped in a button, an input duplicated by its `<label>` -- and the
-    second copy costs a slot and a line with nothing to add.  `intersection *
-    2 >= smaller area` accepts boxes that mostly coincide while letting two
-    genuinely distinct controls that merely touch pass.
+    A duplicate is the same control represented twice -- the same DOM token,
+    or, when neither carries a token, the same role, name, editability and type
+    -- sitting on overlapping pixels; a labelled link wrapped in a button, an
+    input duplicated by its `<label>`.  The second copy costs a slot and a line
+    with nothing to add.  Distinct controls are one token apart and never
+    collapse, so two identically described textboxes are both kept.
+    `intersection * 2 >= smaller area` accepts boxes that mostly coincide while
+    letting two genuinely distinct controls that merely touch pass.
     """
     ix = max(0, min(left_box["x"] + left_box["width"], right_box["x"] + right_box["width"])
              - max(left_box["x"], right_box["x"]))
@@ -294,6 +342,7 @@ def _dedupe_visible(ranked: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int,
     for item in ranked:
         _, entry = item
         key = (
+            entry.get("dom_id") or 0,
             entry.get("role") or "",
             entry.get("name") or "",
             entry.get("editable"),
@@ -330,6 +379,11 @@ def _entry(raw: Any) -> Optional[Dict[str, Any]]:
         "type": _clean(raw.get("type"), 40),
         "editable": bool(raw.get("editable")),
         "disabled": bool(raw.get("disabled")),
+        # Whether the page reports this control inside its top-most open
+        # dialog.  A modal's own controls are ranked ahead of the background
+        # page so the primary action of the dialog the user is looking at
+        # survives the cap, however late in the document it was rendered.
+        "in_dialog": bool(raw.get("in_dialog")),
     }
     # The token the page's own DOM stamped on this element, when it minted one.
     # It is the map's strongest statement of identity -- two elements share a
@@ -411,13 +465,14 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
                 continue
             offscreen.append((index, entry))
 
-    # Best first: named over unnamed, a text field over other controls of the
-    # same rank, the one nearest the middle of the screen over one out of view,
-    # biggest over smallest -- then duplicate representations collapse and the
-    # hard cap is applied.  The ranking picks the entries; the final
-    # document-order sort makes the map read down the page the way the page
-    # does.
+    # Best first: an open dialog's own controls over the background page, then
+    # named over unnamed, a text field over other controls of the same rank,
+    # the one nearest the middle of the screen over one out of view, biggest
+    # over smallest -- then duplicate representations collapse and the hard cap
+    # is applied.  The ranking picks the entries; the final document-order sort
+    # makes the map read down the page the way the page does.
     visible.sort(key=lambda item: (
+        0 if item[1].get("in_dialog") else 1,
         0 if item[1].get("name") else 1,
         0 if _is_editor(item[1]) else 1,
         _vertical_gap(item[1], viewport),
@@ -598,13 +653,15 @@ def resolve_entry(
     control": ids are never reused within a map, but between two reads of a
     page that re-rendered, `V3` can sit on a different control entirely.  A
     re-render also renumbers the map, so an id that no longer names its
-    control is re-found by identity (role, name, tag, type, text) wherever it
-    now sits before anything is refused: one unique match means the render
-    merely renumbered and the control is still itself, several means the page
-    now shows duplicates and the target is ambiguous, and none means the
-    control is gone -- or, when the exact id still exists but now names
-    something else, replaced.  All three conclusions refuse rather than point
-    at a guess.
+    control is re-found wherever it now sits before anything is refused.  The
+    page's own DOM token decides first -- one element, one token -- and the
+    descriptive identity (role, name, tag, type, text) stands in only when a
+    token is unavailable on either side: one unique match means the render
+    merely renumbered and the control is still itself, several means a
+    tokenless page now shows duplicates and the target is ambiguous, and none
+    means the control is gone -- or, when the exact id still exists but now
+    names something else, replaced.  All three conclusions refuse rather than
+    point at a guess.
     """
     if not ELEMENT_ID_RE.match(element_id or ""):
         return None, f'"{element_id}" is not a valid element id (expected e.g. "V3" or "O2")'
@@ -641,12 +698,13 @@ def resolve_entry(
     # down, a list re-sorted), so the id that named this control in the sent
     # map can sit elsewhere now.  Find the control by identity wherever it is
     # and require a unique match before committing to a point.
-    matches: List[Dict[str, Any]] = []
-    if isinstance(fresh_map, dict):
-        for key in ("visible", "offscreen"):
-            for entry in fresh_map.get(key) or []:
-                if isinstance(entry, dict) and _identity(entry) == _identity(sent):
-                    matches.append(entry)
+    #
+    # The page's own DOM token is tried first and is exact: a fresh read of the
+    # same live control carries the token the map stamped on it, so a control
+    # described identically to another -- two textboxes with the same role,
+    # name, tag, type and text -- is still named unambiguously.  Descriptive
+    # identity stands in only when a token is unavailable on either side.
+    matches = _fresh_matches(sent, fresh_map)
     if len(matches) == 1:
         candidate = matches[0]
     elif len(matches) > 1:
@@ -716,15 +774,10 @@ def resolved_entry(
     sent = find_entry(sent_map, element_id)
     if sent is None:
         return None
-    found: Optional[Dict[str, Any]] = None
-    for key in ("visible", "offscreen"):
-        for entry in fresh_map.get(key) or []:
-            if not isinstance(entry, dict) or _identity(entry) != _identity(sent):
-                continue
-            if found is not None:
-                return None
-            found = entry
-    return found
+    matches = _fresh_matches(sent, fresh_map)
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def resolution_reason(reason: str) -> str:

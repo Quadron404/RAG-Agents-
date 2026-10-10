@@ -1078,6 +1078,49 @@ _UI_MAP_JS = r"""(function () {
       return [b.left, b.top, b.right, b.bottom];
     } catch (e) { return null; }
   }
+  // The top-most open dialog on the page, or null.  Generic: the ARIA dialog
+  // roles, aria-modal, and an open <dialog>, no selector for any one site.  A
+  // composer that opens as a modal is rendered late in the document, often
+  // after hundreds of background controls, so its own controls are scanned
+  // first and ranked ahead -- the primary action of the open dialog is what
+  // the user is looking at and the one a background full of links would
+  // otherwise crowd out of the map.
+  function activeDialog() {
+    var list = null;
+    try {
+      list = document.querySelectorAll(
+        '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog'
+      );
+    } catch (e) { return null; }
+    var best = null, bestZ = -Infinity, bestIndex = -1;
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      var tag = (d.tagName || "").toUpperCase();
+      if (tag === "DIALOG" && !d.open) continue;
+      if (!rendered(d)) continue;
+      var z = 0;
+      try {
+        var cs = window.getComputedStyle(d);
+        var parsed = parseInt(cs && cs.zIndex, 10);
+        if (isFinite(parsed)) z = parsed;
+      } catch (e) {}
+      if (z > bestZ || (z === bestZ && i > bestIndex)) {
+        best = d; bestZ = z; bestIndex = i;
+      }
+    }
+    return best;
+  }
+  // Whether this element lives inside the open dialog, walking out through
+  // shadow hosts, so its entry can be marked as belonging to that dialog.
+  function insideDialog(el, dialog) {
+    if (!dialog) return false;
+    var cur = el;
+    for (var i = 0; cur && i < 60; i++) {
+      if (cur === dialog) return true;
+      cur = parentOf(cur);
+    }
+    return false;
+  }
   // The region this element could be shown in: the viewport, cut by every
   // ancestor that clips its overflow, walking out through shadow hosts.
   function clipRegion(el) {
@@ -1195,12 +1238,30 @@ _UI_MAP_JS = r"""(function () {
     }
     return null;
   }
+  var DIALOG = activeDialog();
   var nodes = [];
   try {
-    nodes = document.querySelectorAll(
+    var nodeSelector =
       'a, button, input, select, textarea, summary, [role], [onclick], ' +
-      '[contenteditable="true"], [tabindex]'
-    );
+      '[contenteditable="true"], [tabindex]';
+    var seenNodes = (typeof Set === "function") ? new Set() : null;
+    var addNodes = function (root) {
+      var found = [];
+      try { found = root.querySelectorAll(nodeSelector); } catch (e) { return; }
+      for (var i = 0; i < found.length; i++) {
+        var n = found[i];
+        if (seenNodes) {
+          if (seenNodes.has(n)) continue;
+          seenNodes.add(n);
+        }
+        nodes.push(n);
+      }
+    };
+    // The open dialog's controls are scanned first, so a modal rendered at the
+    // end of the document cannot fall past the scan budget behind a page of
+    // background links.
+    if (DIALOG) addNodes(DIALOG);
+    addNodes(document);
   } catch (e) {}
   var visible = [], offscreen = [];
   for (var ci = 0; ci < nodes.length && ci < MAX_SCAN; ci++) {
@@ -1219,7 +1280,8 @@ _UI_MAP_JS = r"""(function () {
         tag: (el.tagName || "").toLowerCase(),
         type: H.attr(el, "type") || "",
         editable: !!H.editable(el),
-        disabled: (el.disabled === true || H.attr(el, "aria-disabled") === "true")
+        disabled: (el.disabled === true || H.attr(el, "aria-disabled") === "true"),
+        in_dialog: !!(DIALOG && insideDialog(el, DIALOG))
       };
       if (clip) {
         var vbox = [Math.max(raw[0], clip[0]), Math.max(raw[1], clip[1]),
