@@ -252,6 +252,27 @@ class BuildTheMapTheModelSees(unittest.TestCase):
         self.assertIn("click by coordinates", empty)
         self.assertEqual(format_ui_map(None), "")
 
+    def test_a_verified_point_rides_the_entry_and_a_bad_one_is_dropped(self):
+        # A visible entry may carry an internal point the live page resolved to
+        # that control -- a display pixel, `[x, y]`, that the model never reads.
+        ui_map = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 100, 100, 80, 40, point=[150, 130]),
+                    visible("button", "Cancel", 10, 10, 20, 20, point=[1, 2, 3]),
+                    visible("button", "Copy", 10, 40, 20, 20, point="170,40"),
+                ],
+                [],
+            )
+        )
+        by_name = {e["name"]: e for e in ui_map["visible"]}
+        self.assertEqual(by_name["Send"]["point"], {"x": 150, "y": 130})
+        # A malformed point is dropped rather than trusted as geometry.
+        self.assertNotIn("point", by_name["Cancel"])
+        self.assertNotIn("point", by_name["Copy"])
+        # The visible contract is unchanged: the model still reads boxes only.
+        self.assertNotIn("point", format_ui_map(ui_map))
+
 
 class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
     """Every refusal, and the one point that is allowed through."""
@@ -274,6 +295,66 @@ class ResolveAnIdAgainstAFreshRead(unittest.TestCase):
         self.assertEqual(point, (190, 140))
         # The fresh box, not the one the request carried (which centred at 140,120).
         self.assertNotEqual(point, (140, 120))
+
+    def test_a_fresh_verified_point_is_clicked_instead_of_the_box_centre(self):
+        # The agent ships a point when the box centre is not where a person
+        # would land (something paints over it).  Resolution clicks the fresh
+        # entry's own point, not the centre of its fresh box.
+        sent, page, _, _ = sent_and_fresh()
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 400, 300, 80, 40, point=[410, 305]),
+                    visible("textbox", "Write a message", 100, 160, 300, 90,
+                            tag="textarea", editable=True),
+                ],
+                [offscreen("link", "Terms", 830)],
+            )
+        )
+        point, reason = resolve_entry(sent, page, fresh, page, "V1")
+
+        self.assertEqual(reason, "")
+        self.assertEqual(point, (410, 305))
+        # Not the centre of the fresh box, which would have been (440, 320).
+        self.assertNotEqual(point, (440, 320))
+
+    def test_a_covered_centre_resolves_to_the_safe_pixel(self):
+        # The composer's box centre is painted over by a link "Oct 7"; the
+        # point the agent verified is another pixel inside the same box that
+        # still resolves to the composer, so that is where the click goes.
+        sent, page, _, _ = sent_and_fresh()
+        covered = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 100, 100, 80, 40),
+                    visible("textbox", "Write a message", 100, 160, 300, 90,
+                            tag="textarea", editable=True, point=[110, 170]),
+                ],
+                [offscreen("link", "Terms", 830)],
+            )
+        )
+        point, reason = resolve_entry(sent, page, covered, page, "V2")
+
+        self.assertEqual(reason, "")
+        self.assertEqual(point, (110, 170))
+        # The dead centre (250, 205) is exactly the pixel over the link.
+        self.assertNotEqual(point, (250, 205))
+
+    def test_a_point_off_the_display_is_clamped_like_a_box(self):
+        sent, page, _, _ = sent_and_fresh()
+        fresh = build_ui_map(
+            raw_map(
+                [
+                    visible("button", "Send", 100, 100, 80, 40,
+                            point=[DISPLAY_W + 50, -10]),
+                ],
+                [],
+            )
+        )
+        point, reason = resolve_entry(sent, page, fresh, page, "V1")
+
+        self.assertEqual(reason, "")
+        self.assertEqual(point, (DISPLAY_W - 1, 0))
 
     def test_a_malformed_or_unknown_id_is_refused(self):
         sent, page, fresh, _ = sent_and_fresh()

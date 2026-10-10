@@ -818,6 +818,18 @@ _UI_STATE_JS = r"""(function () {
 #: origin the hit test uses (`__ORIGIN__`, inlined at import), which is what
 #: makes a box in this answer and a pixel in the screenshot the same grid.
 #:
+#: A visible entry also carries an internal `point`: a display pixel the live
+#: page still resolves to that very control.  The box is geometry and ignores
+#: what paints on top of it, while the click-time hit test asks
+#: `elementFromPoint` -- the topmost painted element -- so a control can sit
+#: under something else and report a centre that a person would never land on.
+#: The point is the centre when the centre resolves back to the control (one
+#: extra `elementFromPoint`, nothing else changes), otherwise the first pixel
+#: of a bounded scan of the entry's own box that does; when no pixel in the box
+#: resolves to the control it is genuinely covered and no point is shipped, so
+#: the click-time guard remains the only say.  The model never reads the point
+#: -- it still gets boxes -- so the visible contract is unchanged.
+#:
 #: Bounds: 400 candidates are scanned (a page with a thousand links still
 #: answers quickly) and at most 160 entries are collected; the caller ranks and
 #: caps further.  Ids are deliberately NOT assigned here: this script reports
@@ -864,6 +876,68 @@ _UI_MAP_JS = r"""(function () {
     try { if (el.getAttribute("onclick")) return true; } catch (e) {}
     try { if (el.isContentEditable) return true; } catch (e) {}
     try { if (el.tabIndex >= 0) return true; } catch (e) {}
+    return false;
+  }
+  // The control a person would say they clicked at a pixel: the nearest
+  // interactive ancestor of whatever the page actually painted there.  This
+  // mirrors the walk `__HIT_TEST_JS` runs at click time, deliberately -- a
+  // verified point in the map is only worth shipping if it predicts what that
+  // hit test will find on the same page.
+  function isInteractive(node) {
+    if (!node || !node.tagName) return false;
+    var r = "";
+    try { r = H.role(node) || ""; } catch (e) {}
+    if (r && INTERACTIVE[r]) return true;
+    var t = (node.tagName || "").toUpperCase();
+    if (t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" || t === "SELECT" ||
+        t === "OPTION" || t === "SUMMARY") return true;
+    try { if (node.isContentEditable) return true; } catch (e) {}
+    try { if (node.getAttribute && node.getAttribute("onclick")) return true; } catch (e) {}
+    return false;
+  }
+  function nearestInteractive(node) {
+    var chosen = null, named = null, cur = node;
+    for (var j = 0; cur && j < 12; j++) {
+      if (!named) { try { if (H.name(cur)) named = cur; } catch (e) {} }
+      if (isInteractive(cur)) { chosen = cur; break; }
+      cur = parentOf(cur);
+    }
+    return chosen || named || node;
+  }
+  // What the live page holds at a CSS pixel, pierced through an open shadow
+  // root and a nested document the way the hit test does.
+  function atPoint(px, py) {
+    var node = null;
+    try { node = document.elementFromPoint(px, py); } catch (e) { return null; }
+    for (var i = 0; node && i < 8; i++) {
+      var sub = null;
+      try {
+        if (node.shadowRoot && node.shadowRoot.elementFromPoint) {
+          sub = node.shadowRoot.elementFromPoint(px, py);
+        }
+      } catch (e) {}
+      if (!sub) {
+        try {
+          var root = node.getRootNode ? node.getRootNode() : null;
+          if (root && root !== document && root.elementFromPoint) sub = root.elementFromPoint(px, py);
+        } catch (e) {}
+      }
+      if (sub && sub !== node) { node = sub; continue; }
+      break;
+    }
+    return node;
+  }
+  // Whether the page at this pixel still resolves to this very control.  Paint
+  // order is what makes this different from the entry's own geometry: the box
+  // is where the control is, the point is where a person would land on it.
+  function resolvesTo(el, px, py) {
+    var node = atPoint(px, py);
+    if (!node) return false;
+    var chosen = nearestInteractive(node);
+    try {
+      if (chosen === el || el.contains(chosen) || chosen.contains(el)) return true;
+      if (node === el || el.contains(node) || node.contains(el)) return true;
+    } catch (e) {}
     return false;
   }
   function rendered(el) {
@@ -937,6 +1011,46 @@ _UI_MAP_JS = r"""(function () {
     if (h < 1) h = 1;
     return { x: x, y: y, width: w, height: h };
   }
+  // One CSS pixel -> one display pixel through the same origin the box used,
+  // clamped onto the display, so the point shipped with an entry names the
+  // same grid the screenshot and the click live in.
+  function displayPoint(px, py) {
+    var x = Math.round(originX + px * scale);
+    var y = Math.round(originY + py * scale);
+    if (dispW > 0) x = Math.max(0, Math.min(x, dispW - 1));
+    if (dispH > 0) y = Math.max(0, Math.min(y, dispH - 1));
+    return [x, y];
+  }
+  // A bounded, deterministic scan of an entry's own box for a pixel the live
+  // page still resolves to that control.  The centre is tried first -- the
+  // common case costs one `elementFromPoint` and nothing changes -- then the
+  // quadrant and edge points inside the clipped box.  When no point in the box
+  // resolves back to the control, it is genuinely covered: no point is
+  // shipped, and the click-time guard remains the only say.
+  var PROBE = [
+    [0.5, 0.5],
+    [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75],
+    [0.5, 0.25], [0.5, 0.75], [0.25, 0.5], [0.75, 0.5],
+    [0.15, 0.15], [0.85, 0.15], [0.15, 0.85]
+  ];
+  function verifiedPoint(el, box) {
+    var x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+    if (!(x1 > x0) || !(y1 > y0)) return null;
+    var loX = Math.ceil(x0), hiX = Math.floor(x1) - 1;
+    if (hiX < loX) hiX = loX;
+    var loY = Math.ceil(y0), hiY = Math.floor(y1) - 1;
+    if (hiY < loY) hiY = loY;
+    for (var pi = 0; pi < PROBE.length; pi++) {
+      var px = Math.round(x0 + PROBE[pi][0] * (x1 - x0));
+      var py = Math.round(y0 + PROBE[pi][1] * (y1 - y0));
+      if (px < loX) px = loX;
+      if (px > hiX) px = hiX;
+      if (py < loY) py = loY;
+      if (py > hiY) py = hiY;
+      if (resolvesTo(el, px, py)) return displayPoint(px, py);
+    }
+    return null;
+  }
   // The nearest scrolling ancestor that is not the page itself: the page's own
   // scroll is the `scroll` tool's business, an inner panel's is a hint the
   // model cannot get from anywhere else.
@@ -989,6 +1103,8 @@ _UI_MAP_JS = r"""(function () {
                     Math.min(raw[2], clip[2]), Math.min(raw[3], clip[3])];
         if (vbox[2] > vbox[0] && vbox[3] > vbox[1]) {
           entry.box = toDisplay(vbox);
+          var vpoint = verifiedPoint(el, vbox);
+          if (vpoint) entry.point = vpoint;
           visible.push(entry);
           continue;
         }

@@ -163,6 +163,39 @@ def _valid_box(raw: Any) -> Optional[Dict[str, int]]:
     return {"x": x, "y": y, "width": width, "height": height}
 
 
+def _valid_point(raw: Any) -> Optional[Dict[str, int]]:
+    """A verified click point as two ints, or None when it is unusable.
+
+    The agent ships this on a visible entry: a display pixel the live page
+    still resolves to that control -- its box centre in the common case, or
+    another pixel inside the box when something paints over the centre.  It is
+    internal (the model reads boxes) and it is not geometry the map trusts, so
+    it is validated exactly as strictly as a box and simply dropped when it is
+    malformed, leaving the box centre as the fallback.
+    """
+    if isinstance(raw, dict):
+        raw = [raw.get("x"), raw.get("y")]
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None
+    try:
+        x = int(raw[0])
+        y = int(raw[1])
+    except (TypeError, ValueError):
+        return None
+    return {"x": x, "y": y}
+
+
+def _clamp_point(point: Dict[str, int], display_w: int, display_h: int) -> Tuple[int, int]:
+    """A point kept on the display the screenshot was taken of."""
+    px = int(point.get("x") or 0)
+    py = int(point.get("y") or 0)
+    if display_w > 0:
+        px = max(0, min(px, display_w - 1))
+    if display_h > 0:
+        py = max(0, min(py, display_h - 1))
+    return (px, py)
+
+
 def _clamp_box(box: Dict[str, int], display_w: int, display_h: int) -> Dict[str, int]:
     """Keep a box on the display the screenshot was taken of."""
     if display_w > 0:
@@ -281,6 +314,9 @@ def _entry(raw: Any) -> Optional[Dict[str, Any]]:
     box = _valid_box(raw.get("box"))
     if box is not None:
         out["box"] = box
+        point = _valid_point(raw.get("point"))
+        if point is not None:
+            out["point"] = point
     else:
         off = _clean(raw.get("off"), 10)
         if off not in ("below", "above", "left", "right"):
@@ -405,18 +441,20 @@ def find_entry(ui_map: Optional[Dict[str, Any]], element_id: str) -> Optional[Di
 
 
 def click_point(ui_map: Optional[Dict[str, Any]], element_id: str) -> Optional[Tuple[int, int]]:
-    """The centre of this id's box, on the display grid, or None.
+    """The point to click for this id, on the display grid, or None.
 
-    The centre is the click point rather than the top-left or a point found by
-    scanning: a control's centre is the one pixel that belongs to the control
-    under any padding, icon or border, and the hit test that runs before the
-    click is what decides whether that claim is true.
+    The verified point the agent shipped is preferred when it is present --
+    it is a pixel the live page resolved to this control when the box was
+    read -- and the box centre is the fallback, both clamped to the display.
     """
     entry = find_entry(ui_map, element_id)
     if entry is None or not isinstance(entry.get("box"), dict):
         return None
     display_w = int((ui_map or {}).get("display_width") or 0) if isinstance(ui_map, dict) else 0
     display_h = int((ui_map or {}).get("display_height") or 0) if isinstance(ui_map, dict) else 0
+    point = entry.get("point")
+    if isinstance(point, dict):
+        return _clamp_point(point, display_w, display_h)
     return box_point(entry["box"], display_w, display_h)
 
 
@@ -519,11 +557,15 @@ def resolve_entry(
 
     The order of the checks is the order of what can go wrong, cheapest first
     -- format, then page, then presence, then identity -- and every one of them
-    fails closed.  The point that comes back is the centre of the *fresh*
-    entry's box, not the one the request carried: the request's box is where
-    the control was when the map was read, and a control that moved (a banner
-    dismissed, a list re-sorted) is still the same control and still wants a
-    click at its new centre.
+    fails closed.  The point that comes back is the *fresh* entry's own: the
+    verified point the agent shipped with it when one is present -- a pixel the
+    live page resolved to this control, so a control whose box centre is
+    painted over is still clicked where a person would land -- and the centre
+    of its fresh box otherwise.  Either way it is the fresh entry, not the one
+    the request carried: the request's box is where the control was when the
+    map was read, and a control that moved (a banner dismissed, a list
+    re-sorted) is still the same control and still wants a click where it now
+    is.
 
     The identity comparison in the middle is what makes "same id" mean "same
     control": ids are never reused within a map, but between two reads of a
@@ -619,6 +661,9 @@ def resolve_entry(
     if isinstance(fresh_map, dict):
         display_w = int(fresh_map.get("display_width") or 0)
         display_h = int(fresh_map.get("display_height") or 0)
+    point = candidate.get("point")
+    if isinstance(point, dict):
+        return _clamp_point(point, display_w, display_h), ""
     return box_point(candidate["box"], display_w, display_h), ""
 
 
