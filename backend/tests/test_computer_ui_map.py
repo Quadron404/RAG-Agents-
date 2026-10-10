@@ -895,6 +895,55 @@ class AnElementIdReachesTheMachine(unittest.TestCase):
         self.assertEqual(element_turn.command, {"type": "click", "element_id": "V1"})
         self.assertEqual(element_turn.execution["outcome"], "executed")
 
+    def test_the_control_the_id_named_decides_over_the_models_wording(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            # The label describes a text box; the id names V1, the Send button.
+            # The label is wrong for this control and the DOM is not: what was
+            # chosen from the map is what the click is checked against.
+            call("click", {"element_id": "V1", "target": "Post text box"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        # The point serves up V1 itself, read the way the agent's hit test
+        # reads it -- same role, name, tag and type as the entry the fresh map
+        # resolved, which is what makes it the same control.
+        runner.computer.hit_element = {
+            "role": "button", "name": "Send", "tag": "button",
+            "type": "", "text": "", "context": "the composer",
+        }
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [(140, 120)])
+        self.assertEqual(runner.computer.actions[-1], ("click", 140, 120))
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "executed")
+        self.assertTrue(execution["executed"])
+        self.assertTrue(execution["click_target_verified"])
+
+    def test_a_point_holding_a_different_control_is_still_refused(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        # V1 resolved to the Send button; the point holds a link.  Nothing here
+        # is the control the id named, so nothing is confirmed and nothing is
+        # pressed -- carrying an id must not turn the check off.
+        runner.computer.hit_element = {
+            "role": "link", "name": "Account settings", "tag": "a",
+            "text": "Settings", "context": "",
+        }
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [])
+        self.assertFalse(any(a[0] == "click" for a in runner.computer.actions))
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "refused")
+        self.assertFalse(execution["executed"])
+        self.assertIn("Account settings", execution["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

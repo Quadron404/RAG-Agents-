@@ -147,6 +147,26 @@ def _identity(entry: Dict[str, Any]) -> Tuple[str, str, str, str, str]:
     )
 
 
+def same_control(left: Any, right: Any) -> bool:
+    """Whether two element-shaped dicts describe the very same control.
+
+    Both sides go through `_entry` first, which is the cleaning every map
+    entry goes through, so a name the map cut short still equals the same name
+    read whole by the hit test: the two readers report one element at
+    different lengths, and a length is not a different control.
+
+    This is the weaker of the two ways to say "the same control" -- the map's
+    own DOM token, compared by the caller, is exact -- and it is the stand-in
+    when no token is available.  Anything that cannot be described at all
+    answers False, which a caller reads as *no opinion* rather than *no*.
+    """
+    ours = _entry(left) if isinstance(left, dict) else None
+    theirs = _entry(right) if isinstance(right, dict) else None
+    if ours is None or theirs is None:
+        return False
+    return _identity(ours) == _identity(theirs)
+
+
 def _valid_box(raw: Any) -> Optional[Dict[str, int]]:
     """A box as four ints with a non-zero size, or None when it is unusable."""
     if not isinstance(raw, dict):
@@ -311,6 +331,13 @@ def _entry(raw: Any) -> Optional[Dict[str, Any]]:
         "editable": bool(raw.get("editable")),
         "disabled": bool(raw.get("disabled")),
     }
+    # The token the page's own DOM stamped on this element, when it minted one.
+    # It is the map's strongest statement of identity -- two elements share a
+    # token only when they are one element -- and it never reaches the model,
+    # which reads names and boxes, not tokens.
+    dom_id = raw.get("dom_id")
+    if isinstance(dom_id, int) and not isinstance(dom_id, bool) and dom_id > 0:
+        out["dom_id"] = dom_id
     box = _valid_box(raw.get("box"))
     if box is not None:
         out["box"] = box
@@ -667,6 +694,39 @@ def resolve_entry(
     return box_point(candidate["box"], display_w, display_h), ""
 
 
+def resolved_entry(
+    sent_map: Optional[Dict[str, Any]],
+    fresh_map: Optional[Dict[str, Any]],
+    element_id: str,
+) -> Optional[Dict[str, Any]]:
+    """The fresh control an id resolved to, as `resolve_entry` resolved it.
+
+    Resolution has already refused every id this cannot answer for -- an id
+    that is not in the sent map, a page that changed, a control that is gone
+    or ambiguous -- so by the time this is called the search is a lookup with
+    exactly one answer: the unique fresh entry whose identity matches the sent
+    one, which is the same entry the point came from.
+
+    The caller uses it to check the point against something the map knows
+    rather than only against the model's wording; None means "nothing to check
+    against", which its caller treats as no opinion rather than as a refusal.
+    """
+    if not isinstance(fresh_map, dict):
+        return None
+    sent = find_entry(sent_map, element_id)
+    if sent is None:
+        return None
+    found: Optional[Dict[str, Any]] = None
+    for key in ("visible", "offscreen"):
+        for entry in fresh_map.get(key) or []:
+            if not isinstance(entry, dict) or _identity(entry) != _identity(sent):
+                continue
+            if found is not None:
+                return None
+            found = entry
+    return found
+
+
 def resolution_reason(reason: str) -> str:
     """One refusal reason as the model-facing line.
 
@@ -694,4 +754,6 @@ __all__ = [
     "format_ui_map",
     "resolution_reason",
     "resolve_entry",
+    "resolved_entry",
+    "same_control",
 ]

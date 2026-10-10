@@ -28,6 +28,16 @@ the role, tag and input type describe -- and any one of them agreeing is
 enough.  No site, no selector and no label of any particular page appears
 anywhere in that comparison.
 
+A click the model chose by map id is checked against the map before it is
+checked against its own words.  `resolve_entry` has just re-read the page and
+said *this* is the control that id names; when the point then holds that very
+control -- the same element object, by the token the page's own DOM handed out
+while the map was read, or, with no token, the same role, name, tag, type and
+text -- the click runs however the model's descriptive label was worded,
+because the label is a description and the DOM is the fact.  The disagreements
+below still govern every click whose only evidence is the model's words, which
+is every click by coordinate.
+
 Four disagreements are worth a refusal, in order of how sure they are:
 
 1. the point is not on the page at all -- browser chrome or another window --
@@ -42,6 +52,8 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, FrozenSet, Optional
+
+from .ui_map import same_control
 
 #: A target is a few words, not a sentence: bound it so a model cannot spend a
 #: paragraph on the field and turn the check into a text-matching exercise.
@@ -316,8 +328,45 @@ def describe_element(element: Any) -> str:
     return _describe(element)
 
 
+def _dom_token(element: Dict[str, Any]) -> Optional[int]:
+    """The element's DOM identity token, or None when it carries no usable one.
+
+    The token is an opaque number the page's own DOM minted while the UI map
+    was read.  It is not a name or a position: two elements can only share one
+    when they are one element, which is exactly the fact a label cannot give.
+    """
+    raw = element.get("dom_id")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def _is_expected(element: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+    """Whether the point holds the control the map resolution chose.
+
+    Two ways of saying "the same control", stronger first: the DOM token the
+    page handed out when the map was read, and then the identity tuple --
+    role, name, tag, type and text.  The token is exact but only exists when
+    both readers saw the same live element; the tuple stands in when a token
+    is absent, as it is for an agent that ships none or a page that
+    re-rendered between the two reads.
+
+    A pair of tokens that disagree is a real disagreement -- they were minted
+    on different elements -- and is reported as "not the one", exactly as an
+    identity mismatch is: the caller then falls back to the model's words
+    rather than treating this as proof of anything.
+    """
+    if not isinstance(element, dict) or not isinstance(expected, dict):
+        return False
+    here, there = _dom_token(element), _dom_token(expected)
+    if here is not None and there is not None:
+        return here == there
+    return same_control(element, expected)
+
+
 def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
-                    x: float, y: float) -> str:
+                    x: float, y: float,
+                    expected: Optional[Dict[str, Any]] = None) -> str:
     """Why this click is not the control it claims to be, or "" when it may run.
 
     `hit` is what the page reported at the coordinate before the click, or None
@@ -327,6 +376,13 @@ def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
     "could not confirm" is not "confirmed".  The refusal says so plainly instead
     of letting a click on unknown ground report itself as one on a named
     control.
+
+    `expected` is the control the map resolved a `element_id` to, when the
+    click named one.  A point that holds that very control is the click the
+    model chose, whatever its label said -- the label describes the control and
+    the DOM is the control -- so it is accepted here, before the wording is
+    weighed.  With no `expected`, or a point that is not that control, the
+    target is the only evidence there is and decides as it always has.
 
     Refusals are specific, acceptances are cheap: any single signal agreeing --
     a word of the name, the kind of control, a piece of nearby context -- sends
@@ -365,6 +421,11 @@ def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
             f"click was not performed: nothing at ({x:g}, {y:g}) has a name or a "
             f"role, so {target!r} could not be confirmed"
         )
+    if expected is not None and _is_expected(element, expected):
+        # The point holds the control the id resolved to.  What the model
+        # called it is a description and may be wrong in every word; the DOM
+        # answer is not a description.
+        return ""
 
     role = str(element.get("role") or "").lower()
     target_words = _tokens(target)

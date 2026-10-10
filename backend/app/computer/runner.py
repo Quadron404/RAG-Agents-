@@ -100,7 +100,7 @@ from .ui_state import (
     page_identity,
     state_signature,
 )
-from .ui_map import build_ui_map, format_ui_map, resolution_reason, resolve_entry
+from .ui_map import build_ui_map, format_ui_map, resolution_reason, resolve_entry, resolved_entry
 
 log = logging.getLogger(__name__)
 
@@ -1274,12 +1274,13 @@ class ComputerRunner:
         run.ui_map_page = page_identity(state)
 
     async def _resolve_element(self, run: ComputerRun, element_id: str) -> Any:
-        """Where to click for this UI-map id, or the reason not to click it.
+        """Where to click for this UI-map id, and the control that is there.
 
-        Returns ``(x, y)`` as display pixels to click, or a refusal string
-        that is written for the model.  The two are distinguished by type
-        because they are genuinely different answers: a point means every
-        check passed, and a string means the click stops here.
+        Returns ``((x, y), entry)`` -- the display pixels to click and the
+        fresh map entry those pixels belong to -- or a refusal string written
+        for the model.  The two are distinguished by type because they are
+        genuinely different answers: a pair means every check passed, and a
+        string means the click stops here.
 
         Nothing here trusts the map the request carried.  That map is where
         the control *was* when the request was built; this reads the page
@@ -1287,8 +1288,11 @@ class ComputerRunner:
         the id's map still describes this page, then the map itself, because
         the box is where the control is *now* -- and hands the pair to
         `resolve_entry`, which compares the two and decides.  The point that
-        comes back is the fresh box's centre, so a control that moved between
-        the map and the click is still clicked where it actually is.
+        comes back is the fresh entry's own: the verified point the agent
+        shipped with it when there is one, and the centre of its fresh box
+        otherwise.  The entry comes back with it so the click that follows can
+        be checked against the control the id actually named rather than only
+        against the words the model described it with.
 
         Every failure is a refusal rather than a fallback: an id that cannot
         be confirmed does not silently become a coordinate, because the model
@@ -1333,7 +1337,10 @@ class ComputerRunner:
         )
         if point is None:
             return reason
-        return (int(point[0]), int(point[1]))
+        return (
+            (int(point[0]), int(point[1])),
+            resolved_entry(run.ui_map, fresh_map, element_id),
+        )
 
     def _track_page(self, run: ComputerRun, state: Any) -> str:
         """Record which page a read describes, and drop what only fitted the old one.
@@ -2472,6 +2479,12 @@ class ComputerRunner:
                 # page says where the named control currently is, and every
                 # reason not to click it is decided here, with no pointer
                 # movement and no button event behind it.
+                #
+                # The control the id resolved to travels with the point, so
+                # the verification below can ask the stronger question -- "is
+                # this the control the map named?" -- and only fall back to
+                # the model's wording when it cannot answer.
+                resolved_control: Optional[Dict[str, Any]] = None
                 if command.element_id:
                     resolved = await self._resolve_element(run, command.element_id)
                     if isinstance(resolved, str):
@@ -2505,7 +2518,8 @@ class ComputerRunner:
                         self._mark_not_progress(run, command)
                         run.message = detail
                         return False
-                    command.x, command.y = float(resolved[0]), float(resolved[1])
+                    point, resolved_control = resolved
+                    command.x, command.y = float(point[0]), float(point[1])
                 # Four phases, in the order that keeps a wrong click from ever
                 # reaching the machine.  Nothing here knows or cares which site
                 # it is: the rules are ARIA roles and accessible names, so they
@@ -2529,7 +2543,8 @@ class ComputerRunner:
                 #    them between the verification and the click.
                 target = clean_target(command.target or "")
                 hit = await self._hit(command.x, command.y)
-                reason = target_mismatch(target, hit, command.x, command.y)
+                reason = target_mismatch(target, hit, command.x, command.y,
+                                         resolved_control)
                 if reason:
                     detail = (
                         reason
@@ -2607,7 +2622,8 @@ class ComputerRunner:
                     return False
 
                 live = await self._hit(actual_x, actual_y)
-                reason = target_mismatch(target, live, actual_x, actual_y)
+                reason = target_mismatch(target, live, actual_x, actual_y,
+                                         resolved_control)
                 if reason:
                     # The pointer is over the point and the button has still not
                     # been pressed, so this is a refusal and nothing more: hover

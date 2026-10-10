@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -49,6 +50,43 @@ MAX_IMAGE_CHARS = 400_000
 
 _browser_lock = threading.Lock()
 _browser_state = {"driver": None}
+
+
+def _source_stamp() -> tuple:
+    """This file's size and mtime, or zeros when it cannot be read."""
+    try:
+        st = os.stat(__file__)
+        return (int(st.st_mtime), int(st.st_size))
+    except OSError:
+        return (0, 0)
+
+
+#: What this file looked like when this process started, and the hash of the
+#: bytes it read.  Reported by `GET /status` so one request says whether the
+#: running agent is the code on disk: the supervisor adopts an already-healthy
+#: agent and never restarts it after a pull, so "the fix is deployed" and "a
+#: daemon started before the fix is still answering" are otherwise
+#: indistinguishable from the backend.
+_SOURCE_AT_START = _source_stamp()
+
+
+def _source_sha() -> str:
+    try:
+        with open(__file__, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()[:16]
+    except OSError:
+        return ""
+
+
+_SOURCE_SHA = _source_sha()
+
+
+def _agent_code() -> dict:
+    """The running file's fingerprint, and whether it has changed underfoot."""
+    return {
+        "sha256": _SOURCE_SHA,
+        "changed_since_start": _source_stamp() != _SOURCE_AT_START,
+    }
 
 
 def run_shell(command: str, cwd: str, timeout: int) -> dict:
@@ -236,6 +274,11 @@ def _cdp_port_open() -> bool:
 
 
 def _cdp_page_url() -> str:
+    # `urllib.request` is imported here rather than at module scope because the
+    # only other reader of `/json` does the same; without it this raised
+    # NameError into the `except` below and answered "" for every page, which
+    # silently disabled the `data:` guard that calls it.
+    import urllib.request
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{CDP_DEBUG_PORT}/json", timeout=2) as r:
             targets = json.loads(r.read().decode("utf-8", "ignore"))
@@ -353,6 +396,77 @@ _DOM_HELPERS_JS = r"""(function () {
 })()"""
 
 
+#: The DOM identity the UI map and the hit test share: one token per element,
+#: so "is this the control the id resolved to?" is answered by the page's own
+#: objects rather than by a name.
+#:
+#: Both scripts run in the page's main world and both inline this block as
+#: `__DOMIDS__` at import, exactly as they inline the helpers -- two copies of
+#: the registry would be two registries and a token minted in one would be
+#: invisible in the other.  A `WeakMap` keyed on the element itself is what
+#: makes the token stable in the way a name is not: the map stamps it while
+#: reading the page, the hit test reads it back a moment later, and the two
+#: agree only when they are looking at the same object.  A re-render replaces
+#: the object, the replacement has no token, and the caller falls back to
+#: comparing what the element says about itself -- tokens are never minted
+#: twice, because the counter lives outside the map and is never reset, and
+#: never survive a navigation, because the page's JavaScript world does not.
+#:
+#: `mark` is the map's side: stamp this element, or read the stamp it already
+#: carries.  `look` is the hit test's side: read only, walking outward through
+#: parents and shadow hosts so the control underneath the painted node still
+#: finds its own token.  Both answer -1 when the page will not hold the
+#: registry at all, which the caller reads as "no opinion".
+_DOM_IDS_JS = r"""(function () {
+  var KEY = "__rag_dom_ids_v1";
+  function registry(create) {
+    var reg = null;
+    try { reg = window[KEY]; } catch (e) {}
+    if (reg && reg.ids && typeof reg.next === "number") return reg;
+    if (!create) return null;
+    try {
+      window[KEY] = { ids: (typeof WeakMap === "function") ? new WeakMap() : null,
+                      next: 0 };
+    } catch (e) { return null; }
+    try { reg = window[KEY]; } catch (e) { return null; }
+    return (reg && reg.ids) ? reg : null;
+  }
+  function mark(el) {
+    var reg = registry(true);
+    if (!reg || !el) return -1;
+    try {
+      var known = reg.ids.get(el);
+      if (typeof known === "number" && known > 0) return known;
+      reg.next += 1;
+      reg.ids.set(el, reg.next);
+      return reg.next;
+    } catch (e) { return -1; }
+  }
+  function look(el) {
+    var reg = registry(false);
+    if (!reg || !el) return -1;
+    var cur = el;
+    for (var i = 0; cur && i < 12; i++) {
+      try {
+        var known = reg.ids.get(cur);
+        if (typeof known === "number" && known > 0) return known;
+      } catch (e) { return -1; }
+      var parent = null;
+      try { parent = cur.parentElement; } catch (e) {}
+      if (!parent) {
+        try {
+          var root = cur.getRootNode ? cur.getRootNode() : null;
+          if (root && root !== document && root.host) parent = root.host;
+        } catch (e) {}
+      }
+      cur = parent;
+    }
+    return -1;
+  }
+  return { mark: mark, look: look };
+})()"""
+
+
 #: The coordinate origin: where the page's viewport sits on the display, in
 #: display pixels, and how many display pixels one CSS pixel is worth.
 #:
@@ -464,6 +578,7 @@ _DISPLAY_ORIGIN_JS = r"""(function () {
 #: exception out of this script.
 _HIT_TEST_JS = r"""(function () {
   var H = __HELPERS__;
+  var D = __DOMIDS__;
   var O = __ORIGIN__;
   var CX = __CLICK_X__, CY = __CLICK_Y__;
   var out = { ok: false };
@@ -599,6 +714,12 @@ _HIT_TEST_JS = r"""(function () {
     return (value || "").replace(/\s+/g, " ").trim().slice(0, 120);
   }
   out.element = {
+    // The token the UI map stamped on this very element when it read the
+    // page, when it minted one: the caller compares it against the entry the
+    // id resolved to and only then is a label's wording allowed to disagree.
+    // -1 means this element was never mapped, which is the honest answer for
+    // a control that appeared after the map was taken.
+    dom_id: D.look(chosen),
     role: H.role(chosen) || "",
     name: H.name(chosen) || "",
     tag: (chosen.tagName || "").toLowerCase(),
@@ -842,6 +963,7 @@ _UI_STATE_JS = r"""(function () {
 #: exception out of this script.
 _UI_MAP_JS = r"""(function () {
   var H = __HELPERS__;
+  var D = __DOMIDS__;
   var O = __ORIGIN__;
   var scale = O.scale;
   var iw = O.iw, ih = O.ih;
@@ -1090,6 +1212,7 @@ _UI_MAP_JS = r"""(function () {
       if (!raw) continue;
       var clip = clipRegion(el);
       var entry = {
+        dom_id: D.mark(el),
         role: H.role(el) || "",
         name: H.name(el) || "",
         text: H.text(el) || "",
@@ -1136,9 +1259,11 @@ _UI_MAP_JS = r"""(function () {
 _UI_STATE_JS = _UI_STATE_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
 _HIT_TEST_JS = (_HIT_TEST_JS
                 .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
+                .replace("__DOMIDS__", _DOM_IDS_JS)
                 .replace("__HELPERS__", _DOM_HELPERS_JS))
 _UI_MAP_JS = (_UI_MAP_JS
               .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
+              .replace("__DOMIDS__", _DOM_IDS_JS)
               .replace("__HELPERS__", _DOM_HELPERS_JS))
 
 
@@ -3081,12 +3206,81 @@ def _computer_move(x: int, y: int) -> dict:
     }
 
 
+#: How long `_safe_navigate` waits for Chrome's reply to `Page.navigate`.
+#:
+#: `_cdp_connect` leaves the socket on a 0.2s poll, which is right for a caller
+#: reading a burst of messages and wrong for one waiting on a single reply from
+#: a navigation Chrome is still committing -- the old loop gave up after forty
+#: of those polls and reported "Connection timed out" for a page that had
+#: already loaded.  Long enough for a slow commit, short enough that the
+#: controller's own 30s HTTP budget is never what ends the request.
+_NAVIGATE_REPLY_SECONDS = 12.0
+
+#: How long one `recv` may block while waiting for that reply.  The deadline
+#: above is what bounds the wait; a socket set to the whole of it could not
+#: notice the deadline passing.
+_NAVIGATE_POLL_SECONDS = 1.0
+
+
+def _same_host(left: str, right: str) -> bool:
+    """Whether two URLs are two names for one site.
+
+    `http`/`https` and `www`-or-not are the same site, and so are a host and a
+    subdomain of it: that shape is what a redirect looks like.  Anything else
+    -- scheme, port, a jump to another domain -- is not the same site, and the
+    answer the caller needs is the URL the browser is really showing.
+    """
+    a = (urlparse(left).hostname or "").lower()
+    b = (urlparse(right).hostname or "").lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return a.endswith("." + b) or b.endswith("." + a)
+
+
+def _navigation_reached(requested: str, before: str, actual: str) -> bool:
+    """Whether a navigation whose reply did not arrive still took effect.
+
+    Only ever asked when Chrome did not confirm the navigation itself -- the
+    reply did not come, or it came with an error -- so this is the difference
+    between "it worked anyway" and "it did not".  Two things have to hold:
+
+    - the browser is at the requested URL, or on that URL's own site (an
+      `http` -> `https` upgrade, `example.com` -> `www.example.com`, or a
+      sign-in bounce on the same host are the site answering, not a different
+      page), and
+    - it got there because of this request: the URL is not the one it was
+      already showing, unless it is exactly the URL that was asked for.
+
+    The second condition is what keeps a navigation that never ran from
+    looking like a success just because the browser happened to be on the
+    right site already.
+    """
+    if not requested or not actual:
+        return False
+    if actual == requested:
+        return True
+    if actual == (before or ""):
+        return False
+    return _same_host(requested, actual)
+
+
 def _safe_navigate(url: str) -> dict:
     """Point the real Chrome at a URL.
 
     Only http and https reach the browser.  A model that returned
     `file:///...` or `javascript:` is not navigating, it is trying to read the
     user's disk or run code in the page, and neither is a thing this loop does.
+
+    Chrome's own answer is waited for rather than raced: the socket carries a
+    0.2s poll (see `_cdp_connect`), so the reply is read in slices until a real
+    deadline instead of being declared a timeout by the poll.  When the answer
+    does not come, or it comes as an error, the browser's address is read
+    before anything is called a failure -- a navigation that moved the page to
+    the requested site worked, and reporting it as failed sends the model to
+    retry something that already happened.  The navigation itself is sent
+    exactly once, whatever happens after.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -3094,30 +3288,65 @@ def _safe_navigate(url: str) -> dict:
     wsurl = _cdp_target_wsurl()
     if not wsurl:
         return {"ok": False, "error": "chrome is not running on the debug port"}
+    # Where the browser was before the request, so "it moved" can be told from
+    # "it was already there" when the reply does not arrive.
+    before = _cdp_page_url()
+    replied = False
+    error_text = ""
     try:
         import websocket
 
         ws = _cdp_connect(wsurl)
         try:
+            ws.settimeout(_NAVIGATE_POLL_SECONDS)
             _cdp_send(ws, 1, "Page.navigate", {"url": url})
-            for _ in range(40):
-                raw = ws.recv()
+            deadline = time.monotonic() + _NAVIGATE_REPLY_SECONDS
+            while time.monotonic() < deadline:
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
                 if not raw:
                     continue
-                msg = json.loads(raw)
-                if msg.get("id") == 1:
-                    result = msg.get("result") or {}
-                    if result.get("errorText"):
-                        return {"ok": False, "error": str(result["errorText"])}
-                    return {"ok": True, "url": url}
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if msg.get("id") != 1:
+                    continue
+                replied = True
+                error_text = str((msg.get("result") or {}).get("errorText") or "")
+                break
         finally:
             try:
                 ws.close()
             except Exception:
                 pass
     except Exception as exc:
-        return {"ok": False, "error": f"navigation failed: {exc}"}
-    return {"ok": False, "error": "navigation produced no response"}
+        # A socket that could not be opened at all, or died mid-flight: the
+        # navigation may or may not have gone out, and only the browser can
+        # say.  Keep the reason so a real failure still names one.
+        error_text = error_text or str(exc) or "the debug connection failed"
+    if replied and not error_text:
+        return {"ok": True, "url": url}
+    # Nothing, or nothing good, came back.  Ask the browser where it ended up
+    # rather than guessing: the navigation was already sent, and sending it
+    # again would be a second request on top of whatever it did.
+    actual = _cdp_page_url()
+    if _navigation_reached(url, before, actual):
+        return {"ok": True, "url": actual or url, "redirected": actual != url}
+    detail = error_text.strip() or "chrome did not confirm the navigation"
+    if actual and actual == before:
+        return {
+            "ok": False,
+            "error": f"navigation to {url} did not complete ({detail}); "
+                     f"the browser is still at {actual}",
+        }
+    return {
+        "ok": False,
+        "error": f"navigation to {url} did not complete ({detail}); "
+                 f"the browser is at {actual or 'an unreadable address'}",
+    }
 
 
 def _computer_search(query: str) -> dict:
@@ -3307,7 +3536,8 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         if path == "/status":
-            self._json(200, {"ok": True, "workspace": WORKSPACE, "pid": os.getpid()})
+            self._json(200, {"ok": True, "workspace": WORKSPACE, "pid": os.getpid(),
+                             "code": _agent_code()})
         elif path == "/sysinfo":
             self._json(200, sysinfo())
         elif path == "/screen":
