@@ -784,6 +784,7 @@ _HIT_TEST_JS = r"""(function () {
 #: An absent field is the truthful answer, and the caller renders it as absent.
 _UI_STATE_JS = r"""(function () {
   var H = __HELPERS__;
+  var D = __DOMIDS__;
   var attr = H.attr, text = H.text, name = H.name, role = H.role;
   var editable = H.editable, valueLength = H.valueLength;
   var out = {};
@@ -805,6 +806,32 @@ _UI_STATE_JS = r"""(function () {
     var r = role(el), n = name(el);
     if (!r && !n) return null;
     return { role: r, name: n };
+  }
+  function dialogKey(el) {
+    // The dialog's identity, deliberately not its contents.  A dialog's name is
+    // often derived from the text inside it -- a composer takes its name from
+    // what is being typed -- so an identity built on the name moves on every
+    // keystroke and reads to the loop as a move to a new page.  This key is the
+    // explicit label (never the dialog's own text) plus the DOM token the page's
+    // registry minted for this very element: the token is what makes two
+    // different dialogs that share a label two different places, and what keeps
+    // one dialog the same place while its text changes underneath.
+    if (!el) return "";
+    var label = attr(el, "aria-label");
+    if (!label && attr(el, "aria-labelledby")) {
+      try {
+        label = attr(el, "aria-labelledby").split(/\s+/).map(function (id) {
+          return text(document.getElementById(id));
+        }).join(" ");
+      } catch (e) {}
+    }
+    if (!label) label = attr(el, "title") || "";
+    var token = -1;
+    try { token = D.mark(el); } catch (e) { token = -1; }
+    return (label.replace(/\s+/g, " ").trim().slice(0, 80)
+            + "|" + token
+            + "|" + ((el.tagName || "").toUpperCase())
+            + "|" + attr(el, "role"));
   }
   try { out.url = location.href || ""; } catch (e) { out.url = ""; }
   try { out.title = document.title || ""; } catch (e) { out.title = ""; }
@@ -870,7 +897,7 @@ _UI_STATE_JS = r"""(function () {
   } catch (e) { out.scroll = null; }
   try {
     var dlg = document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]');
-    out.dialog = dlg ? { name: name(dlg) } : null;
+    out.dialog = dlg ? { name: name(dlg), key: dialogKey(dlg), open: true } : null;
   } catch (e) { out.dialog = null; }
   try {
     // `aria-selected` sits on every tab of a tab bar whether or not anyone chose
@@ -913,6 +940,35 @@ _UI_STATE_JS = r"""(function () {
   return JSON.stringify(out);
 })()
 """
+
+
+#: The one decision that makes a map point trustworthy: does the live page, at
+#: this pixel, still resolve to this very control?
+#:
+#: Written once as a pure predicate over a small facts object and inlined into
+#: the map as `__RESOLVES_TO__`, so the rule can be reasoned about -- and tested
+#: under `node`, with no browser -- on its own.  The caller does the DOM work and
+#: fills the facts; the predicate only weighs them.
+#:
+#: The facts all point one way: the control the map wants (`el`) must be the
+#: thing the point holds.  `found` is whether the page answered at all;
+#: `chosenIsEl` and `nodeIsEl` are the exact object; `elContainsChosen` and
+#: `elContainsNode` allow the point to land on something *inside* the control (a
+#: glyph inside a button), which is how a person clicks one.
+#:
+#: Deliberately absent are the reverse containments -- `chosen.contains(el)` and
+#: `node.contains(el)`.  Those read "the point holds an ancestor of the control"
+#: and accepted a click on a wrapping container as if it were the control: the
+#: live failure was a Post button whose verified point landed on the dialog
+#: `div` around it, which the map's own check waved through and the click-time
+#: guard then refused.  A container is not the control, so a point that only
+#: proves the container proves nothing, and the point is dropped rather than
+#: shipped.
+_RESOLVES_TO_JS = r"""function (facts) {
+  if (!facts || !facts.found) return false;
+  return !!(facts.chosenIsEl || facts.elContainsChosen ||
+            facts.nodeIsEl || facts.elContainsNode);
+}"""
 
 
 #: What the live DOM is showing -- the UI map, read without acting.
@@ -1052,15 +1108,23 @@ _UI_MAP_JS = r"""(function () {
   // Whether the page at this pixel still resolves to this very control.  Paint
   // order is what makes this different from the entry's own geometry: the box
   // is where the control is, the point is where a person would land on it.
+  // The judgment itself lives in the inlined `RESOLVES_TO` predicate: this only
+  // reads the page -- what the point holds, and how it relates to `el` -- and
+  // hands it the facts.
+  var RESOLVES_TO = __RESOLVES_TO__;
+  function contains(root, node) {
+    try { return !!(root && node && root.contains(node)); } catch (e) { return false; }
+  }
   function resolvesTo(el, px, py) {
     var node = atPoint(px, py);
-    if (!node) return false;
-    var chosen = nearestInteractive(node);
-    try {
-      if (chosen === el || el.contains(chosen) || chosen.contains(el)) return true;
-      if (node === el || el.contains(node) || node.contains(el)) return true;
-    } catch (e) {}
-    return false;
+    var chosen = node ? nearestInteractive(node) : null;
+    return RESOLVES_TO({
+      found: !!node,
+      chosenIsEl: chosen === el,
+      elContainsChosen: contains(el, chosen),
+      nodeIsEl: node === el,
+      elContainsNode: contains(el, node)
+    });
   }
   function rendered(el) {
     var cs = null;
@@ -1239,6 +1303,60 @@ _UI_MAP_JS = r"""(function () {
     return null;
   }
   var DIALOG = activeDialog();
+  // The composer/form a control belongs to, so the action that submits it is
+  // not crowded out of the map by the page's background furniture.  The live
+  // failure: the homepage's inline composer showed a "Post" textbox but the
+  // button that submits it never made the map, so the model pressed a sidebar
+  // link named "Post" instead.
+  //
+  // A region is the nearest enclosing FORM (or ARIA form/search region), or --
+  // when there is no such element -- the largest ancestor that still holds a
+  // composer-sized cluster of actionable controls (at most eight).  Walking up
+  // stops at BODY/HTML, because the page itself is not a region: everything on
+  // it would otherwise share one, which is the crowd-out this exists to
+  // prevent.  Nothing here is site-specific: FORM and role=form/search are
+  // platform facts, and the size bound is a count, not a selector.
+  var REGION_MAX_ACTIONS = 8;
+  var ACTION_SELECTOR =
+    'button, input, select, textarea, a[href], summary, [role], [onclick], ' +
+    '[contenteditable="true"], [tabindex]';
+  function actionableCount(node) {
+    try { return node.querySelectorAll(ACTION_SELECTOR).length; } catch (e) { return 0; }
+  }
+  function regionContainer(editor) {
+    var node = parentOf(editor);
+    var region = null;
+    var guard = 0;
+    while (node && guard++ < 40) {
+      var tag = (node.tagName || "").toUpperCase();
+      var r = "";
+      try { r = (H.attr(node, "role") || "").toLowerCase(); } catch (e) {}
+      if (tag === "FORM" || r === "form" || r === "search") return node;
+      if (tag === "BODY" || tag === "HTML") break;
+      if (actionableCount(node) > REGION_MAX_ACTIONS) break;
+      region = node;
+      node = parentOf(node);
+    }
+    return region;
+  }
+  var EDITOR_REGIONS = [];
+  function editorOf(el) {
+    // A text-accepting field, not a combobox: a `select` is editable to the
+    // platform but is not the composer a submit action belongs to.
+    var tag = (el.tagName || "").toUpperCase();
+    if (tag === "SELECT") return false;
+    try { return !!H.editable(el); } catch (e) { return false; }
+  }
+  function inEditorRegion(el) {
+    for (var i = 0; i < EDITOR_REGIONS.length; i++) {
+      var cur = el;
+      for (var j = 0; cur && j < 60; j++) {
+        if (cur === EDITOR_REGIONS[i]) return true;
+        cur = parentOf(cur);
+      }
+    }
+    return false;
+  }
   var nodes = [];
   try {
     var nodeSelector =
@@ -1263,6 +1381,17 @@ _UI_MAP_JS = r"""(function () {
     if (DIALOG) addNodes(DIALOG);
     addNodes(document);
   } catch (e) {}
+  // Collect the composer region of every text field seen, before the main
+  // loop, so each entry can be tagged with whether it shares an editor's
+  // region.  Bounded by the scan budget; a handful of fields, a handful of
+  // regions.
+  try {
+    for (var rn = 0; rn < nodes.length && rn < MAX_SCAN; rn++) {
+      if (!actionable(nodes[rn]) || !editorOf(nodes[rn])) continue;
+      var reg = regionContainer(nodes[rn]);
+      if (reg && EDITOR_REGIONS.indexOf(reg) === -1) EDITOR_REGIONS.push(reg);
+    }
+  } catch (e) {}
   var visible = [], offscreen = [];
   for (var ci = 0; ci < nodes.length && ci < MAX_SCAN; ci++) {
     var el = nodes[ci];
@@ -1281,7 +1410,12 @@ _UI_MAP_JS = r"""(function () {
         type: H.attr(el, "type") || "",
         editable: !!H.editable(el),
         disabled: (el.disabled === true || H.attr(el, "aria-disabled") === "true"),
-        in_dialog: !!(DIALOG && insideDialog(el, DIALOG))
+        in_dialog: !!(DIALOG && insideDialog(el, DIALOG)),
+        // Whether this control shares its region with a text field, and -- when
+        // it is not itself that field -- is therefore a candidate action for the
+        // composer: a submit button beside the box the model is meant to fill.
+        in_editor_region: inEditorRegion(el),
+        with_editor: inEditorRegion(el) && !editorOf(el)
       };
       if (clip) {
         var vbox = [Math.max(raw[0], clip[0]), Math.max(raw[1], clip[1]),
@@ -1318,12 +1452,15 @@ _UI_MAP_JS = r"""(function () {
 # is exactly how two reads of one page start disagreeing about what is on it.
 # The display size and window rectangle inside the origin stay as placeholders
 # until a request substitutes them, because the window can move between reads.
-_UI_STATE_JS = _UI_STATE_JS.replace("__HELPERS__", _DOM_HELPERS_JS)
+_UI_STATE_JS = (_UI_STATE_JS
+                .replace("__DOMIDS__", _DOM_IDS_JS)
+                .replace("__HELPERS__", _DOM_HELPERS_JS))
 _HIT_TEST_JS = (_HIT_TEST_JS
                 .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
                 .replace("__DOMIDS__", _DOM_IDS_JS)
                 .replace("__HELPERS__", _DOM_HELPERS_JS))
 _UI_MAP_JS = (_UI_MAP_JS
+              .replace("__RESOLVES_TO__", _RESOLVES_TO_JS)
               .replace("__ORIGIN__", _DISPLAY_ORIGIN_JS)
               .replace("__DOMIDS__", _DOM_IDS_JS)
               .replace("__HELPERS__", _DOM_HELPERS_JS))

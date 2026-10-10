@@ -187,55 +187,55 @@ ELEMENT_TEXT_FIELDS = ("name", "aria_label", "title", "placeholder", "text",
 #: the map recognises the words anyone uses to describe any control, and no
 #: control name of any particular site appears in it.
 _ROLE_KINDS: Dict[str, FrozenSet[str]] = {
-    "button": frozenset("button"),
-    "link": frozenset("link anchor"),
-    "tab": frozenset("tab"),
-    "checkbox": frozenset("checkbox"),
-    "radio": frozenset("radio"),
-    "switch": frozenset("switch toggle"),
-    "slider": frozenset("slider"),
-    "spinbutton": frozenset("spinbutton"),
-    "option": frozenset("option item"),
-    "menu": frozenset("menu"),
-    "menuitem": frozenset("menuitem menu"),
-    "menuitemcheckbox": frozenset("menuitem menu checkbox"),
-    "menuitemradio": frozenset("menuitem menu radio"),
-    "listbox": frozenset("listbox list"),
-    "combobox": frozenset("combobox dropdown select list"),
-    "textbox": frozenset("textbox field box input write editor"),
-    "searchbox": frozenset("searchbox field box input write"),
-    "img": frozenset("img image picture photo avatar"),
-    "heading": frozenset("heading title"),
-    "dialog": frozenset("dialog modal popup window"),
+    "button": frozenset("button".split()),
+    "link": frozenset("link anchor".split()),
+    "tab": frozenset("tab".split()),
+    "checkbox": frozenset("checkbox".split()),
+    "radio": frozenset("radio".split()),
+    "switch": frozenset("switch toggle".split()),
+    "slider": frozenset("slider".split()),
+    "spinbutton": frozenset("spinbutton".split()),
+    "option": frozenset("option item".split()),
+    "menu": frozenset("menu".split()),
+    "menuitem": frozenset("menuitem menu".split()),
+    "menuitemcheckbox": frozenset("menuitem menu checkbox".split()),
+    "menuitemradio": frozenset("menuitem menu radio".split()),
+    "listbox": frozenset("listbox list".split()),
+    "combobox": frozenset("combobox dropdown select list".split()),
+    "textbox": frozenset("textbox field box input write editor".split()),
+    "searchbox": frozenset("searchbox field box input write".split()),
+    "img": frozenset("img image picture photo avatar".split()),
+    "heading": frozenset("heading title".split()),
+    "dialog": frozenset("dialog modal popup window".split()),
 }
 
 #: The same, for tags and input types, which is how an element describes itself
 #: when it carries no ARIA role at all.
 _TAG_KINDS: Dict[str, FrozenSet[str]] = {
-    "a": frozenset("link anchor"),
-    "button": frozenset("button"),
-    "input": frozenset("field box input"),
-    "textarea": frozenset("field box input write editor textarea"),
-    "select": frozenset("dropdown select list"),
-    "option": frozenset("option item"),
-    "img": frozenset("img image picture photo avatar"),
-    "summary": frozenset("disclosure button"),
+    "a": frozenset("link anchor".split()),
+    "button": frozenset("button".split()),
+    "input": frozenset("field box input".split()),
+    "textarea": frozenset("field box input write editor textarea".split()),
+    "select": frozenset("dropdown select list".split()),
+    "option": frozenset("option item".split()),
+    "img": frozenset("img image picture photo avatar".split()),
+    "summary": frozenset("disclosure button".split()),
 }
 
 _TYPE_KINDS: Dict[str, FrozenSet[str]] = {
-    "button": frozenset("button"),
-    "submit": frozenset("button"),
-    "reset": frozenset("button"),
-    "checkbox": frozenset("checkbox"),
-    "radio": frozenset("radio"),
-    "range": frozenset("slider"),
-    "search": frozenset("searchbox field box input"),
-    "text": frozenset("field box input"),
-    "email": frozenset("field box input"),
-    "password": frozenset("field box input"),
-    "url": frozenset("field box input"),
-    "tel": frozenset("field box input"),
-    "number": frozenset("spinbutton field box input"),
+    "button": frozenset("button".split()),
+    "submit": frozenset("button".split()),
+    "reset": frozenset("button".split()),
+    "checkbox": frozenset("checkbox".split()),
+    "radio": frozenset("radio".split()),
+    "range": frozenset("slider".split()),
+    "search": frozenset("searchbox field box input".split()),
+    "text": frozenset("field box input".split()),
+    "email": frozenset("field box input".split()),
+    "password": frozenset("field box input".split()),
+    "url": frozenset("field box input".split()),
+    "tel": frozenset("field box input".split()),
+    "number": frozenset("spinbutton field box input".split()),
 }
 
 #: Every word any of those maps can produce: the words a target may use to say
@@ -248,6 +248,16 @@ KIND_WORDS: FrozenSet[str] = frozenset(
     for words in mapping.values()
     for word in words
 )
+
+#: The kind words that name the text-field family.  A target that says
+#: "textbox" and a point that holds a "textarea" are the same control described
+#: two ways -- both take text -- so a kind disagreement between two of these
+#: words is not a disagreement at all.  A target that says "button" and a point
+#: that holds a link, by contrast, is a disagreement about what the control *is*,
+#: which no amount of matching text can settle.
+_FIELD_KIND_WORDS: FrozenSet[str] = frozenset("""
+textbox textarea textfield searchbox field box input write editor combobox
+""".split())
 
 
 def _element_kinds(element: Dict[str, Any]) -> FrozenSet[str]:
@@ -429,6 +439,28 @@ def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
 
     role = str(element.get("role") or "").lower()
     target_words = _tokens(target)
+
+    # A target that names the *kind* of control it expects -- "button", "link",
+    # "checkbox" -- is contradicted when the point holds a control of a plainly
+    # different kind.  This is not a disagreement about a label that more text
+    # could resolve: the model asked for a button and the DOM says the point is
+    # a link, so the click is refused however well the words match.  The
+    # text-field family is exempt, because "textbox" landing on "textarea" is
+    # one control described twice rather than two controls.
+    target_kinds = target_words & KIND_WORDS
+    hit_kinds = _element_kinds(element)
+    if target_kinds and hit_kinds:
+        kind_forms = frozenset().union(*(_forms(word) for word in hit_kinds))
+        target_kind_forms = frozenset().union(*(_forms(word) for word in target_kinds))
+        field_to_field = bool(target_words & _FIELD_KIND_WORDS) and bool(
+            hit_kinds & _FIELD_KIND_WORDS
+        )
+        if not (target_kind_forms & kind_forms) and not field_to_field:
+            return (
+                f"click was not performed: ({x:g}, {y:g}) is over "
+                f"{_describe(element)}, not {target!r}"
+            )
+
     if (FIELD_HINTS & target_words
             and element.get("editable") is False
             and role in NON_TEXT_ROLES):

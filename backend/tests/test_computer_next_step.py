@@ -166,6 +166,41 @@ class FakeComputer:
         return f"SCREENSHOT-{self.screens}", SCREEN_WIDTH, SCREEN_HEIGHT
 
 
+class TypingComposerComputer(FakeComputer):
+    """A composer dialog whose reported *name* is derived from its own text.
+
+    This is what X.com does: the dialog's accessible name becomes the text
+    being typed, so a name-based identity moves on every keystroke.  The stable
+    `key` the agent sends alongside it is what must hold the page's identity.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.typed = ""
+        self.dialog = {"name": "Post text", "key": "composer-7"}
+
+    async def type_text(self, text):
+        self.typed += text
+        self.dialog = {"name": f"Post text: {self.typed}", "key": "composer-7"}
+        return await super().type_text(text)
+
+
+class SwappingDialogComputer(FakeComputer):
+    """A type that opens a genuinely different dialog, not a rename.
+
+    A different `key` is a real move to another place -- the plan written on the
+    first dialog must not survive onto the second.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dialog = {"name": "Post text", "key": "composer-7"}
+
+    async def type_text(self, text):
+        self.dialog = {"name": "Confirm your identity", "key": "auth-9"}
+        return await super().type_text(text)
+
+
 def plan(tool: str, instruction: str, condition: str) -> Dict[str, Any]:
     """A well-formed plan, as a model would write it."""
     return {"tool": tool, "instruction": instruction, "condition": condition}
@@ -334,6 +369,45 @@ class NextStepTiming(NextStepTestCase):
         for text in texts[2:]:
             self.assertNotIn("The good plan.", text,
                              "a superseded plan survived a response that carried none")
+
+    def test_a_dialog_that_renames_itself_as_you_type_keeps_the_plan(self):
+        # The composer's accessible name changes from "Post text" to "Post
+        # text: hello" the moment a character goes in, but it is the same
+        # dialog.  The plan written before the keystroke must still be the plan
+        # the next request receives -- a name-based identity would report a new
+        # page and drop it, which is the failure this fixes.
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/home"}, "Opening.",
+                 plan("type", "Type the comment.", "Only when the composer is focused.")),
+            call("type", {"text": "hello"}, "Typing.",
+                 plan("screenshot", "Verify the text landed.", "Judge from the new frame.")),
+            call("done", {"message": "ok"}, "Done.",
+                 plan("none", "Terminal response; no further model action is required.", "This run is finished.")),
+        ])
+        runner.computer = TypingComposerComputer()
+        run = asyncio.run(finish(runner, "post a comment"))
+        self.assertEqual(run.status, STATUS_DONE)
+        texts = [user_text(c) for c in provider.calls]
+        self.assertEqual(run.trace[2].next_step_error, "")
+        self.assertEqual(planned_tool(texts[2]), "screenshot")
+
+    def test_a_genuinely_different_dialog_still_drops_the_plan(self):
+        # The other half of the same rule: when the key changes it is a move to
+        # another place, and the plan written on the old dialog must not be sent
+        # as though it belonged to the new one.
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/home"}, "Opening.",
+                 plan("type", "Type the comment.", "Only when the composer is focused.")),
+            call("type", {"text": "hello"}, "Typing.",
+                 plan("screenshot", "Verify the text landed.", "Judge from the new frame.")),
+            call("done", {"message": "ok"}, "Done.",
+                 plan("none", "Terminal response; no further model action is required.", "This run is finished.")),
+        ])
+        runner.computer = SwappingDialogComputer()
+        run = asyncio.run(finish(runner, "post a comment"))
+        texts = [user_text(c) for c in provider.calls]
+        self.assertIsNone(planned_tool(texts[2]),
+                          "a plan for the old dialog was sent onto the new one")
 
     def test_a_screenshot_request_carries_the_plan(self):
         runner, provider = make_runner([

@@ -104,7 +104,8 @@ SCREENSHOT_NOTE = (
 #: being one.
 REFUSAL_NOTE = (
     "Your previous reply was refused and nothing was executed: {error}\n"
-    "Reply now with one corrected tool call. Do not repeat the refused call."
+    "Reply now with one different, corrected tool call. Do not repeat the "
+    "refused call."
 )
 
 

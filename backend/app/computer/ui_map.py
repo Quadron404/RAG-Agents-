@@ -384,6 +384,14 @@ def _entry(raw: Any) -> Optional[Dict[str, Any]]:
         # page so the primary action of the dialog the user is looking at
         # survives the cap, however late in the document it was rendered.
         "in_dialog": bool(raw.get("in_dialog")),
+        # Whether this control shares a composer region with a text field, and
+        # -- when it is not that field -- is therefore the action that submits
+        # it.  A page's inline composer is a textbox plus a button that sends
+        # its contents, and a map that lists the box but not the button leaves
+        # the model to guess a coordinate or pick a same-named link elsewhere
+        # on the page.  These ride the same tiering as `in_dialog`.
+        "in_editor_region": bool(raw.get("in_editor_region")),
+        "with_editor": bool(raw.get("with_editor")),
     }
     # The token the page's own DOM stamped on this element, when it minted one.
     # It is the map's strongest statement of identity -- two elements share a
@@ -465,14 +473,15 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
                 continue
             offscreen.append((index, entry))
 
-    # Best first: an open dialog's own controls over the background page, then
-    # named over unnamed, a text field over other controls of the same rank,
-    # the one nearest the middle of the screen over one out of view, biggest
-    # over smallest -- then duplicate representations collapse and the hard cap
-    # is applied.  The ranking picks the entries; the final document-order sort
-    # makes the map read down the page the way the page does.
+    # Best first: an open dialog's own controls over a composer's action over
+    # the background page, then named over unnamed, a text field over other
+    # controls of the same rank, the one nearest the middle of the screen over
+    # one out of view, biggest over smallest -- then duplicate representations
+    # collapse and the hard cap is applied.  The ranking picks the entries; the
+    # final document-order sort makes the map read down the page the way the
+    # page does.
     visible.sort(key=lambda item: (
-        0 if item[1].get("in_dialog") else 1,
+        0 if item[1].get("in_dialog") else (1 if item[1].get("with_editor") else 2),
         0 if item[1].get("name") else 1,
         0 if _is_editor(item[1]) else 1,
         _vertical_gap(item[1], viewport),
@@ -481,6 +490,18 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
     ))
     visible = _dedupe_visible(visible)
     chosen_visible = visible[:MAX_VISIBLE_ENTRIES]
+    # A composer's action is the whole reason the box it belongs to is worth
+    # mapping, so keep at least one even against a page full of dialog controls
+    # that outrank it: swap the lowest-ranked choice for the best `with_editor`
+    # entry the cap dropped.  Only when there is one to keep -- a page without
+    # a composer changes nothing.
+    if not any(entry.get("with_editor") for _, entry in chosen_visible):
+        spare = next(
+            ((i, e) for i, e in visible[MAX_VISIBLE_ENTRIES:] if e.get("with_editor")),
+            None,
+        )
+        if spare is not None and chosen_visible:
+            chosen_visible = chosen_visible[:-1] + [spare]
     chosen_visible.sort(key=lambda item: item[0])
     for number, (_, entry) in enumerate(chosen_visible, start=1):
         entry["id"] = f"V{number}"

@@ -181,6 +181,26 @@ def state_signature(state: Optional[Dict[str, Any]]) -> str:
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
 
+def _dialog_key(dialog: Any) -> str:
+    """A dialog's identity, stable while the text inside it changes.
+
+    The name a dialog reports is often derived from its own contents -- a
+    composer dialog names itself after the text being typed into it -- so an
+    identity built on the name moves on every keystroke, and a plan written
+    before the first character would read as belonging to a different page.
+    The agent sends a `key` built from the dialog's explicit label and the
+    DOM's own object token, neither of which the text inside can move; a
+    payload without one (an older agent, a test double) falls back to the name
+    so the two readers still agree.
+    """
+    if not isinstance(dialog, dict):
+        return ""
+    key = _clean(dialog.get("key"))
+    if key:
+        return key
+    return _clean(dialog.get("name"))
+
+
 def page_identity(state: Optional[Dict[str, Any]]) -> str:
     """Which page this is, as one comparable string.
 
@@ -188,6 +208,11 @@ def page_identity(state: Optional[Dict[str, Any]]) -> str:
     answers "is this still the same place".  URL, title and dialog -- the three
     facts that decide whether an action, a coordinate or a plan written a
     moment ago still refers to something on the screen.
+
+    The dialog part is its stable `key`, not its content-derived name: a
+    composer dialog that names itself after the text being typed into it would
+    otherwise report a new page on every character, silently dropping the
+    model's plan and invalidating the frame it was reading.
 
     Controls are deliberately absent.  The page's furniture changes on nearly
     every click that reveals something -- a menu opens, a list re-sorts, a
@@ -207,7 +232,7 @@ def page_identity(state: Optional[Dict[str, Any]]) -> str:
     body = {
         "url": _clean(state.get("url")),
         "title": _clean(state.get("title")),
-        "dialog": _clean(dialog.get("name")) if isinstance(dialog, dict) else "",
+        "dialog": _dialog_key(dialog),
     }
     payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:24]
@@ -232,7 +257,7 @@ def frame_identity(state: Optional[Dict[str, Any]]) -> str:
     dialog = state.get("dialog")
     body = {
         "url": _clean(state.get("url")),
-        "dialog": _clean(dialog.get("name")) if isinstance(dialog, dict) else "",
+        "dialog": _dialog_key(dialog),
         "dialog_open": isinstance(dialog, dict) and bool(dialog),
     }
     payload = json.dumps(body, sort_keys=True, separators=(",", ":"))

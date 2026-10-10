@@ -584,6 +584,35 @@ class ComputerRun:
     #: as text, next to the state it has to be checked against, and the model still
     #: makes the call.
     next_step: Dict[str, str] = field(default_factory=dict)
+    #: Why the plan on the run was dropped before a request could carry it, when
+    #: it was dropped by a page change rather than by the model.
+    #:
+    #: `next_step` is cleared silently in two different places for two different
+    #: reasons: the model wrote no usable plan (a fact about the reply), and the
+    #: page the plan described is gone (a fact about the world).  Both used to
+    #: surface as "the reply carried no next_step", which told the model its own
+    #: reply was malformed when the truth was that its plan had been invalidated
+    #: underneath it.  This carries the second reason to the turn that pays for
+    #: it, so the trace can say which happened.
+    next_step_reset_reason: str = ""
+    #: The executor's refusal of the last action, held for the one request that
+    #: follows it, and whether recovering from that refusal needs a new frame.
+    #:
+    #: A refused action is recorded on the turn it happened on, but the loop
+    #: builds the next request from `refusal = ""` -- so the demand to change
+    #: the call reached the model only inside `Last action:`, mixed with every
+    #: other fact, and never as the urgent note a refusal is meant to be.  The
+    #: note is carried here from `_perform` to `_next_command` and seeded as
+    #: that request's refusal, so the model is told, in the one channel a
+    #: refusal owns, that nothing ran and a different call is required.
+    #:
+    #: `refusal_needs_screenshot` is set when the remedy is a corrected
+    #: coordinate: the frame the click was refused on is the picture that
+    #: produced the wrong point, so a fresh one is captured before the next
+    #: request rather than the model being told to correct coordinates in a
+    #: picture it can no longer fully trust.
+    refusal_note: str = ""
+    refusal_needs_screenshot: bool = False
     #: The signature of the last call this loop refused, so that an identical
     #: refusal is recognised rather than paid for a second time.
     last_refused: str = ""
@@ -1368,6 +1397,10 @@ class ComputerRunner:
         page = page_identity(state)
         frame = frame_identity(state)
         if run.page_identity and page and page != run.page_identity and run.next_step:
+            run.next_step_reset_reason = (
+                "the page changed since your plan was written, so the plan was "
+                "dropped; write a new next_step for the page you are on now"
+            )
             run.next_step = {}
         run.page_identity = page
         run.frame_identity = frame
@@ -1777,6 +1810,50 @@ class ComputerRunner:
         )
         return image
 
+    async def _capture_for_recovery(self, run: ComputerRun) -> None:
+        """Take a fresh frame for a request recovering from a coordinate refusal.
+
+        A click refused for pointing at the wrong control is told to "choose
+        corrected coordinates from the latest screenshot" -- but by then the
+        latest screenshot is the very frame the refused click was chosen from,
+        which is what produced the wrong point.  So the recovery is given a new
+        frame instead: captured now and held for the next request exactly the
+        way a requested screenshot is, so `_request_after_screenshot` and the
+        turn's own reason treat it like any other.
+
+        Deliberately best-effort.  Unlike a screenshot the model asked for, this
+        one is the loop helping itself, and a machine that cannot be captured is
+        not a reason to kill a run that is still recoverable: the refusal note
+        still reaches the model, and it can call screenshot() itself.
+        """
+        if run.pending_image:
+            return
+        # The page as it is *now*, read before the frame is taken, exactly as a
+        # requested capture does: the frame needs the page identity it belongs
+        # to, so the very next state read does not judge it stale and drop it.
+        await self._refresh_ui_state(run)
+        try:
+            image, width, height = await self.computer.screenshot()
+        except Exception as exc:
+            log.debug("computer: could not capture a frame for recovery: %s", exc)
+            return
+        run.pending_image = image
+        run.screenshot_count += 1
+        run.pending_width = width
+        run.pending_height = height
+        run.pending_screenshot_call_id = "screenshot"
+        run.seen_width = width
+        run.seen_height = height
+        run.screenshot_url = run.last_url
+        run.screenshot_frame = run.frame_identity
+        self._record(
+            run,
+            {"type": "screenshot"},
+            "",
+            "ok",
+            trace=_image_meta(image, width, height),
+        )
+
     def _record_execution(
         self,
         turn: ComputerTurnTrace,
@@ -1839,6 +1916,13 @@ class ComputerRunner:
                     "click_target_verified": pointer.get("click_target_verified"),
                     "pointer_actual_x": pointer.get("pointer_actual_x"),
                     "pointer_actual_y": pointer.get("pointer_actual_y"),
+                    # The DOM tokens on both sides of the check and the point
+                    # it ran at, so a mismatch can be read from the trace
+                    # without re-running the click.
+                    "click_expected_dom_id": pointer.get("click_expected_dom_id"),
+                    "click_hit_dom_id": pointer.get("click_hit_dom_id"),
+                    "click_hit_point": pointer.get("click_hit_point"),
+                    "click_hit_mapping": pointer.get("click_hit_mapping"),
                 }
             )
             if pointer.get("click_element_id"):
@@ -1856,12 +1940,29 @@ class ComputerRunner:
         itself, and a call-signature check for one that is not reading the error
         at all.
         """
-        refusal = ""
+        # The action this request recovers from, if the executor refused the
+        # last one.  Seeded as this request's refusal so the model is told, in
+        # the one channel a refusal owns, that nothing ran and that a different
+        # call is required -- rather than reading it only as one line among the
+        # facts in `Last action:` and repeating the same call.  Consumed here so
+        # it describes exactly one request.
+        refusal = run.refusal_note
+        run.refusal_note = ""
+        recovery_frame = run.refusal_needs_screenshot
+        run.refusal_needs_screenshot = False
         for attempt in range(self.settings.computer_max_json_retries + 2):
             # The retry budget belongs to one request.  Cleared here so the
             # attempts recorded on this turn are this request's, not a leftover
             # count from whatever failed earlier in the run.
             run.http_attempts = []
+            # A refusal whose remedy is a corrected coordinate gets a fresh
+            # frame first: the picture the click was refused on is the one that
+            # produced the wrong point, so the model corrects against a new one.
+            # Best-effort and tried once per request -- a machine that cannot be
+            # captured must not turn a recoverable refusal into a dead run.
+            if recovery_frame and not run.pending_image:
+                await self._capture_for_recovery(run)
+                recovery_frame = False
             # One trace entry per *request*.  A retry is a second real call to
             # the model with a different request, and the question the inspector
             # has to answer is "what did the API receive, and what came back" --
@@ -2110,8 +2211,10 @@ class ComputerRunner:
             # thing a plan must never be.
             run.next_step = {}
             turn.next_step, turn.next_step_error = {}, (
-                "the reply carried no readable tool call, so it carried no next_step"
+                run.next_step_reset_reason
+                or "the reply carried no readable tool call, so it carried no next_step"
             )
+            run.next_step_reset_reason = ""
 
             # Keep the image alive through a no-tool/malformed-tool recovery once.
             # This avoids the wasteful failure pattern:
@@ -2515,6 +2618,7 @@ class ComputerRunner:
                                 "click_target": clean_target(command.target or ""),
                             },
                         )
+                        self._mark_refusal(run, detail)
                         self._mark_not_progress(run, command)
                         run.message = detail
                         return False
@@ -2572,6 +2676,7 @@ class ComputerRunner:
                             "click_hit": run.last_hit,
                             "screen_width": (hit or {}).get("display_width"),
                             "screen_height": (hit or {}).get("display_height"),
+                            **_hit_diagnostics(hit, resolved_control),
                         },
                     )
                     # `_observe_after_action` never runs for a click that was
@@ -2579,6 +2684,7 @@ class ComputerRunner:
                     # action is done here as well -- without it the identical
                     # rejected call would be offered again as though it had
                     # never been refused for a reason the model was given.
+                    self._mark_refusal(run, detail, coordinates=True)
                     self._mark_not_progress(run, command)
                     run.message = detail
                     return False
@@ -2615,8 +2721,10 @@ class ComputerRunner:
                             "click_hit": "",
                             "pointer_actual_x": int(actual_x),
                             "pointer_actual_y": int(actual_y),
+                            **_hit_diagnostics(hit, resolved_control),
                         },
                     )
+                    self._mark_refusal(run, detail, coordinates=True)
                     self._mark_not_progress(run, command)
                     run.message = detail
                     return False
@@ -2655,8 +2763,10 @@ class ComputerRunner:
                             "click_hit": run.last_hit,
                             "pointer_actual_x": int(actual_x),
                             "pointer_actual_y": int(actual_y),
+                            **_hit_diagnostics(live, resolved_control),
                         },
                     )
+                    self._mark_refusal(run, detail, coordinates=True)
                     self._mark_not_progress(run, command)
                     run.message = detail
                     return False
@@ -2675,6 +2785,11 @@ class ComputerRunner:
                         "pointer_actual_y": int(actual_y),
                     }
                 )
+                # The same facts a refusal would have recorded: a successful
+                # click keeps the token and point it was verified against, so a
+                # click that landed on the wrong control can be read back even
+                # though it was never refused.
+                trace.update(_hit_diagnostics(live, resolved_control))
                 if command.element_id:
                     # Present only for an element click, so coordinate traces
                     # stay byte-identical to what they have always been.
@@ -2720,6 +2835,12 @@ class ComputerRunner:
             # recorded event into the turn's execution block, so it cannot be
             # lost just because it failed.
             return False
+
+        # The command ran.  Whatever the last refusal said no longer describes
+        # the last thing that happened, so it is not carried to the next request
+        # as though the action had never gone through.
+        run.refusal_note = ""
+        run.refusal_needs_screenshot = False
 
         detail = ""
         if command.type in STATE_CHANGING_TOOLS:
@@ -2883,6 +3004,22 @@ class ComputerRunner:
             return None
         return result if isinstance(result, dict) else None
 
+    def _mark_refusal(self, run: ComputerRun, detail: str, coordinates: bool = False) -> None:
+        """Remember a refused action for the request that recovers from it.
+
+        The refusal is already written to the event and `Last action:`; this
+        carries it to the *next* request as that request's own refusal note, the
+        channel a refusal is meant to travel in, so the model is told plainly
+        that nothing was executed and that its next call must be different.
+
+        `coordinates` is set when the remedy is a corrected coordinate, which is
+        the one case the loop also helps with: the frame the click was refused
+        on is the frame that produced the wrong point, so `_capture_for_recovery`
+        takes a new one before the model is asked to try again.
+        """
+        run.refusal_note = detail
+        run.refusal_needs_screenshot = coordinates
+
     def _mark_not_progress(self, run: ComputerRun, command: Command) -> None:
         """Count a command the executor refused to run as the same call again.
 
@@ -3022,6 +3159,66 @@ def _hit_text(hit: Optional[Dict[str, Any]]) -> str:
     if not isinstance(element, dict) or not element:
         return "empty page space"
     return describe_element(element)
+
+
+def _dom_id_of(entry: Any) -> Optional[int]:
+    """The DOM token a resolved control carries, or None when it has none.
+
+    Mirrors `ui_map._dom_token`: a token is a positive int the page's own DOM
+    minted, and anything else -- absent, `True`, a string -- is not one.
+    """
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("dom_id")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def _hit_diagnostics(
+    hit: Optional[Dict[str, Any]], expected: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """The facts a click that missed has to be diagnosed from, on the trace.
+
+    A refused click says `click was not performed: ...`, which tells the model
+    what happened but not why -- and the live failure the loop could not
+    explain was a button whose own box centre was reported to hold the dialog
+    `div` around it.  Three things have to be read together to see that shape,
+    so they are recorded together:
+
+    - the token the map's control carries (`click_expected_dom_id`), when the
+      click named an element -- one element, one token, so this is the exact
+      control the point was supposed to hold;
+    - the token the live page held at the point (`click_hit_dom_id`), the
+      same authority read from the other side, with `-1` meaning the element
+      the point holds was never in the map;
+    - the CSS point the check landed on (`click_hit_point`) and the coordinate
+      mapping that produced it (`click_hit_mapping`: scale, DPR, and the
+      window, viewport and screen rectangles).
+
+    Absent keys are the honest answer for what could not be read: a point the
+    page would not describe carries no token, and a coordinate click named no
+    element and so has no expected token.  Kept internal and off the model's
+    transcript, like the rest of the trace -- it is a diagnostic, not an
+    instruction.
+    """
+    out: Dict[str, Any] = {}
+    if isinstance(hit, dict):
+        element = hit.get("element")
+        if isinstance(element, dict):
+            raw = element.get("dom_id")
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                out["click_hit_dom_id"] = raw
+        point = hit.get("point")
+        if isinstance(point, dict):
+            out["click_hit_point"] = {"x": point.get("x"), "y": point.get("y")}
+        mapping = hit.get("mapping")
+        if isinstance(mapping, dict):
+            out["click_hit_mapping"] = mapping
+    token = _dom_id_of(expected)
+    if token is not None:
+        out["click_expected_dom_id"] = token
+    return out
 
 
 def _fact_line(command: Command) -> str:

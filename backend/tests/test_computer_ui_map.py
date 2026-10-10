@@ -82,6 +82,9 @@ HIT_ELEMENT = {
     "text": "Send a message",
     "context": "the composer",
     "box": {"x": 100, "y": 100, "width": 80, "height": 40},
+    # The DOM token the page minted for this element while the map was read, so
+    # the map's V1 and the live point agree by the strongest identity there is.
+    "dom_id": 42,
 }
 
 
@@ -129,7 +132,7 @@ def default_raw() -> Dict[str, Any]:
     """
     return raw_map(
         [
-            visible("button", "Send", 100, 100, 80, 40),
+            visible("button", "Send", 100, 100, 80, 40, dom_id=42),
             visible("textbox", "Write a message", 100, 160, 300, 90,
                     tag="textarea", editable=True),
         ],
@@ -191,6 +194,62 @@ class BuildTheMapTheModelSees(unittest.TestCase):
         # The button is the very line the model reads and can name back.
         self.assertIn(
             f'[{by_name["Post"]["id"]}] button "Post"', format_ui_map(ui_map)
+        )
+
+    def test_a_composers_action_rides_the_same_tier_as_a_dialog(self):
+        # The inline-composer failure: the textbox made the map but the button
+        # that submits it did not, so the model picked a same-named link
+        # elsewhere on the page.  A control the agent marks `with_editor` -- a
+        # button sharing the composer's region with its text field -- ranks
+        # ahead of the background page, so the action that sends what the box
+        # holds is in the map the model reads.
+        entries = [
+            visible("link", f"Background {i}", 10, 10 + i * 12, 800, 40, tag="a")
+            for i in range(25)
+        ]
+        entries.append(
+            visible("textbox", "Write a message", 100, 700, 300, 90,
+                    tag="textarea", editable=True, in_editor_region=True)
+        )
+        entries.append(
+            visible("button", "Post", 420, 720, 80, 40,
+                    in_editor_region=True, with_editor=True)
+        )
+        ui_map = build_ui_map(raw_map(entries, []))
+
+        by_name = {e["name"]: e for e in ui_map["visible"]}
+        self.assertIn("Post", by_name)
+        self.assertTrue(by_name["Post"].get("with_editor"))
+        self.assertIn(
+            f'[{by_name["Post"]["id"]}] button "Post"', format_ui_map(ui_map)
+        )
+
+    def test_a_composers_action_survives_a_page_full_of_dialog_controls(self):
+        # The composer's button is the reason its box is worth mapping, so it
+        # is kept even when the cap is full of dialog controls that outrank it:
+        # the lowest-ranked choice is swapped for it rather than dropped.
+        entries = [
+            visible("button", f"Dialog {i}", 10, 10 + i * 10, 80, 8, in_dialog=True)
+            for i in range(MAX_VISIBLE_ENTRIES)
+        ]
+        entries.append(
+            visible("textbox", "Write a message", 100, 700, 300, 90,
+                    tag="textarea", editable=True, in_editor_region=True)
+        )
+        entries.append(
+            visible("button", "Post", 420, 720, 80, 40,
+                    in_editor_region=True, with_editor=True)
+        )
+        ui_map = build_ui_map(raw_map(entries, []))
+
+        by_name = {e["name"]: e for e in ui_map["visible"]}
+        self.assertIn("Post", by_name)
+        self.assertTrue(by_name["Post"].get("with_editor"))
+        # The dialog controls still fill the rest of the cap; exactly one was
+        # given up for the composer's action, not a whole rank of them.
+        self.assertEqual(
+            sum(1 for e in ui_map["visible"] if e.get("in_dialog")),
+            MAX_VISIBLE_ENTRIES - 1,
         )
 
     def test_offscreen_is_named_nearest_first_capped_and_barely_interactive(self):
@@ -833,6 +892,10 @@ class PageComputer:
             "display_width": DISPLAY_W,
             "display_height": DISPLAY_H,
             "display_pixel": {"x": int(x), "y": int(y)},
+            # The CSS point the check ran at and the mapping that produced it,
+            # the same two facts the real daemon's hit test reports.
+            "point": {"x": int(x), "y": int(y)},
+            "mapping": {"scale": 1.0, "dpr": 1.0, "viewport_x": 0, "viewport_y": 0},
             "window_rect": None,
             "element": dict(self.hit_element),
         }
@@ -1088,6 +1151,80 @@ class AnElementIdReachesTheMachine(unittest.TestCase):
         self.assertEqual(execution["outcome"], "refused")
         self.assertFalse(execution["executed"])
         self.assertIn("Account settings", execution["error"])
+
+    def test_the_trace_carries_the_tokens_and_point_the_click_was_checked_at(self):
+        # The live failure this is for: a button was refused because the point
+        # its own box centre resolved to reported the dialog `div` around it.
+        # The verdict alone said "not the target"; the trace has to say which
+        # token was expected, which token the live page held, and at what point
+        # -- so the mismatch is diagnosable without re-running the click.
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        runner.computer.hit_element = {
+            "role": "dialog", "name": "Compose", "tag": "div",
+            "text": "", "context": "", "dom_id": 7,
+        }
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [])
+        self.assertFalse(any(a[0] == "click" for a in runner.computer.actions))
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "refused")
+        self.assertTrue(execution["click_rejected"])
+        # The control the id resolved to (the Send button, token 42) and the
+        # control the point actually held (the dialog, token 7).
+        self.assertEqual(execution["click_expected_dom_id"], 42)
+        self.assertEqual(execution["click_hit_dom_id"], 7)
+        # The point the check ran at, and the mapping it was converted with.
+        self.assertEqual(execution["click_hit_point"], {"x": 140, "y": 120})
+        self.assertEqual(execution["click_hit_mapping"]["scale"], 1.0)
+
+    def test_a_verified_click_records_the_same_token_on_both_sides(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        run = asyncio.run(finish(runner, TASK))
+
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "executed")
+        self.assertEqual(execution["click_expected_dom_id"], 42)
+        self.assertEqual(execution["click_hit_dom_id"], 42)
+
+    def test_a_refused_click_is_carried_to_the_next_request_as_its_refusal(self):
+        # The recovery contract: a refused click is the next request's refusal,
+        # in the one channel a refusal owns -- not merely a line in
+        # `Last action:` -- so the model is told plainly that nothing ran and
+        # must reply with a different call; and with no frame in hand, the loop
+        # captures one so the corrected coordinate has a picture to come from.
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        runner.computer.hit_element = {
+            "role": "link", "name": "Account settings", "tag": "a",
+            "text": "Settings", "context": "",
+        }
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertFalse(any(a[0] == "click" for a in runner.computer.actions))
+        recovery = user_text(provider.calls[2])
+        self.assertIn("nothing was executed", recovery)
+        self.assertIn("different, corrected tool call", recovery)
+        # The refusal has a coordinate remedy, so a fresh frame was captured and
+        # rides the very request the model recovers from.
+        self.assertEqual(runner.computer.screens, 1)
+        self.assertTrue(any(m.images for m in provider.calls[2]))
+        # The note described exactly one request.
+        self.assertEqual(run.refusal_note, "")
 
 
 if __name__ == "__main__":
