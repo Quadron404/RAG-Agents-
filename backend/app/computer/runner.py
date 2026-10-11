@@ -81,7 +81,7 @@ from ..providers.router import (
 from .commands import ALLOWED_TYPES, SCREENSHOT_ACTIONS, Bounds, Command
 from .controller import ComputerError, RemoteComputer
 from .history import compact_history, extract_history, history_block
-from .hit_target import clean_target, describe_element, target_mismatch
+from .hit_target import clean_target, describe_element, target_context_score, target_mismatch
 from .next_step import NEXT_STEP_ARGUMENT, extract_next_step, format_next_step
 from .prompt import REFUSAL_NOTE, build_prompt, screenshot_note
 from .tools import (
@@ -1358,6 +1358,11 @@ class ComputerRunner:
                 matches.append(entry)
         if len(matches) == 1:
             return matches[0]
+        if matches:
+            scores = [target_context_score(cleaned, entry) for entry in matches]
+            best_score = max(scores)
+            if best_score > 0 and scores.count(best_score) == 1:
+                return matches[scores.index(best_score)]
         return None
 
     def _click_ui_context(self, run: ComputerRun) -> Dict[str, Any]:

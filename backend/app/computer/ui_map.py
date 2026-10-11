@@ -338,7 +338,7 @@ def _overlap(left_box: Dict[str, int], right_box: Dict[str, int]) -> bool:
 def _dedupe_visible(ranked: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
     """Drop duplicate representations, keeping the best-ranked of each."""
     result: List[Tuple[int, Dict[str, Any]]] = []
-    seen: Dict[Tuple[str, str, bool, str], Dict[str, int]] = {}
+    seen: Dict[Tuple[Any, ...], Dict[str, int]] = {}
     for item in ranked:
         _, entry = item
         key = (
@@ -347,6 +347,10 @@ def _dedupe_visible(ranked: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int,
             entry.get("name") or "",
             entry.get("editable"),
             entry.get("type") or "",
+            entry.get("context") or "",
+            entry.get("in_dialog"),
+            entry.get("in_editor_region"),
+            entry.get("with_editor"),
         )
         kept = seen.get(key)
         if kept is not None and _overlap(kept, entry["box"]):
@@ -520,6 +524,75 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         )
         if spare is not None and chosen_visible:
             chosen_visible = chosen_visible[:-1] + [spare]
+
+    # A duplicate name in different named contexts is a choice the model
+    # cannot make if only one context survives the cap. Keep one representative
+    # from each context whenever a duplicate group already has a place in the
+    # map. Active dialog and editor-region entries remain protected; the
+    # duplicate is admitted by replacing the lowest-ranked background entry.
+    # This is generic to accessible names and DOM-provided context, and leaves
+    # the visible budget unchanged.
+    chosen_by_index = {index: (index, entry) for index, entry in chosen_visible}
+    rank_by_index = {index: rank for rank, (index, _) in enumerate(visible)}
+    named_contexts: Dict[str, Dict[str, List[Tuple[int, Dict[str, Any]]]]] = {}
+    for item in visible:
+        index, entry = item
+        name = entry.get("name")
+        context = entry.get("context")
+        if name and context:
+            named_contexts.setdefault(name, {}).setdefault(context, []).append(item)
+
+    duplicate_groups = [
+        (name, contexts)
+        for name, contexts in named_contexts.items()
+        if len(contexts) > 1
+        and any(index in chosen_by_index for items in contexts.values() for index, _ in items)
+    ]
+    duplicate_groups.sort(key=lambda group: min(
+        rank_by_index[index]
+        for items in group[1].values()
+        for index, _ in items
+    ))
+
+    duplicate_representatives = set()
+    for _, contexts in duplicate_groups:
+        for items in contexts.values():
+            present = [item for item in items if item[0] in chosen_by_index]
+            if present:
+                best = min(present, key=lambda item: rank_by_index[item[0]])
+                duplicate_representatives.add(best[0])
+
+    protected_indices = {
+        index for index, entry in chosen_visible
+        if entry.get("in_dialog") or entry.get("in_editor_region")
+    } | duplicate_representatives
+    diagnostics["visible_context_duplicates_preserved"] = 0
+    diagnostics["visible_context_duplicates_omitted_by_cap"] = 0
+
+    for _, contexts in duplicate_groups:
+        for items in sorted(
+            contexts.values(),
+            key=lambda group: min(rank_by_index[index] for index, _ in group),
+        ):
+            if any(index in chosen_by_index for index, _ in items):
+                continue
+            candidate = min(items, key=lambda item: rank_by_index[item[0]])
+            replaceable = [
+                item for item in chosen_by_index.values()
+                if item[0] not in protected_indices
+                and not item[1].get("in_dialog")
+                and not item[1].get("in_editor_region")
+            ]
+            if not replaceable:
+                diagnostics["visible_context_duplicates_omitted_by_cap"] += 1
+                continue
+            victim = max(replaceable, key=lambda item: rank_by_index[item[0]])
+            del chosen_by_index[victim[0]]
+            chosen_by_index[candidate[0]] = candidate
+            protected_indices.add(candidate[0])
+            diagnostics["visible_context_duplicates_preserved"] += 1
+
+    chosen_visible = list(chosen_by_index.values())
     chosen_visible.sort(key=lambda item: item[0])
     diagnostics["visible_omitted_by_cap"] = max(0, len(visible) - len(chosen_visible))
     for number, (_, entry) in enumerate(chosen_visible, start=1):

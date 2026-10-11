@@ -463,7 +463,28 @@ _DOM_IDS_JS = r"""(function () {
     }
     return -1;
   }
-  return { mark: mark, look: look };
+  function chain(el) {
+    var reg = registry(false);
+    if (!reg || !reg.ids || !el) return [];
+    var found = [], cur = el;
+    for (var i = 0; cur && i < 12; i++) {
+      try {
+        var known = reg.ids.get(cur);
+        if (typeof known === "number" && known > 0) found.push(known);
+      } catch (e) { return found; }
+      var parent = null;
+      try { parent = cur.parentElement; } catch (e) {}
+      if (!parent) {
+        try {
+          var root = cur.getRootNode ? cur.getRootNode() : null;
+          if (root && root !== document && root.host) parent = root.host;
+        } catch (e) {}
+      }
+      cur = parent;
+    }
+    return found;
+  }
+  return { mark: mark, look: look, chain: chain };
 })()"""
 
 
@@ -720,6 +741,11 @@ _HIT_TEST_JS = r"""(function () {
     // -1 means this element was never mapped, which is the honest answer for
     // a control that appeared after the map was taken.
     dom_id: D.look(chosen),
+    // Mapped actionable descendants can be the nearest control under a point
+    // inside a mapped parent control. Carry the stamped ancestor tokens so
+    // click verification can accept that containment without accepting the
+    // reverse case (a wrapper or composer containing the intended control).
+    dom_ancestor_ids: D.chain(chosen),
     role: H.role(chosen) || "",
     name: H.name(chosen) || "",
     tag: (chosen.tagName || "").toLowerCase(),

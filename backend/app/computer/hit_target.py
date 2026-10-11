@@ -176,6 +176,18 @@ def _forms(token: str) -> FrozenSet[str]:
     return forms
 
 
+def target_context_score(target: str, element: Dict[str, Any]) -> int:
+    """How much named context in a target distinguishes this mapped control."""
+    wanted = _tokens(clean_target(target)) - STOPWORDS - KIND_WORDS - frozenset({
+        "click", "press", "tap", "choose", "select", "open", "close", "submit",
+    })
+    context = _tokens(str(element.get("context") or "")) - STOPWORDS
+    context_forms = (
+        frozenset().union(*(_forms(word) for word in context)) if context else frozenset()
+    )
+    return sum(1 for word in wanted if _forms(word) & context_forms)
+
+
 #: The ways an element can say what it is, read from the page's own DOM.  Every
 #: one of them is a generic platform facility -- the accessibility tree, the
 #: HTML attributes -- so the same list works on any page.
@@ -361,16 +373,32 @@ def _is_expected(element: Dict[str, Any], expected: Dict[str, Any]) -> bool:
     is absent, as it is for an agent that ships none or a page that
     re-rendered between the two reads.
 
-    A pair of tokens that disagree is a real disagreement -- they were minted
-    on different elements -- and is reported as "not the one", exactly as an
-    identity mismatch is: the caller then falls back to the model's words
-    rather than treating this as proof of anything.
+    A hit on a separately mapped descendant is still the mapped control when
+    its stamped ancestor chain contains the expected token. The reverse
+    relationship is intentionally not accepted: a point on a wrapper around
+    the expected control does not prove that the control itself is underneath
+    it. Token disagreement without that ancestry is a real mismatch.
     """
     if not isinstance(element, dict) or not isinstance(expected, dict):
         return False
     here, there = _dom_token(element), _dom_token(expected)
     if here is not None and there is not None:
-        return here == there
+        if here == there:
+            return True
+        ancestors = element.get("dom_ancestor_ids")
+        return (
+            isinstance(ancestors, list)
+            and there in ancestors
+            and all(
+                isinstance(token, int) and not isinstance(token, bool) and token > 0
+                for token in ancestors
+            )
+        )
+    if there is not None:
+        # The map resolved a concrete live token, but the point hit cannot
+        # tie itself to that token. Descriptive similarity is not enough to
+        # distinguish duplicate controls in this case.
+        return False
     return same_control(element, expected)
 
 
@@ -388,11 +416,12 @@ def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
     control.
 
     `expected` is the control the map resolved a `element_id` to, when the
-    click named one.  A point that holds that very control is the click the
-    model chose, whatever its label said -- the label describes the control and
-    the DOM is the control -- so it is accepted here, before the wording is
-    weighed.  With no `expected`, or a point that is not that control, the
-    target is the only evidence there is and decides as it always has.
+    click named one. A point that holds that control or a separately mapped
+    descendant is accepted; a point that only holds an ancestor is not. When
+    the live DOM supplies conflicting tokens, that is a refusal rather than a
+    reason to fall back to a potentially ambiguous label. When tokens are
+    unavailable, the mapped control's descriptive identity is the fallback;
+    failure to establish that identity is still a refusal.
 
     Refusals are specific, acceptances are cheap: any single signal agreeing --
     a word of the name, the kind of control, a piece of nearby context -- sends
@@ -431,11 +460,17 @@ def target_mismatch(target: str, hit: Optional[Dict[str, Any]],
             f"click was not performed: nothing at ({x:g}, {y:g}) has a name or a "
             f"role, so {target!r} could not be confirmed"
         )
-    if expected is not None and _is_expected(element, expected):
-        # The point holds the control the id resolved to.  What the model
-        # called it is a description and may be wrong in every word; the DOM
-        # answer is not a description.
-        return ""
+    if expected is not None:
+        if _is_expected(element, expected):
+            # The point holds the control the id resolved to, or a mapped
+            # descendant inside it. The model's wording cannot override that
+            # live DOM identity.
+            return ""
+        return (
+            f"click was not performed: ({x:g}, {y:g}) is over "
+            f"{_describe(element)}, not the mapped control "
+            f"{_describe(expected)}"
+        )
 
     role = str(element.get("role") or "").lower()
     target_words = _tokens(target)
