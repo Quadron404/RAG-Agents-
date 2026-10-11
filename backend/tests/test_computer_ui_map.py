@@ -1396,5 +1396,104 @@ class TheComposersEditorAndSubmitButtonAreDistinctEntries(unittest.TestCase):
         self.assertTrue(editor["in_editor_region"])
 
 
+class ASidebarLinkAndAComposerShareAName(unittest.TestCase):
+    """The live failure, as a page: a sidebar link named "Post" and a composer
+    whose text field and publish button carry the same name.
+
+    Before, the button never reached the map.  The page's background crowded it
+    out because the region the agent computed around the composer stopped short
+    of the button, so it was never marked `with_editor` and had no claim on a
+    slot; the model pressed the same-named link instead and nothing published.
+    The map must now carry both controls, and must say where each lives -- read
+    from the page's own roles, landmarks and editor region -- so the model can
+    tell the link that navigates from the button that submits.
+    """
+
+    def generic_page(self) -> Dict[str, Any]:
+        # A minimal, generic page: a sidebar of named links, a text editor, and
+        # a publish button beside it that shares the sidebar link's name.
+        # Nothing here is site-specific -- roles, names, and the editor region
+        # the agent reports are all a platform would give for any page.
+        return raw_map(
+            [
+                visible("link", "Home", 20, 120, 90, 24, tag="a",
+                        context="navigation"),
+                visible("link", "Post", 20, 160, 90, 24, tag="a",
+                        context="navigation"),
+                visible("textbox", "Post text", 420, 120, 320, 100,
+                        tag="textarea", editable=True,
+                        in_editor_region=True, context="active composer"),
+                # A secondary composer control: in the region, but not its
+                # action, so it is not the submit and must not read as one.
+                visible("button", "Add image", 420, 240, 28, 28,
+                        in_editor_region=True, context="active composer"),
+                visible("button", "Post", 760, 200, 80, 36,
+                        in_editor_region=True, with_editor=True,
+                        context="active composer"),
+            ],
+            [],
+        )
+
+    def test_the_named_link_and_the_named_button_both_reach_the_map(self):
+        mapped = build_ui_map(self.generic_page())
+        posts = [e for e in mapped["visible"] if e["name"] == "Post"]
+        # Same name, two controls, two roles, two ids: neither hid the other.
+        self.assertEqual({e["role"] for e in posts}, {"link", "button"})
+        self.assertEqual(len({e["id"] for e in posts}), 2)
+        button = next(e for e in posts if e["role"] == "button")
+        link = next(e for e in posts if e["role"] == "link")
+        # The button is the composer's action; the link is not.
+        self.assertTrue(button["with_editor"])
+        self.assertFalse(link.get("with_editor"))
+        self.assertEqual(link["context"], "navigation")
+        self.assertEqual(button["context"], "active composer")
+
+    def test_the_map_says_which_named_control_is_the_composers(self):
+        mapped = build_ui_map(self.generic_page())
+        text = format_ui_map(mapped)
+        posts = {e["role"]: e for e in mapped["visible"] if e["name"] == "Post"}
+        # Both lines are named back by their own id and role...
+        self.assertIn(f'[{posts["link"]["id"]}] link "Post"', text)
+        self.assertIn(f'[{posts["button"]["id"]}] button "Post"', text)
+        # ...and the shared name is disambiguated by where each one lives, with
+        # the composer's button additionally stating what it does.
+        self.assertIn("Context: navigation", text)
+        self.assertIn("Context: active composer", text)
+        self.assertIn("Relationship: Associated with the editor", text)
+        self.assertIn("Action: Submit", text)
+        self.assertIn("State: Enabled", text)
+
+    def test_a_secondary_composer_control_stays_one_line(self):
+        # The composer's own attach/emoji buttons share its region but do not
+        # submit it.  They must not be dressed up as the submit -- only the one
+        # control that publishes says so -- so the block stays small and honest.
+        mapped = build_ui_map(self.generic_page())
+        toolbar = next(e for e in mapped["visible"] if e["name"] == "Add image")
+        self.assertTrue(toolbar["in_editor_region"])
+        self.assertFalse(toolbar.get("with_editor"))
+        lines = format_ui_map(mapped).splitlines()
+        at = next(i for i, line in enumerate(lines) if f'[{toolbar["id"]}]' in line)
+        # The very next line is another entry, not a detail line for this one.
+        self.assertFalse(lines[at + 1].startswith("     "))
+
+    def test_the_publish_button_survives_a_page_that_crowds_the_cap(self):
+        # The exact crowd-out: a full page of named background links ahead of
+        # the composer.  The button must still be mapped, because it is the
+        # whole reason the text field beside it is worth showing at all.
+        entries = [
+            visible("link", f"Background {i}", 10, 10 + i * 12, 800, 40, tag="a")
+            for i in range(25)
+        ]
+        entries.extend(self.generic_page()["visible"])
+        mapped = build_ui_map(raw_map(entries, []))
+        buttons = [
+            e for e in mapped["visible"]
+            if e["name"] == "Post" and e["role"] == "button"
+        ]
+        self.assertEqual(len(buttons), 1)
+        self.assertTrue(buttons[0]["with_editor"])
+        self.assertIn(f'[{buttons[0]["id"]}] button "Post"', format_ui_map(mapped))
+
+
 if __name__ == "__main__":
     unittest.main()

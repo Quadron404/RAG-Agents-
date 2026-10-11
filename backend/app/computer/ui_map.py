@@ -392,6 +392,12 @@ def _entry(raw: Any) -> Optional[Dict[str, Any]]:
         # on the page.  These ride the same tiering as `in_dialog`.
         "in_editor_region": bool(raw.get("in_editor_region")),
         "with_editor": bool(raw.get("with_editor")),
+        # Where the page says this control lives -- a landmark, a dialog, the
+        # composer its text field belongs to.  It never decides an id and never
+        # takes part in identity; it is what lets the model tell two controls
+        # with the same name apart ("Post" the nav link, "Post" the composer's
+        # submit) when the map lists both.
+        "context": _clean(raw.get("context"), 48),
     }
     # The token the page's own DOM stamped on this element, when it minted one.
     # It is the map's strongest statement of identity -- two elements share a
@@ -590,6 +596,36 @@ def _offscreen_text(entry: Dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _context_lines(entry: Dict[str, Any], duplicated: bool) -> List[str]:
+    """The indented detail lines for one entry, or none when it is plain.
+
+    A control earns them when its name alone does not place it: it is the action
+    that submits an editor, it is that editor, or its name is shared with another
+    mapped control -- the sidebar link "Post" and the composer's button "Post"
+    being exactly the pair a reader has to tell apart.  An ordinary, uniquely
+    named control -- including a composer's own attach/emoji toolbar, which
+    shares the region but neither is the field nor submits it -- stays one line
+    so the block stays small, and relationship, action and state are stated only
+    for a composer's submit, the one control whose role in the page a name
+    cannot carry.
+
+    Nothing here invents a fact: `context`, `with_editor`, `in_editor_region`
+    and `disabled` all arrive from the page's own DOM and accessibility, and an
+    entry that carries none of them adds no line at all.
+    """
+    lines: List[str] = []
+    context = entry.get("context") or ""
+    editor_itself = entry.get("in_editor_region") and entry.get("editable")
+    if context and (duplicated or entry.get("with_editor") or editor_itself):
+        lines.append(f"     Context: {context}")
+    if entry.get("with_editor"):
+        lines.append("     Relationship: Associated with the editor")
+        lines.append("     Action: Submit")
+        state = "Disabled" if entry.get("disabled") else "Enabled"
+        lines.append(f"     State: {state}")
+    return lines
+
+
 def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
     """The block the model reads, or "" when there is no map to read.
 
@@ -612,6 +648,15 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
             "from the screenshot."
         )
 
+    # A name that two mapped controls share is the one case the name cannot
+    # settle, so every entry carrying it is told where it lives.  Counted over
+    # the whole map, visible and offscreen alike, because the two controls the
+    # model must choose between can sit on either side of the fold.
+    name_counts: Dict[str, int] = {}
+    for entry in list(visible) + list(offscreen):
+        if isinstance(entry, dict) and entry.get("name"):
+            name_counts[entry["name"]] = name_counts.get(entry["name"], 0) + 1
+
     lines = [
         'UI map (live DOM): click with element_id (e.g. "V3"); an id is this '
         "map's only. Boxes are screenshot pixels; offscreen entries have no "
@@ -633,6 +678,9 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
         if entry.get("disabled"):
             line += " disabled"
         lines.append(line)
+        lines.extend(
+            _context_lines(entry, name_counts.get(entry.get("name") or "", 0) > 1)
+        )
     for entry in offscreen:
         line = f'[{entry.get("id", "?")}] {_label(entry)}'
         display_name = entry.get("name") or entry.get("text")
@@ -642,6 +690,9 @@ def format_ui_map(ui_map: Optional[Dict[str, Any]]) -> str:
         if where:
             line += f" {where}"
         lines.append(line)
+        lines.extend(
+            _context_lines(entry, name_counts.get(entry.get("name") or "", 0) > 1)
+        )
     return "\n".join(lines)
 
 

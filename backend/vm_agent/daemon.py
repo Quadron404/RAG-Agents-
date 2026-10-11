@@ -1309,19 +1309,66 @@ _UI_MAP_JS = r"""(function () {
   // button that submits it never made the map, so the model pressed a sidebar
   // link named "Post" instead.
   //
-  // A region is the nearest enclosing FORM (or ARIA form/search region), or --
-  // when there is no such element -- the largest ancestor that still holds a
-  // composer-sized cluster of actionable controls (at most eight).  Walking up
-  // stops at BODY/HTML, because the page itself is not a region: everything on
-  // it would otherwise share one, which is the crowd-out this exists to
-  // prevent.  Nothing here is site-specific: FORM and role=form/search are
-  // platform facts, and the size bound is a count, not a selector.
-  var REGION_MAX_ACTIONS = 8;
+  // A region is the nearest enclosing FORM (or ARIA form/search region); when
+  // there is no such element it is the nearest ancestor that holds the editor
+  // *and* at least one other actionable control -- the submit action a real
+  // composer always carries beside its text field.  Walking up stops at
+  // BODY/HTML, because the page itself is not a region: everything on it would
+  // otherwise share one, which is the crowd-out this exists to prevent.  It
+  // also stops at the first ancestor that holds a *second* editor, so two
+  // distinct fields never merge into one region.
+  //
+  // The size bound the previous version used -- "the largest ancestor with at
+  // most eight actions" -- was the live failure: a real composer's toolbar
+  // pushes the container that also holds the submit button over that count, so
+  // the walk returned a narrow wrapper around the editor alone.  The submit
+  // button then shared no region with the field, was never marked `with_editor`
+  // and was crowded out of the map by the page's background furniture while the
+  // sidebar link named after it survived.  Nothing here is site-specific: FORM
+  // and role=form/search are platform facts, and "another actionable control"
+  // is a count of controls, not a selector.
   var ACTION_SELECTOR =
     'button, input, select, textarea, a[href], summary, [role], [onclick], ' +
     '[contenteditable="true"], [tabindex]';
-  function actionableCount(node) {
-    try { return node.querySelectorAll(ACTION_SELECTOR).length; } catch (e) { return 0; }
+  var EDITOR_SELECTOR =
+    'textarea, input, [contenteditable="true"], [role="textbox"], ' +
+    '[role="searchbox"], [role="combobox"]';
+  function hasOtherAction(node, editor) {
+    var found = [];
+    try { found = node.querySelectorAll(ACTION_SELECTOR); } catch (e) { return false; }
+    for (var i = 0; i < found.length; i++) {
+      if (found[i] !== editor && actionable(found[i])) return true;
+    }
+    return false;
+  }
+  function hasOtherEditor(node, editor) {
+    var found = [];
+    try { found = node.querySelectorAll(EDITOR_SELECTOR); } catch (e) { return false; }
+    for (var i = 0; i < found.length; i++) {
+      if (found[i] !== editor && editorOf(found[i])) return true;
+    }
+    return false;
+  }
+  // Whether the control lives in a toolbar/menu -- a cluster of secondary
+  // actions a composer carries beside its text field (attach, emoji, schedule).
+  // Those belong to the composer but do not submit it, so they must not be
+  // mistaken for the field's action: a toolbar can hold seven controls, and
+  // promoting all of them would flood the map while the one button that
+  // publishes gets lost among them.  A toolbar is an ARIA fact, not a site
+  // selector, so this holds on any page that marks one.
+  function insideToolbar(el) {
+    var cur = parentOf(el);
+    var guard = 0;
+    while (cur && guard++ < 60) {
+      var tag = (cur.tagName || "").toUpperCase();
+      if (tag === "BODY" || tag === "HTML") break;
+      if (tag === "MENU") return true;
+      var r = "";
+      try { r = (H.attr(cur, "role") || "").toLowerCase(); } catch (e) {}
+      if (r === "toolbar" || r === "menubar" || r === "menu") return true;
+      cur = parentOf(cur);
+    }
+    return false;
   }
   function regionContainer(editor) {
     var node = parentOf(editor);
@@ -1333,8 +1380,9 @@ _UI_MAP_JS = r"""(function () {
       try { r = (H.attr(node, "role") || "").toLowerCase(); } catch (e) {}
       if (tag === "FORM" || r === "form" || r === "search") return node;
       if (tag === "BODY" || tag === "HTML") break;
-      if (actionableCount(node) > REGION_MAX_ACTIONS) break;
+      if (hasOtherEditor(node, editor)) break;
       region = node;
+      if (hasOtherAction(node, editor)) break;
       node = parentOf(node);
     }
     return region;
@@ -1356,6 +1404,31 @@ _UI_MAP_JS = r"""(function () {
       }
     }
     return false;
+  }
+  // Where a control lives on the page, in the page's own words: a text field's
+  // region is the composer, everything else is named by its nearest ARIA
+  // landmark (a `<nav>`, `<main>`, `<form>`, a dialog ...).  This is the
+  // accessibility evidence that lets two controls with the same name -- the
+  // sidebar link "Post" and the composer's button "Post" -- be told apart when
+  // the map lists both.
+  function contextOf(el) {
+    if (inEditorRegion(el)) return "active composer";
+    var cur = el;
+    for (var i = 0; cur && i < 30; i++) {
+      var tag = (cur.tagName || "").toUpperCase();
+      var r = "";
+      try { r = (H.attr(cur, "role") || "").toLowerCase(); } catch (e) {}
+      if (tag === "NAV" || r === "navigation") return "navigation";
+      if (tag === "MAIN" || r === "main") return "main content";
+      if (tag === "ASIDE" || r === "complementary") return "sidebar";
+      if (tag === "HEADER" || r === "banner") return "header";
+      if (tag === "FOOTER" || r === "contentinfo") return "footer";
+      if (tag === "FORM" || r === "form") return "form";
+      if (r === "search") return "search";
+      if (r === "dialog" || r === "alertdialog") return "dialog";
+      cur = parentOf(cur);
+    }
+    return "";
   }
   var nodes = [];
   try {
@@ -1412,10 +1485,15 @@ _UI_MAP_JS = r"""(function () {
         disabled: (el.disabled === true || H.attr(el, "aria-disabled") === "true"),
         in_dialog: !!(DIALOG && insideDialog(el, DIALOG)),
         // Whether this control shares its region with a text field, and -- when
-        // it is not itself that field -- is therefore a candidate action for the
-        // composer: a submit button beside the box the model is meant to fill.
+        // it is not itself that field and not a secondary toolbar action -- is
+        // therefore the action that submits the composer: the button beside the
+        // box the model is meant to fill, as opposed to the attach/emoji pair.
         in_editor_region: inEditorRegion(el),
-        with_editor: inEditorRegion(el) && !editorOf(el)
+        with_editor: inEditorRegion(el) && !editorOf(el) && !insideToolbar(el),
+        // Where the control lives, read from the page's own landmarks and the
+        // editor region above.  Two controls named "Post" -- a nav link and a
+        // composer's submit -- are told apart by this, not by their role alone.
+        context: contextOf(el)
       };
       if (clip) {
         var vbox = [Math.max(raw[0], clip[0]), Math.max(raw[1], clip[1]),
