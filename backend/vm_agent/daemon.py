@@ -1311,12 +1311,13 @@ _UI_MAP_JS = r"""(function () {
   //
   // A region is the nearest enclosing FORM (or ARIA form/search region); when
   // there is no such element it is the nearest ancestor that holds the editor
-  // *and* at least one other actionable control -- the submit action a real
-  // composer always carries beside its text field.  Walking up stops at
-  // BODY/HTML, because the page itself is not a region: everything on it would
-  // otherwise share one, which is the crowd-out this exists to prevent.  It
-  // also stops at the first ancestor that holds a *second* editor, so two
-  // distinct fields never merge into one region.
+  // *and* at least one other actionable control that is not a secondary
+  // toolbar action -- the submit action a real composer always carries beside
+  // its text field.  Walking up stops at BODY/HTML, because the page itself is
+  // not a region: everything on it would otherwise share one, which is the
+  // crowd-out this exists to prevent.  It also stops at the first ancestor that
+  // holds a *second* editor, so two distinct fields never merge into one
+  // region.
   //
   // The size bound the previous version used -- "the largest ancestor with at
   // most eight actions" -- was the live failure: a real composer's toolbar
@@ -1327,6 +1328,15 @@ _UI_MAP_JS = r"""(function () {
   // sidebar link named after it survived.  Nothing here is site-specific: FORM
   // and role=form/search are platform facts, and "another actionable control"
   // is a count of controls, not a selector.
+  //
+  // A toolbar action must not count as that submit either.  A composer's
+  // attach/emoji controls often sit in the editor's own immediate wrapper, so
+  // stopping at the first wrapper holding *any* action stopped at the toolbar
+  // and left the publish button -- which lives a level up, beside the field --
+  // outside the region.  Secondary toolbar controls are therefore skipped here,
+  // exactly as `insideToolbar` skips them when `with_editor` is assigned, so
+  // the walk climbs past the toolbar to the ancestor that really holds the
+  // submit.
   var ACTION_SELECTOR =
     'button, input, select, textarea, a[href], summary, [role], [onclick], ' +
     '[contenteditable="true"], [tabindex]';
@@ -1337,7 +1347,9 @@ _UI_MAP_JS = r"""(function () {
     var found = [];
     try { found = node.querySelectorAll(ACTION_SELECTOR); } catch (e) { return false; }
     for (var i = 0; i < found.length; i++) {
-      if (found[i] !== editor && actionable(found[i])) return true;
+      if (found[i] === editor) continue;
+      if (insideToolbar(found[i])) continue;
+      if (actionable(found[i])) return true;
     }
     return false;
   }
