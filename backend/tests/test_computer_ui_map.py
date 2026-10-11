@@ -865,6 +865,9 @@ class PageComputer:
         self.uimap_reads = 0
         self.uimap_broken = False
         self.hit_element: Dict[str, Any] = dict(HIT_ELEMENT)
+        # Set False to make a screenshot arrive on a grid the X display does
+        # not share, the way the agent reports `geometry_matches: False`.
+        self.screenshot_geometry_matches = True
 
     async def state(self):
         return {"ok": True, "url": self.url, "focus": None, "dialog": None}
@@ -936,6 +939,7 @@ class PageComputer:
 
     async def screenshot(self):
         self.screens += 1
+        self.last_geometry_matches = self.screenshot_geometry_matches
         return f"SCREENSHOT-{self.screens}", DISPLAY_W, DISPLAY_H
 
 
@@ -1225,6 +1229,171 @@ class AnElementIdReachesTheMachine(unittest.TestCase):
         self.assertTrue(any(m.images for m in provider.calls[2]))
         # The note described exactly one request.
         self.assertEqual(run.refusal_note, "")
+
+
+class ACoordinateClickCanBecomeAnElementClick(unittest.TestCase):
+    """Fix 1+3: a coordinate click whose target names one control the map holds
+    is resolved by id in the executor, so the model's guessed pixel never
+    decides where the click lands; a target the map cannot vouch for keeps the
+    coordinate path it has always had."""
+
+    def test_a_coordinate_click_targeting_one_control_uses_the_maps_resolved_point(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("screenshot", {}, "I looked at the page."),
+            # The model guessed (30, 40) -- a pixel that would land in the
+            # wrong place -- while the map names the Send button uniquely.
+            call("click", {"x": 30, "y": 40, "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        run = asyncio.run(finish(runner, TASK))
+
+        # The click became an element click at V1's resolved point: the model's
+        # guess never reached the pointer.
+        self.assertEqual(runner.computer.moves, [(140, 120)])
+        self.assertEqual(runner.computer.actions[-1], ("click", 140, 120))
+        self.assertEqual(run.trace[2].command,
+                         {"type": "click", "x": 30.0, "y": 40.0})
+        execution = run.trace[2].execution
+        self.assertEqual(execution["outcome"], "executed")
+        self.assertEqual(execution["click_element_id"], "V1")
+        self.assertTrue(execution["click_target_verified"])
+        # The trace carries the exact map the request was shown.
+        self.assertIn("UI map (live DOM)", execution["click_ui_map"])
+        self.assertIn('[V1] button "Send"', execution["click_ui_map"])
+
+    def test_a_target_no_map_entry_names_falls_back_to_the_coordinate_path(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("screenshot", {}, "I looked at the page."),
+            # No map could be read, so no control can be resolved by the words;
+            # the coordinate path still verifies the point before pressing.
+            call("click", {"x": 100, "y": 100, "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        runner.computer.uimap_broken = True
+        run = asyncio.run(finish(runner, TASK))
+
+        # No map means no auto-resolution; the hit test verified the point
+        # served the Send button, so the coordinate the model chose landed.
+        self.assertEqual(runner.computer.moves, [(100, 100)])
+        self.assertEqual(runner.computer.actions[-1], ("click", 100, 100))
+        execution = run.trace[2].execution
+        self.assertEqual(execution["outcome"], "executed")
+        self.assertIsNone(execution.get("click_element_id"))
+        self.assertTrue(execution["click_target_verified"])
+        self.assertEqual(execution["click_ui_map"], "")
+
+    def test_an_untrusted_grid_refuses_a_coordinate_click(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("screenshot", {}, "I looked at the page."),
+            # No map could be read (so nothing to resolve by id) and the
+            # screenshot arrived on a grid the display does not share: the
+            # coordinate would land off by a ratio, and the executor refuses it.
+            call("click", {"x": 100, "y": 100, "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        runner.computer.uimap_broken = True
+        runner.computer.screenshot_geometry_matches = False
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertFalse(any(a[0] == "click" for a in runner.computer.actions))
+        execution = run.trace[2].execution
+        self.assertEqual(execution["outcome"], "refused")
+        self.assertTrue(execution["click_rejected"])
+        self.assertIn("grid does not match the display", execution["error"])
+
+    def test_an_element_id_click_ignores_an_untrusted_grid(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("screenshot", {}, "I looked at the page."),
+            # The id's point is resolved on the display grid, not read off the
+            # image, so a mismatched screenshot cannot move it.
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        runner.computer.screenshot_geometry_matches = False
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [(140, 120)])
+        self.assertEqual(run.trace[2].execution["outcome"], "executed")
+
+
+class AnElementAndItsContainerAreDifferentTargets(unittest.TestCase):
+    """Fix 6: a page that serves up the wrapping container at the button's
+    point (the live failure shape) must not clear the button's click.  The
+    button is accepted at its own point; the container around it is refused as
+    a different target."""
+
+    def test_the_button_is_accepted_at_its_own_point(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [(140, 120)])
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "executed")
+        self.assertEqual(execution["click_expected_dom_id"], 42)
+        self.assertEqual(execution["click_hit_dom_id"], 42)
+
+    def test_the_container_around_the_button_is_refused(self):
+        runner, provider = make_runner([
+            call("navigate", {"url": "https://example.test/page"}, "I opened the page."),
+            call("click", {"element_id": "V1", "target": "Send button"},
+                 "I clicked Send."),
+            call("done", {"message": "finished"}, "The task is finished."),
+        ])
+        # Same resolved box, but the page reports the wrapping `div "Everyone"`
+        # there -- the container a name-based identity would grab -- while the
+        # click asked for the button.
+        runner.computer.hit_element = {
+            "role": "", "name": "Everyone", "tag": "div",
+            "text": "", "context": "", "dom_id": 7,
+        }
+        run = asyncio.run(finish(runner, TASK))
+
+        self.assertEqual(runner.computer.moves, [])
+        self.assertFalse(any(a[0] == "click" for a in runner.computer.actions))
+        execution = run.trace[1].execution
+        self.assertEqual(execution["outcome"], "refused")
+        self.assertIn("Everyone", execution["error"])
+        self.assertEqual(execution["click_expected_dom_id"], 42)
+        self.assertEqual(execution["click_hit_dom_id"], 7)
+
+
+class TheComposersEditorAndSubmitButtonAreDistinctEntries(unittest.TestCase):
+    """Fix 2: entry discovery keeps the editor and its submit button apart -- a
+    distinct id, actor role, and box for each -- so the submit button is a
+    clickable control of its own, not a feature of the text field."""
+
+    def test_the_editor_and_its_submit_button_each_map_their_own_entry(self):
+        raw = raw_map([
+            visible("textbox", "Write a message", 100, 100, 300, 90,
+                    tag="textarea", editable=True, in_editor_region=True),
+            visible("button", "Post", 100, 200, 76, 36,
+                    in_editor_region=True, with_editor=True),
+        ], [])
+        mapped = build_ui_map(raw)
+        by_id = {entry["id"]: entry for entry in mapped["visible"]}
+        editors = [e for e in by_id.values() if e["role"] == "textbox"]
+        buttons = [e for e in by_id.values() if e["role"] == "button"]
+        self.assertEqual(len(editors), 1)
+        self.assertEqual(len(buttons), 1)
+        editor, button = editors[0], buttons[0]
+        self.assertNotEqual(editor["id"], button["id"])
+        self.assertNotEqual(editor["box"], button["box"])
+        self.assertEqual(button["name"], "Post")
+        self.assertTrue(button["with_editor"])
+        self.assertTrue(editor["in_editor_region"])
 
 
 if __name__ == "__main__":

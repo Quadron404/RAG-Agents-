@@ -190,3 +190,4 @@ usually faster than reading logs by hand.
 | `/display/status` says `vnc: true` but nothing is viewable | `vnc` being true only means RFB is listening. Check `websockify` in the same payload — that was the exact shape of the 6080 failure. |
 | Chrome logs out every rebuild | `CHROME_PROFILE` is pointing off the persistent volume. |
 | Blank screen, everything "up" | Chrome may not have started. Check `chromium.log` and `/display/status`. |
+| The agent still behaves like the old code after a `git pull` | The running daemon was started before the pull, and a pull never reaches an already-running process. Confirm the checkout is the commit you expect (`git rev-parse HEAD`) and that nothing under `backend/app/computer/` changed since the agent started, then restart it with `bash codespace/boot.sh` (or let `supervise.sh` relaunch it). Until the process restarts, the fix is on disk but not in the running agent. |

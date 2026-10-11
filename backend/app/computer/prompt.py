@@ -65,8 +65,10 @@ COMPUTER_CONTROL_PROMPT = (
     "so do not call stop afterward. "
     "screenshot() only when you must see the screen. A refused call means "
     "nothing was executed: reply with one corrected call, never the same one. "
-    "Prefer element_id from the UI map; use x/y only when there is no usable "
-    "element. Offscreen entries: scroll first, then the map shows them."
+    "Prefer element_id from the UI map, or a target naming one control the map "
+    "holds (the executor resolves it by id); use x/y only when the map has no "
+    "control your target names. Offscreen entries: scroll first, then the map "
+    "shows them."
 )
 
 #: Added to the user turn when the model has taken a screenshot, and only then.

@@ -80,6 +80,14 @@ class RemoteComputer:
         # How long a state-changing action may take to stop changing the page,
         # measured by polling the page itself rather than by a fixed sleep.
         self.state_settle_ms = state_settle_ms
+        # Whether the most recent screenshot's grid matched the X display the
+        # click acts on.  Set by `screenshot` from the agent's own comparison;
+        # True when the agent did not report a mismatch.  Coordinates are only
+        # meaningful in the grid the image was measured in, so a False here
+        # means a coordinate click would be off by a ratio the runner refuses
+        # (an element-id click is unaffected: its point is resolved on the
+        # display grid, not the image grid).
+        self.last_geometry_matches = True
 
     async def _post(
         self, path: str, payload: Dict[str, Any], timeout: float = 30.0
@@ -295,6 +303,10 @@ class RemoteComputer:
         # The agent compares the image against the X display and says so here.
         # A mismatch is not fatal -- the run continues on the image's own grid --
         # but it is logged, because it means every coordinate is off by a ratio.
+        # The verdict is kept for the runner too, which refuses a coordinate
+        # click on an untrusted grid while an element-id click still resolves on
+        # the display grid and runs.
+        self.last_geometry_matches = result.get("geometry_matches", True) is not False
         if result.get("geometry_matches") is False:
             log.warning(
                 "computer: screenshot is %dx%d but the X display is %sx%s; "

@@ -638,6 +638,14 @@ class ComputerRun:
     #: record that the model ever saw a screen at all.
     seen_width: int = 0
     seen_height: int = 0
+    #: Whether the last screenshot the model saw was measured on a grid that
+    #: does not match the X display the click would act on.  False, when the
+    #: agent reported a mismatch: every coordinate read from that image is off
+    #: by a ratio, so a coordinate click is refused until a trustworthy frame
+    #: exists, while an element-id click still resolves its point on the display
+    #: grid and is unaffected.  Reset with `seen_width` whenever the frame is
+    #: dropped as stale.
+    geometry_untrusted: bool = False
     #: Cumulative token spend, summed from what the API reported per request.
     #: Empty means no provider reported usage, which is reported as such rather
     #: than as zero: a total of zero is a claim, and "nobody told us" is a fact.
@@ -1302,6 +1310,56 @@ class ComputerRunner:
         run.ui_map_text = format_ui_map(ui_map)
         run.ui_map_page = page_identity(state)
 
+    def _unique_target_entry(self, run: ComputerRun, target: str) -> Optional[Dict[str, Any]]:
+        """The one visible map entry this target unambiguously names, or None.
+
+        A coordinate click still carries a `target` -- a few words naming the
+        control to press.  When the current UI map holds exactly one visible
+        control that the hit-test's own matching accepts for those words, the
+        executor resolves that entry by id instead of trusting the model's
+        guessed pixel: the map already knows the button, so the click goes
+        through the same fresh-read, verify-token path an explicit id gets, and
+        the model's estimate is never the thing that lands.
+
+        The matching is `target_mismatch`'s own, run against the entry standing
+        in for the page's answer at its own point, so the pick the executor
+        makes and the check the click later passes can never contradict each
+        other over what the words name.  More than one match means the words
+        are ambiguous, none means they name nothing the map can vouch for --
+        both are "not a unique target", and the coordinate path keeps its
+        ordinary hit-test check instead of this one.
+        """
+        cleaned = clean_target(target)
+        if not cleaned or not isinstance(run.ui_map, dict):
+            return None
+        matches: List[Dict[str, Any]] = []
+        for entry in run.ui_map.get("visible") or []:
+            if not isinstance(entry, dict) or "box" not in entry:
+                continue
+            if entry.get("disabled"):
+                continue
+            fake_hit = {"ok": True, "in_page": True, "element": dict(entry)}
+            if not target_mismatch(cleaned, fake_hit, 0, 0):
+                matches.append(entry)
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def _click_ui_context(self, run: ComputerRun) -> Dict[str, Any]:
+        """The exact UI map this request carried, as click-trace facts.
+
+        Every click record -- executed or refused -- carries the block the
+        model was shown and the page identity that block was read on, so a
+        click that missed its target can be checked against the map the model
+        was actually looking at rather than a map refreshed since.  This is
+        the audit half of the click: the trace says what the model was told,
+        what it asked for, and what the live page answered.
+        """
+        return {
+            "click_ui_map": run.ui_map_text,
+            "click_ui_map_page": run.ui_map_page,
+        }
+
     async def _resolve_element(self, run: ComputerRun, element_id: str) -> Any:
         """Where to click for this UI-map id, and the control that is there.
 
@@ -1430,6 +1488,7 @@ class ComputerRunner:
         run.pending_screenshot_call_id = ""
         run.seen_width = 0
         run.seen_height = 0
+        run.geometry_untrusted = False
         run.screenshot_url = ""
         run.screenshot_frame = ""
 
@@ -1793,6 +1852,9 @@ class ComputerRunner:
         run.pending_screenshot_call_id = (turn.tool_call_id if turn else "") or "screenshot"
         run.seen_width = width
         run.seen_height = height
+        run.geometry_untrusted = getattr(
+            self.computer, "last_geometry_matches", True
+        ) is False
         run.screenshot_url = run.last_url
         run.screenshot_frame = run.frame_identity
         # The image the *next* request will carry, stored so the inspector can
@@ -1844,6 +1906,9 @@ class ComputerRunner:
         run.pending_screenshot_call_id = "screenshot"
         run.seen_width = width
         run.seen_height = height
+        run.geometry_untrusted = getattr(
+            self.computer, "last_geometry_matches", True
+        ) is False
         run.screenshot_url = run.last_url
         run.screenshot_frame = run.frame_identity
         self._record(
@@ -1923,6 +1988,11 @@ class ComputerRunner:
                     "click_hit_dom_id": pointer.get("click_hit_dom_id"),
                     "click_hit_point": pointer.get("click_hit_point"),
                     "click_hit_mapping": pointer.get("click_hit_mapping"),
+                    # The exact UI map this request carried and the page it was
+                    # read on, so a click that missed can be checked against
+                    # what the model was actually looking at.
+                    "click_ui_map": pointer.get("click_ui_map"),
+                    "click_ui_map_page": pointer.get("click_ui_map_page"),
                 }
             )
             if pointer.get("click_element_id"):
@@ -2583,11 +2653,20 @@ class ComputerRunner:
                 # reason not to click it is decided here, with no pointer
                 # movement and no button event behind it.
                 #
-                # The control the id resolved to travels with the point, so
-                # the verification below can ask the stronger question -- "is
-                # this the control the map named?" -- and only fall back to
-                # the model's wording when it cannot answer.
+                # A click that named no id is resolved here too, when its
+                # target names exactly one control on the current map: the
+                # executor prefers the control the map knows over a coordinate
+                # the model guessed, and only a target the map cannot vouch
+                # for falls back to the coordinate path.  The control the id
+                # resolved to travels with the point, so the verification
+                # below can ask the stronger question -- "is this the control
+                # the map named?" -- and only fall back to the model's wording
+                # when it cannot answer.
                 resolved_control: Optional[Dict[str, Any]] = None
+                if not command.element_id and run.ui_map:
+                    entry = self._unique_target_entry(run, command.target)
+                    if entry is not None:
+                        command.element_id = entry.get("id", "")
                 if command.element_id:
                     resolved = await self._resolve_element(run, command.element_id)
                     if isinstance(resolved, str):
@@ -2616,6 +2695,7 @@ class ComputerRunner:
                                 "click_element_id": command.element_id,
                                 "click_rejected": True,
                                 "click_target": clean_target(command.target or ""),
+                                **self._click_ui_context(run),
                             },
                         )
                         self._mark_refusal(run, detail)
@@ -2624,6 +2704,48 @@ class ComputerRunner:
                         return False
                     point, resolved_control = resolved
                     command.x, command.y = float(point[0]), float(point[1])
+                elif run.geometry_untrusted:
+                    # A coordinate is only meaningful in the grid the image was
+                    # measured in, and the image the model looked at does not
+                    # match the X display the click would act on: every point
+                    # read from that picture is off by a ratio.  The element-id
+                    # path is the remedy, because its point is resolved on the
+                    # display grid rather than read out of the picture -- so
+                    # this refuses the guess instead of landing it on the wrong
+                    # pixel and calling that a click.
+                    detail = (
+                        "the screenshot's grid does not match the display, so "
+                        "coordinates from it would be off by a ratio; use an "
+                        "element_id from the UI map (the executor resolves its "
+                        "point on the real display)"
+                    )
+                    run.last_action = {
+                        "tool": command.type,
+                        "status": "FAILED",
+                        "detail": detail,
+                        "executed": False,
+                        "target_verified": False,
+                        "post_state_changed": False,
+                    }
+                    self._remember(run, command, "FAILED", detail)
+                    self._record(
+                        run,
+                        command.to_json(),
+                        "",
+                        "failed",
+                        error=detail,
+                        trace={
+                            "click_target": clean_target(command.target or ""),
+                            "click_rejected": True,
+                            "click_hit": "",
+                            "click_reason": "untrusted_grid",
+                            **self._click_ui_context(run),
+                        },
+                    )
+                    self._mark_refusal(run, detail)
+                    self._mark_not_progress(run, command)
+                    run.message = detail
+                    return False
                 # Four phases, in the order that keeps a wrong click from ever
                 # reaching the machine.  Nothing here knows or cares which site
                 # it is: the rules are ARIA roles and accessible names, so they
@@ -2646,6 +2768,11 @@ class ComputerRunner:
                 #    were verified a moment ago, and nothing may reinterpret
                 #    them between the verification and the click.
                 target = clean_target(command.target or "")
+                log.info(
+                    "computer: click request target=%r element_id=%r\n%s",
+                    target, command.element_id,
+                    run.ui_map_text or "(no UI map)",
+                )
                 hit = await self._hit(command.x, command.y)
                 reason = target_mismatch(target, hit, command.x, command.y,
                                          resolved_control)
@@ -2677,6 +2804,7 @@ class ComputerRunner:
                             "screen_width": (hit or {}).get("display_width"),
                             "screen_height": (hit or {}).get("display_height"),
                             **_hit_diagnostics(hit, resolved_control),
+                            **self._click_ui_context(run),
                         },
                     )
                     # `_observe_after_action` never runs for a click that was
@@ -2722,6 +2850,7 @@ class ComputerRunner:
                             "pointer_actual_x": int(actual_x),
                             "pointer_actual_y": int(actual_y),
                             **_hit_diagnostics(hit, resolved_control),
+                            **self._click_ui_context(run),
                         },
                     )
                     self._mark_refusal(run, detail, coordinates=True)
@@ -2764,6 +2893,7 @@ class ComputerRunner:
                             "pointer_actual_x": int(actual_x),
                             "pointer_actual_y": int(actual_y),
                             **_hit_diagnostics(live, resolved_control),
+                            **self._click_ui_context(run),
                         },
                     )
                     self._mark_refusal(run, detail, coordinates=True)
@@ -2790,6 +2920,7 @@ class ComputerRunner:
                 # click that landed on the wrong control can be read back even
                 # though it was never refused.
                 trace.update(_hit_diagnostics(live, resolved_control))
+                trace.update(self._click_ui_context(run))
                 if command.element_id:
                     # Present only for an element click, so coordinate traces
                     # stay byte-identical to what they have always been.

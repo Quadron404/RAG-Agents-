@@ -170,7 +170,7 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
         },
         {
             "name": "click",
-            "description": "Click a control. Better: element_id from the UI map (e.g. \"V3\"); the point comes from a fresh read of the page, and a stale, unknown, offscreen or disabled id is refused. Otherwise x/y are pixel coordinates from the latest screenshot. target is required either way: a few words naming the control to press, checked against what is really there before the click, so a mismatch is refused.",
+            "description": "Click a control. Better: element_id from the UI map (e.g. \"V3\"); the point comes from a fresh read of the page, and a stale, unknown, offscreen or disabled id is refused. When no element_id is given, the executor first looks for exactly one control in the current UI map that matches target and clicks that control's live-resolved point -- so a coordinate is only used when the map cannot uniquely name the target. Otherwise x/y are pixel coordinates from the latest screenshot. target is required either way: a few words naming the control to press, checked against what is really there before the click, so a mismatch is refused.",
             "parameters": object_schema(
                 {
                     "element_id": {
@@ -179,15 +179,15 @@ def computer_tools(allowed_names: Optional[List[str]] = None) -> List[Dict[str, 
                     },
                     "x": {
                         "type": "number",
-                        "description": "Pixel x from the latest screenshot (ignored when element_id is given).",
+                        "description": "Pixel x from the latest screenshot (only used when the map names no unique control for target).",
                     },
                     "y": {
                         "type": "number",
-                        "description": "Pixel y from the latest screenshot (ignored when element_id is given).",
+                        "description": "Pixel y from the latest screenshot (only used when the map names no unique control for target).",
                     },
                     "target": {
                         "type": "string",
-                        "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". Checked against what is really at that point before the click.",
+                        "description": "A few words naming the control to press, such as \"Post button\" or \"search field\". The executor preference: resolves to the one map control those words name, or checks the coordinate against what is really at that point before the click.",
                     },
                 },
                 ["target"],
