@@ -797,8 +797,9 @@ def resolve_entry(
     what to do instead.
 
     The order of the checks is the order of what can go wrong, cheapest first
-    -- format, then page, then presence, then identity -- and every one of them
-    fails closed.  The point that comes back is the *fresh* entry's own: the
+    -- format, then page, then presence, then identity, then the fresh
+    geometry -- and every one of them fails closed.  The point that comes back
+    is the *fresh* entry's own: the
     verified point the agent shipped with it when one is present -- a pixel the
     live page resolved to this control, so a control whose box centre is
     painted over is still clicked where a person would land -- and the centre
@@ -845,13 +846,11 @@ def resolve_entry(
             f"{element_id} is not in the UI map sent with this request; take "
             'a screenshot() and use a current id (e.g. "V3") or coordinates'
         )
-    if "box" not in sent:
-        where = _offscreen_text(sent)
-        return None, (
-            f"{element_id} is offscreen ({describe_entry(sent)}"
-            f'{", " + where if where else ""}): scroll first, then the '
-            "refreshed map will show it with a box"
-        )
+    # Where the control *was* when the map was read decides nothing about
+    # where it is now: an entry the request carried as offscreen may have
+    # scrolled into view, or a fresh read may simply measure it correctly, so
+    # it is re-checked against the fresh map like every other entry rather
+    # than refused before the re-read is consulted.
 
     # The map re-read may have renumbered itself (a banner pushed the layout
     # down, a list re-sorted), so the id that named this control in the sent
@@ -892,13 +891,26 @@ def resolve_entry(
             f"({describe_entry(candidate)})"
         )
     if "box" not in candidate:
+        where = _offscreen_text(candidate) or _offscreen_text(sent)
         return None, (
-            f"{element_id} moved offscreen before the click "
-            f"({describe_entry(candidate)}): scroll first, then use the "
+            f"{element_id} is offscreen ({describe_entry(candidate)}"
+            f'{", " + where if where else ""}): scroll first, then use the '
             "refreshed map"
         )
-    if not candidate["box"].get("width") or not candidate["box"].get("height"):
-        return None, f"{element_id} has no usable box on the page right now"
+    box = candidate["box"]
+    if int(box.get("width") or 0) <= 1 or int(box.get("height") or 0) <= 1:
+        # A one-pixel "box" is a point, not a control -- the degenerate
+        # geometry a sub-pixel sliver clamped to the display origin produces,
+        # whose centre is the corner pixel (0, 0).  Clicking it would press the
+        # top-left corner of the screen, so it is refused rather than resolved
+        # into a click nobody asked for.  The verified `point` branch below is
+        # deliberately skipped too: a point on a point-sized control is still a
+        # point.
+        return None, (
+            f"{element_id} is a point, not a clickable control "
+            f"({describe_entry(candidate)}): take a screenshot() and choose an "
+            "element with a real box"
+        )
 
     display_w = 0
     display_h = 0

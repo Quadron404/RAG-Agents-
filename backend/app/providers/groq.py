@@ -10,9 +10,11 @@ from .openai_compat import OpenAICompatProvider
 DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 
 #: Completion ceiling for a single tool call.  Sized to a schema-shaped object
-#: and nothing else: a screenshot annotation or a history line is a sentence,
-#: not an essay, so anything past this is the model narrating instead of acting.
-GROQ_MAX_COMPLETION_TOKENS = 256
+#: plus a closing message: a screenshot annotation or a history line is a
+#: sentence, not an essay, but the terminal `done` call has to survive the
+#: budget whole -- a reply cut by `finish_reason: "length"` ends the run on a
+#: truncated message, so the ceiling is high enough for a complete one.
+GROQ_MAX_COMPLETION_TOKENS = 512
 
 
 class GroqProvider(OpenAICompatProvider):

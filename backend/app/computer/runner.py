@@ -2457,6 +2457,30 @@ class ComputerRunner:
                     continue
                 return None, error
 
+            if (
+                stop_reason == "length"
+                and command.type in ("done", "error", "stop")
+            ):
+                # The provider spent its completion budget and cut the reply
+                # off; the tool call survived because its JSON happened to be
+                # complete while the message it carries was truncated.  A
+                # terminal call ends the run on the model's words, and words
+                # cut mid-sentence must not be the last thing the user reads --
+                # so the call is refused and the model is asked to finish the
+                # reply within budget instead.  Non-terminal calls are not
+                # gated: their arguments parsed as a complete JSON object, so
+                # the action itself is fully specified even if trailing prose
+                # was cut.
+                refusal = (
+                    "your reply was cut off before it finished, so the final "
+                    "message is incomplete; reply again with the complete message"
+                )
+                turn.tool_error = refusal
+                if self._refuse(run, turn, raw, refusal, signature, attempt,
+                                "the model's reply was cut off before it completed"):
+                    continue
+                return None, refusal
+
             if run.simple_task and command.type not in ("screenshot", "done", "error") and run.action_count >= 1:
                 refusal = "simple task already has its one allowed action; finish the task"
                 turn.tool_error = refusal
@@ -2485,6 +2509,32 @@ class ComputerRunner:
                 and run.ui_state_signature
                 and run.state_signature == run.ui_state_signature
             )
+            # A model that has already had two consecutive executor refusals put
+            # before it, against a page that has not moved, is looping rather
+            # than correcting: whatever it offers next on this page is the same
+            # dead end in different words, and the signature check below is
+            # exactly what a reworded repeat escapes.  This bound does not care
+            # what the call is called -- any state-changing call on the unchanged
+            # page after two refusals ends the run instead of paying for the loop
+            # until the step budget.
+            loop_refused = (
+                run.last_action.get("status") == "FAILED"
+                and unchanged_page
+            )
+            if command.type in STATE_CHANGING_TOOLS and loop_refused:
+                refusal = (
+                    "two consecutive actions were refused on a page that has "
+                    "not changed, so this call was not executed; stop repeating "
+                    "actions and read the page state to choose one that can run"
+                )
+                turn.tool_error = refusal
+                self._record(run, {"type": "invalid"}, raw, "refused", error=refusal)
+                run.status = STATUS_ERROR
+                run.message = (
+                    "the model kept repeating actions the executor refused on "
+                    "an unchanged page"
+                )
+                return None, refusal
             if (
                 command.type in STATE_CHANGING_TOOLS
                 # The semantic identity, not the coordinate: a click whose model
@@ -2798,6 +2848,45 @@ class ComputerRunner:
                     target, command.element_id,
                     run.ui_map_text or "(no UI map)",
                 )
+                if int(command.x) == 0 and int(command.y) == 0:
+                    # (0, 0) is the origin of the display, not the control the
+                    # map resolved or the model aimed at: a degenerate 1x1 box
+                    # clamps there, and the browser's own top-left corner is
+                    # never the intended click.  Refuse so a bad resolution can
+                    # never become a real click pressed on the edge of the
+                    # screen.
+                    detail = (
+                        "click was not performed: (0, 0) is the top-left corner "
+                        "of the display, not a usable click point; take a "
+                        "screenshot() and use an element_id or coordinates from it"
+                    )
+                    run.last_hit = ""
+                    run.last_action = {
+                        "tool": command.type,
+                        "status": "FAILED",
+                        "detail": detail,
+                        "executed": False,
+                        "target_verified": False,
+                        "post_state_changed": False,
+                    }
+                    self._remember(run, command, "FAILED", detail)
+                    self._record(
+                        run,
+                        command.to_json(),
+                        "",
+                        "failed",
+                        error=detail,
+                        trace={
+                            "click_target": target,
+                            "click_rejected": True,
+                            "click_hit": "",
+                            **self._click_ui_context(run),
+                        },
+                    )
+                    self._mark_refusal(run, detail, coordinates=True)
+                    self._mark_not_progress(run, command)
+                    run.message = detail
+                    return False
                 hit = await self._hit(command.x, command.y)
                 reason = target_mismatch(target, hit, command.x, command.y,
                                          resolved_control)
@@ -3282,7 +3371,19 @@ def _semantic_action_signature(command: Command, page: str) -> str:
     """
     kind = command.type
     if kind == "click":
-        detail = clean_target(command.target).lower()
+        # The id is the thing the click acts on, so when the call named one it
+        # *is* the signature: the same control reworded ("search box" vs "the
+        # field") is still the same call, and the repeat guard catches it
+        # however the wording wanders.  A corrected coordinate click -- which
+        # has no id -- still signs by its words, so a pixel corrected by forty
+        # stays a new attempt.  A re-render renumbers ids, but the repeat this
+        # guards arrives on the next request against the same map, before the
+        # map is re-read.
+        detail = (
+            f"element:{command.element_id.lower()}"
+            if command.element_id
+            else clean_target(command.target).lower()
+        )
     elif kind == "navigate":
         detail = " ".join(command.url.split()).lower()
     elif kind == "search":
