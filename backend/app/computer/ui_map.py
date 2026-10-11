@@ -453,6 +453,11 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         display_w, display_h = 0, 0
 
+    diagnostics: Dict[str, Any] = dict(raw.get("diagnostics") or {})
+    diagnostics["raw_visible"] = len(raw.get("visible") or []) if isinstance(raw.get("visible"), list) else 0
+    diagnostics["raw_offscreen"] = len(raw.get("offscreen") or []) if isinstance(raw.get("offscreen"), list) else 0
+    diagnostics["visible_invalid_or_non_actionable"] = 0
+    diagnostics["offscreen_invalid_or_non_actionable"] = 0
     visible: List[Tuple[int, Dict[str, Any]]] = []
     raw_visible = raw.get("visible")
     viewport = _viewport(raw.get("viewport"))
@@ -460,8 +465,10 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         for index, candidate in enumerate(raw_visible[:400]):
             entry = _entry(candidate)
             if entry is None or "box" not in entry:
+                diagnostics["visible_invalid_or_non_actionable"] += 1
                 continue
             if not _is_actionable(entry):
+                diagnostics["visible_invalid_or_non_actionable"] += 1
                 continue
             _clamp_box(entry["box"], display_w, display_h)
             visible.append((index, entry))
@@ -472,10 +479,13 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         for index, candidate in enumerate(raw_offscreen[:400]):
             entry = _entry(candidate)
             if entry is None or "box" in entry:
+                diagnostics["offscreen_invalid_or_non_actionable"] += 1
                 continue
             if not _is_actionable(entry):
+                diagnostics["offscreen_invalid_or_non_actionable"] += 1
                 continue
             if entry.get("disabled"):
+                diagnostics["offscreen_invalid_or_non_actionable"] += 1
                 continue
             offscreen.append((index, entry))
 
@@ -494,7 +504,9 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         -(item[1]["box"]["width"] * item[1]["box"]["height"]),
         item[0],
     ))
+    before_dedupe = len(visible)
     visible = _dedupe_visible(visible)
+    diagnostics["visible_deduplicated"] = before_dedupe - len(visible)
     chosen_visible = visible[:MAX_VISIBLE_ENTRIES]
     # A composer's action is the whole reason the box it belongs to is worth
     # mapping, so keep at least one even against a page full of dialog controls
@@ -509,6 +521,7 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         if spare is not None and chosen_visible:
             chosen_visible = chosen_visible[:-1] + [spare]
     chosen_visible.sort(key=lambda item: item[0])
+    diagnostics["visible_omitted_by_cap"] = max(0, len(visible) - len(chosen_visible))
     for number, (_, entry) in enumerate(chosen_visible, start=1):
         entry["id"] = f"V{number}"
 
@@ -522,6 +535,7 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
     ))
     chosen_offscreen = offscreen[:MAX_OFFSCREEN_ENTRIES]
     chosen_offscreen.sort(key=lambda item: item[0])
+    diagnostics["offscreen_omitted_by_cap"] = max(0, len(offscreen) - len(chosen_offscreen))
     for number, (_, entry) in enumerate(chosen_offscreen, start=1):
         entry["id"] = f"O{number}"
 
@@ -530,6 +544,7 @@ def build_ui_map(raw: Any) -> Dict[str, Any]:
         "display_height": display_h,
         "visible": [entry for _, entry in chosen_visible],
         "offscreen": [entry for _, entry in chosen_offscreen],
+        "diagnostics": diagnostics,
     }
 
 
@@ -599,15 +614,15 @@ def _offscreen_text(entry: Dict[str, Any]) -> str:
 def _context_lines(entry: Dict[str, Any], duplicated: bool) -> List[str]:
     """The indented detail lines for one entry, or none when it is plain.
 
-    A control earns them when its name alone does not place it: it is the action
-    that submits an editor, it is that editor, or its name is shared with another
+    A control earns them when its name alone does not place it: it shares an
+    editor region, it is that editor, or its name is shared with another
     mapped control -- the sidebar link "Post" and the composer's button "Post"
     being exactly the pair a reader has to tell apart.  An ordinary, uniquely
     named control -- including a composer's own attach/emoji toolbar, which
     shares the region but neither is the field nor submits it -- stays one line
-    so the block stays small, and relationship, action and state are stated only
-    for a composer's submit, the one control whose role in the page a name
-    cannot carry.
+    so the block stays small.  Region membership is deliberately not described
+    as submission evidence: a composer can contain audience and reply controls
+    as well as its publishing button.
 
     Nothing here invents a fact: `context`, `with_editor`, `in_editor_region`
     and `disabled` all arrive from the page's own DOM and accessibility, and an
@@ -620,7 +635,6 @@ def _context_lines(entry: Dict[str, Any], duplicated: bool) -> List[str]:
         lines.append(f"     Context: {context}")
     if entry.get("with_editor"):
         lines.append("     Relationship: Associated with the editor")
-        lines.append("     Action: Submit")
         state = "Disabled" if entry.get("disabled") else "Enabled"
         lines.append(f"     State: {state}")
     return lines

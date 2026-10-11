@@ -205,6 +205,9 @@ class TheScannerDiscoversTheComposerAndItsPublishButton(unittest.TestCase):
         # must not stop there.  The button beside the field is discovered as the
         # composer's submit; the toolbar controls are not.
         raw = self.discovery()
+        self.assertGreaterEqual(raw["diagnostics"]["candidates"], 30)
+        self.assertFalse(raw["diagnostics"]["max_scan_reached"])
+        self.assertGreaterEqual(raw["diagnostics"]["editors"], 1)
 
         publish = [e for e in self._by_name(raw, "Post") if e.get("role") == "button"]
         self.assertEqual(len(publish), 1, "the publish button should be discovered")
@@ -238,6 +241,8 @@ class TheScannerDiscoversTheComposerAndItsPublishButton(unittest.TestCase):
         # the button is not crowded out and that the two "Post" controls read
         # apart: the link as navigation, the button as the composer's submit.
         mapped = build_ui_map(self.discovery())
+        self.assertGreater(mapped["diagnostics"]["raw_visible"], 20)
+        self.assertGreater(mapped["diagnostics"]["visible_omitted_by_cap"], 0)
         posts = [e for e in mapped["visible"] if e["name"] == "Post"]
         self.assertEqual({e["role"] for e in posts}, {"link", "button"})
         self.assertEqual(len({e["id"] for e in posts}), 2)
@@ -253,7 +258,7 @@ class TheScannerDiscoversTheComposerAndItsPublishButton(unittest.TestCase):
         self.assertIn("Context: navigation", text)
         self.assertIn("Context: active composer", text)
         self.assertIn("Relationship: Associated with the editor", text)
-        self.assertIn("Action: Submit", text)
+        self.assertNotIn("Action: Submit", text)
 
 
 if __name__ == "__main__":

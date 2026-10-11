@@ -102,8 +102,14 @@ export const useComputerRun = create<ComputerRunState>((set, get) => ({
       // A run that ended stays in the store.  The transcript is the record of
       // what happened, and a panel that empties the moment the task finishes
       // destroys the evidence at exactly the point somebody wants to read it.
-      if (next.status === "error" && next.message) set({ error: next.message });
-      set({ run: next });
+      // `error` is only transport/startup UI state.  A run failure is rendered
+      // from this fresh snapshot's status/message.  Keeping a previous value
+      // here made a refused action remain the current error after the executor
+      // had accepted a corrected action and polling had already delivered it.
+      set({
+        run: next,
+        error: next.status === "error" ? next.message : "",
+      });
     } catch {
       /* transient: the next tick tries again */
     }

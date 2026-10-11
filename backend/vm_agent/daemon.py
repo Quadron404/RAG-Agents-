@@ -1478,13 +1478,23 @@ _UI_MAP_JS = r"""(function () {
     }
   } catch (e) {}
   var visible = [], offscreen = [];
+  // Bounded, content-free evidence for diagnosing why a live control did not
+  // reach the model.  This intentionally records counts and DOM facts, never
+  // page text, typed text, cookies, or attributes other than role/tag/type.
+  var diag = { candidates: nodes.length, scanned: 0,
+    max_scan_reached: nodes.length > MAX_SCAN,
+    never_examined: Math.max(0, nodes.length - MAX_SCAN),
+    max_collect_reached: false, non_actionable: 0, not_rendered: 0,
+    invalid_geometry: 0, clipped_or_offscreen: 0, editors: EDITOR_REGIONS.length,
+    editor_region_candidates: 0, actionable_by_role: {}, actionable_by_tag: {} };
   for (var ci = 0; ci < nodes.length && ci < MAX_SCAN; ci++) {
     var el = nodes[ci];
     try {
-      if (!actionable(el)) continue;
-      if (!rendered(el)) continue;
+      diag.scanned++;
+      if (!actionable(el)) { diag.non_actionable++; continue; }
+      if (!rendered(el)) { diag.not_rendered++; continue; }
       var raw = rectOf(el);
-      if (!raw) continue;
+      if (!raw) { diag.invalid_geometry++; continue; }
       var clip = clipRegion(el);
       var entry = {
         dom_id: D.mark(el),
@@ -1507,6 +1517,11 @@ _UI_MAP_JS = r"""(function () {
         // composer's submit -- are told apart by this, not by their role alone.
         context: contextOf(el)
       };
+      var roleKey = entry.role || "(none)";
+      var tagKey = entry.tag || "(none)";
+      diag.actionable_by_role[roleKey] = (diag.actionable_by_role[roleKey] || 0) + 1;
+      diag.actionable_by_tag[tagKey] = (diag.actionable_by_tag[tagKey] || 0) + 1;
+      if (entry.in_editor_region) diag.editor_region_candidates++;
       if (clip) {
         var vbox = [Math.max(raw[0], clip[0]), Math.max(raw[1], clip[1]),
                     Math.min(raw[2], clip[2]), Math.min(raw[3], clip[3])];
@@ -1523,13 +1538,17 @@ _UI_MAP_JS = r"""(function () {
       entry.dist = g.dist;
       entry.scroller = scrollable(el) ? "panel" : "";
       offscreen.push(entry);
+      diag.clipped_or_offscreen++;
     } catch (e) {}
-    if (visible.length + offscreen.length >= MAX_COLLECT) break;
+    if (visible.length + offscreen.length >= MAX_COLLECT) { diag.max_collect_reached = true; break; }
   }
   out.visible = visible;
   out.offscreen = offscreen;
   out.viewport = { x: Math.round(originX), y: Math.round(originY),
     width: Math.round(iw * scale), height: Math.round(ih * scale) };
+  diag.visible_collected = visible.length;
+  diag.offscreen_collected = offscreen.length;
+  out.diagnostics = diag;
   out.ok = true;
   return JSON.stringify(out);
 })()

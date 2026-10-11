@@ -239,6 +239,13 @@ class ComputerTurnTrace:
     image_meta: Dict[str, Any] = field(default_factory=dict)
     #: The user turn this request ended with, in full.
     user_text: str = ""
+    #: Bounded evidence that the exact formatted DOM map was included in this
+    #: request.  The map text itself remains in `user_text`; the hash makes a
+    #: later comparison stable without duplicating page content in diagnostics.
+    ui_map_diagnostics: Dict[str, Any] = field(default_factory=dict)
+    ui_map_text_length: int = 0
+    ui_map_text_sha256: str = ""
+    ui_map_inserted: bool = False
 
     # -- C. the request as actually serialised, which is not the same claim as A
     wire: Dict[str, Any] = field(default_factory=dict)
@@ -385,6 +392,10 @@ class ComputerTurnTrace:
             "screenshot_attached": self.screenshot_attached,
             "image_meta": self.image_meta,
             "user_text": self.user_text,
+            "ui_map_diagnostics": self.ui_map_diagnostics,
+            "ui_map_text_length": self.ui_map_text_length,
+            "ui_map_text_sha256": self.ui_map_text_sha256,
+            "ui_map_inserted": self.ui_map_inserted,
             "wire": self.wire,
             "raw": self.raw,
             "request_state": self.request_state,
@@ -703,6 +714,10 @@ class ComputerRun:
             "running": self.status in (STATUS_OBSERVING, STATUS_CONTROLLING),
             "done": self.status in (STATUS_DONE, STATUS_STOPPED, STATUS_ERROR),
             "stopped": self.status == STATUS_STOPPED,
+            # The current executor verdict is distinct from the historical
+            # event trace.  It is replaced by every attempt, so a previous
+            # refusal cannot be rendered as the state of a later action.
+            "last_action": dict(self.last_action),
             # What the run has cost so far, and how much of it involved an
             # image.  A run that finished in four requests is the whole point of
             # the redesign, and this is where that becomes visible to the user
@@ -2106,6 +2121,11 @@ class ComputerRunner:
             )
             last_user = next((m for m in reversed(messages) if m.role == "user"), None)
             turn.user_text = last_user.content if last_user else ""
+            map_text = run.ui_map_text or ""
+            turn.ui_map_diagnostics = dict((run.ui_map or {}).get("diagnostics") or {})
+            turn.ui_map_text_length = len(map_text)
+            turn.ui_map_text_sha256 = hashlib.sha256(map_text.encode("utf-8")).hexdigest() if map_text else ""
+            turn.ui_map_inserted = bool(map_text and map_text in turn.user_text)
 
             raw = ""
             provider_name = ""

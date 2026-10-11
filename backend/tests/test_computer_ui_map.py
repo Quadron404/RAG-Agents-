@@ -1262,6 +1262,9 @@ class ACoordinateClickCanBecomeAnElementClick(unittest.TestCase):
         # The trace carries the exact map the request was shown.
         self.assertIn("UI map (live DOM)", execution["click_ui_map"])
         self.assertIn('[V1] button "Send"', execution["click_ui_map"])
+        # The exact formatted map was part of the request, not merely built.
+        self.assertTrue(run.trace[2].ui_map_inserted)
+        self.assertEqual(len(run.trace[2].ui_map_text_sha256), 64)
 
     def test_a_target_no_map_entry_names_falls_back_to_the_coordinate_path(self):
         runner, provider = make_runner([
@@ -1460,7 +1463,9 @@ class ASidebarLinkAndAComposerShareAName(unittest.TestCase):
         self.assertIn("Context: navigation", text)
         self.assertIn("Context: active composer", text)
         self.assertIn("Relationship: Associated with the editor", text)
-        self.assertIn("Action: Submit", text)
+        # Sharing an editor region does not prove that either control submits
+        # it; the live DOM supplies no generic publication semantic here.
+        self.assertNotIn("Action: Submit", text)
         self.assertIn("State: Enabled", text)
 
     def test_a_secondary_composer_control_stays_one_line(self):
