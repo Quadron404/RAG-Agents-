@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
 
 
 class ModelCallGateTimeout(RuntimeError):
@@ -82,6 +82,8 @@ class ProviderHTTPError(RuntimeError):
         reason: str = "",
         body: str = "",
         retry_after: Optional[float] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        limit_type: Optional[str] = None,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -89,9 +91,16 @@ class ProviderHTTPError(RuntimeError):
         self.reason = reason or ""
         #: The provider's own error text, verbatim and unredacted of meaning.
         self.body = body or ""
+        self.headers = headers or {}
+        self.limit_type = limit_type
         self.retry_after = retry_after
-        if self.status == 429 and self.retry_after is None:
-            self.retry_after = _retry_after_from_body(self.body)
+        self.retry_after_source = None
+
+        if self.status == 429:
+            self._compute_retry_after()
+        else:
+            if self.retry_after is not None:
+                self.retry_after_source = "explicit"
 
         super().__init__(self.message)
 
@@ -143,6 +152,53 @@ class ProviderHTTPError(RuntimeError):
             return _condense(body)
         return _from_json(parsed) or _condense(body)
 
+    def _compute_retry_after(self) -> None:
+        # Rate-limit headers are read regardless of which source provides the
+        # delay, because they are the only place the *kind* of limit appears.
+        # `x-ratelimit-reset-requests` and `x-ratelimit-reset-tokens` are two
+        # different windows and are never interchangeable; the header parser
+        # keeps them apart and reports which one (if either) it used.
+        rl_seconds, rl_source, rl_limit_type = _retry_after_from_ratelimit_headers(
+            self.headers
+        )
+
+        if self.retry_after is not None:
+            # Caller supplied a usable Retry-After (usually the standard
+            # header).  It wins, and is labelled by where it came from rather
+            # than the generic word "explicit".
+            self.retry_after_source = (
+                "header:retry-after"
+                if _retry_after_from_header(self.headers) is not None
+                else "explicit"
+            )
+            if self.limit_type is None and rl_limit_type is not None:
+                self.limit_type = rl_limit_type
+            return
+
+        # 1. Retry-After header (standard), authoritative when present
+        ra_from_header = _retry_after_from_header(self.headers)
+        if ra_from_header is not None:
+            self.retry_after = ra_from_header
+            self.retry_after_source = "header:retry-after"
+            if self.limit_type is None and rl_limit_type is not None:
+                self.limit_type = rl_limit_type
+            return
+
+        # 2. Rate-limit reset headers, request and token resets kept apart
+        if rl_seconds is not None:
+            self.retry_after = rl_seconds
+            self.retry_after_source = rl_source or "header:ratelimit"
+            if self.limit_type is None:
+                self.limit_type = rl_limit_type
+            return
+
+        # 3. Fallback to the human sentence in the body, never inventing a time
+        ra_from_body = _retry_after_from_body(self.body)
+        if ra_from_body is not None:
+            self.retry_after = ra_from_body
+            self.retry_after_source = "body"
+            return
+
     def to_dict(self) -> dict:
         """The structured form, for the trace."""
         return {
@@ -153,9 +209,170 @@ class ProviderHTTPError(RuntimeError):
             "provider_error": self.provider_detail,
             "provider_error_raw": self.body,
             "retry_after": self.retry_after,
+            "retry_after_source": self.retry_after_source,
+            "limit_type": self.limit_type,
             "retryable": self.retryable,
             "reached": self.reached,
         }
+
+
+def _retry_after_from_header(headers: Dict[str, Any]) -> Optional[float]:
+    """Parse standard Retry-After header (seconds or HTTP-date)."""
+    if not headers:
+        return None
+    raw = ""
+    try:
+        # httpx headers are case-insensitive in practice, but be defensive
+        for k, v in headers.items():
+            if str(k).lower() == "retry-after":
+                raw = str(v)
+                break
+    except Exception:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+        return max(0.0, seconds)
+    except ValueError:
+        try:
+            from email.utils import parsedate_to_datetime
+            from datetime import datetime, timezone
+
+            when = parsedate_to_datetime(raw)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            seconds = (when - datetime.now(timezone.utc)).total_seconds()
+            return max(0.0, seconds)
+        except Exception:
+            return None
+
+
+def _parse_reset_delay(raw: Optional[str]) -> Optional[float]:
+    """A rate-limit reset header as seconds-from-now.
+
+    Providers spell these three ways and all three must be read without
+    guessing: a plain number of seconds (``90``), a duration string the same
+    way the human message writes it (``1m30s``, ``27m41.2s``), or an absolute
+    epoch timestamp (``1750000000``).  An absolute time in the past clamps to
+    zero -- "come back now" -- and anything unreadable returns ``None`` so the
+    caller falls through to another source rather than inventing a delay.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return _parse_duration(text)
+    # Epoch scores are far larger than any plausible duration; treat only
+    # those as absolute wall-clock times and convert to a delta.
+    if value > 10**9:
+        from datetime import datetime, timezone
+
+        return max(0.0, value - datetime.now(timezone.utc).timestamp())
+    return max(0.0, value)
+
+
+def _parse_duration(text: str) -> Optional[float]:
+    """Parse an ``h``/``m``/``s`` duration string such as ``1m30s``.
+
+    The same compounds the provider writes in its errors, used for the reset
+    headers that use the same spelling.  Returns ``None`` when nothing
+    recognisable is present, so an unreadable header falls through rather than
+    becoming a fabricated delay.
+    """
+    import re
+
+    text = str(text or "").strip()
+    if not text:
+        return None
+    match = re.fullmatch(
+        r"\s*(?:(?P<h>[0-9]+(?:\.[0-9]+)?)\s*h\s*)?"
+        r"(?:(?P<m>[0-9]+(?:\.[0-9]+)?)\s*m\s*)?"
+        r"(?:(?P<s>[0-9]+(?:\.[0-9]+)?)\s*s)?\s*",
+        text,
+        re.IGNORECASE,
+    )
+    if not match or not any(match.groupdict().values()):
+        return None
+    try:
+        g = match.groupdict()
+        return max(
+            0.0,
+            float(g.get("h") or 0) * 3600
+            + float(g.get("m") or 0) * 60
+            + float(g.get("s") or 0),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_after_from_ratelimit_headers(
+    headers: Dict[str, Any]
+) -> Tuple[Optional[float], Optional[str], Optional[str]]:
+    """Read the ``x-ratelimit-*`` reset headers, request and token kept apart.
+
+    ``x-ratelimit-reset-requests`` and ``x-ratelimit-reset-tokens`` are
+    different windows and are never interchangeable, so this never substitutes
+    one for the other.  When the exhausted counter is identifiable (its
+    ``remaining`` header is ``0``) that limit's reset is the one returned; when
+    it is not, the request reset is preferred because a request-cap 429 blocks
+    every future call, whereas a token reset only affects the next payload.
+
+    Returns ``(seconds, source, limit_type)``; any element may be ``None``.
+    """
+    if not headers:
+        return None, None, None
+
+    def get_header(name: str) -> Optional[str]:
+        try:
+            for k, v in headers.items():
+                if str(k).lower() == name.lower():
+                    return str(v)
+        except Exception:
+            pass
+        return None
+
+    reset_requests = get_header("x-ratelimit-reset-requests") or get_header(
+        "ratelimit-reset-requests"
+    )
+    reset_tokens = get_header("x-ratelimit-reset-tokens") or get_header(
+        "ratelimit-reset-tokens"
+    )
+    remaining_requests = get_header("x-ratelimit-remaining-requests") or get_header(
+        "x-ratelimit-remaining-req"
+    )
+    remaining_tokens = get_header("x-ratelimit-remaining-tokens")
+
+    def _zero(raw: Optional[str]) -> bool:
+        try:
+            return float(str(raw).strip()) <= 0
+        except (TypeError, ValueError):
+            return False
+
+    requests_exhausted = _zero(remaining_requests)
+    tokens_exhausted = _zero(remaining_tokens)
+
+    if requests_exhausted and reset_requests:
+        seconds = _parse_reset_delay(reset_requests)
+        if seconds is not None:
+            return seconds, "header:x-ratelimit-reset-requests", "requests_per_window"
+    if tokens_exhausted and reset_tokens:
+        seconds = _parse_reset_delay(reset_tokens)
+        if seconds is not None:
+            return seconds, "header:x-ratelimit-reset-tokens", "tokens_per_window"
+
+    # Counter state did not identify the limit.  Prefer the request reset and
+    # say so honestly, rather than silently picking the token one for it.
+    if reset_requests:
+        seconds = _parse_reset_delay(reset_requests)
+        if seconds is not None:
+            return seconds, "header:x-ratelimit-reset-requests", "requests_per_window"
+    return None, None, None
 
 
 def _retry_after_from_body(body: str) -> Optional[float]:

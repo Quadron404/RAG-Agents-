@@ -123,6 +123,11 @@ MODEL_RATE_LIMIT_FLOOR_MAX_SECONDS = 120.0
 #: this bounds is repetition -- several long resets in a row -- and hours.
 MODEL_MAX_RATE_LIMIT_STALL_SECONDS = 1800.0
 
+#: Maximum cooldown before we stop waiting and let caller decide to terminate.
+#: Per requirement: if reported wait exceeds 60s for computer-control runs,
+#: end the current run rather than waiting silently.
+RATE_LIMIT_LONG_COOLDOWN_SEC = 60.0
+
 #: Longest a request will queue for the gate before it is told the queue is the
 #: problem.  Sized above the worst legitimate wait rather than picked: a published
 #: rate-limit floor (120s) plus one full provider call at the transport's own
@@ -313,6 +318,7 @@ async def stream_model(
     *,
     on_rate_limit: Optional[Callable[[Exception], object]] = None,
     caller: str = "",
+    long_cooldown_limit: Optional[float] = None,
 ) -> AsyncIterator[LLMEvent]:
     """Run one logical model request with normal pacing and bounded 429 recovery.
 
@@ -427,6 +433,22 @@ async def stream_model(
                     _MODEL_CALL_GATE.release()
                     locked = False
                     raise _rate_limit_gave_up(exc, rate_limit_retries, rate_limit_waited)
+                # A cooldown this long is not a retry, it is the provider
+                # saying "come back much later".  Waiting for it silently is
+                # the UX failure this whole path exists to prevent, so the wait
+                # is handed back to the caller as the provider's own 429 with
+                # the reported cooldown attached.  Only callers that opt in
+                # (`long_cooldown_limit`) take this path, so the other roles
+                # keep their existing bounded retry behaviour.
+                if (
+                    long_cooldown_limit is not None
+                    and wait > float(long_cooldown_limit)
+                ):
+                    _MODEL_CALL_GATE.clear_stall()
+                    _MODEL_CALL_GATE.finish_success()
+                    _MODEL_CALL_GATE.release()
+                    locked = False
+                    raise _rate_limit_long_wait(exc, wait)
                 # Park: publish the reset time so no call starts before it, then
                 # hand the gate back so the rest of the app keeps working.  The
                 # stall floor is what prevents an overtake, not the lock.
@@ -464,6 +486,39 @@ async def stream_model(
     finally:
         if locked:
             _MODEL_CALL_GATE.release()
+
+
+def _rate_limit_long_wait(exc: ProviderHTTPError, wait: float) -> ProviderHTTPError:
+    """The provider's own 429, with a cooldown too long to wait for attached.
+
+    Returned *instead of* sleeping, so a caller that asked for a bound
+    (`long_cooldown_limit`) can end its run and report the restriction rather
+    than sit in a pending state for the provider's whole reset window.  The
+    original status, body and `retry_after` are preserved; the note only adds
+    that this app declined to wait, and `long_cooldown_seconds` marks the
+    failure as a deliberate stop rather than a transport fault.
+    """
+    error = ProviderHTTPError(
+        provider=exc.provider,
+        model=exc.model,
+        status=exc.status,
+        reason=exc.reason,
+        body=(
+            f"{exc.body}\n"
+            f"(the provider asked this request to wait {wait:.0f}s before "
+            f"retrying, which exceeds the {RATE_LIMIT_LONG_COOLDOWN_SEC:.0f}s "
+            f"cooldown limit: the run was ended with the provider's own rate "
+            f"limit rather than left pending for that long)"
+        ).strip(),
+        retry_after=exc.retry_after,
+        limit_type=exc.limit_type,
+    )
+    try:
+        error.retry_after_source = exc.retry_after_source
+    except Exception:  # pragma: no cover - defensive
+        pass
+    error.long_cooldown_seconds = float(wait)
+    return error
 
 
 def _rate_limit_gave_up(

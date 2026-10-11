@@ -386,6 +386,7 @@ class OpenAICompatProvider(Provider):
                         reason=_reason(resp),
                         body=detail,
                         retry_after=_retry_after(resp),
+                        headers=dict(resp.headers),
                     )
                 try:
                     payload = resp.json()
@@ -442,6 +443,7 @@ class OpenAICompatProvider(Provider):
                         reason=_reason(resp),
                         body=detail,
                         retry_after=_retry_after(resp),
+                        headers=dict(resp.headers),
                     )
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):

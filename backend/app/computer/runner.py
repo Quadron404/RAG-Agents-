@@ -62,6 +62,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings
 from ..providers.base import (
+    RATE_LIMIT_LONG_COOLDOWN_SEC,
     LLMMessage,
     TextDelta,
     ToolCall,
@@ -345,6 +346,9 @@ class ComputerTurnTrace:
     provider_error: str = ""
     provider_error_raw: str = ""
     retry_after: Optional[float] = None
+    retry_after_source: Optional[str] = None
+    limit_type: Optional[str] = None
+    long_cooldown_seconds: Optional[float] = None
     retry_attempts: int = 0
     simple_task: bool = False
     action_count: int = 0
@@ -413,6 +417,9 @@ class ComputerTurnTrace:
             "provider_error": self.provider_error,
             "provider_error_raw": self.provider_error_raw,
             "retry_after": self.retry_after,
+            "retry_after_source": self.retry_after_source,
+            "limit_type": self.limit_type,
+            "long_cooldown_seconds": self.long_cooldown_seconds,
             "retry_attempts": self.retry_attempts,
             "http_attempts": self.http_attempts,
             "parse_ok": self.parse_ok,
@@ -949,6 +956,46 @@ def _gate_wait_of(provider) -> float:
         return max(0.0, float(getattr(provider, "last_gate_wait", 0.0) or 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _format_cooldown(seconds: float) -> str:
+    """A cooldown in seconds as the provider's own h/m/s shape when it is long.
+
+    Seconds alone are what the provider said, but 1661 is not a number a reader
+    feels; "27m41s" is.  Short waits keep the plain seconds, because there the
+    number is small enough to read directly.
+    """
+    total = max(0, int(round(float(seconds or 0.0))))
+    if total < 60:
+        return f"{total}s"
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return "".join(parts)
+
+
+def _rate_limit_message(exc: "ProviderHTTPError", wait: float) -> str:
+    """The one line a run ends with when the provider's cooldown is too long.
+
+    Names the provider and model, the reported cooldown in both seconds and
+    human form, and the limit type when it is known -- and states that the run
+    stopped rather than waited.  The provider's own words are kept verbatim on
+    the turn, so this sentence summarises the restriction without replacing it.
+    """
+    who = f"{exc.provider}/{exc.model}" if exc.provider and exc.model else (exc.provider or "The provider")
+    limit = f" ({exc.limit_type} limit)" if getattr(exc, "limit_type", None) else ""
+    return (
+        f"{who} rate limit{limit}: the provider asked this request to wait "
+        f"{max(0.0, float(wait)):.0f}s ({_format_cooldown(wait)}), which exceeds "
+        f"the {RATE_LIMIT_LONG_COOLDOWN_SEC:.0f}s cooldown limit. The run was "
+        f"ended with the provider's own explanation instead of being left pending."
+    )
 
 
 #: Why a reply with no text and no tool call says what it says.  Keyed by the
@@ -1569,6 +1616,8 @@ class ComputerRunner:
                     "provider_error": str(getattr(exc, "provider_detail", "") or ""),
                     "provider_error_raw": str(getattr(exc, "body", "") or ""),
                     "retry_after": retry_after,
+                    "retry_after_source": getattr(exc, "retry_after_source", None),
+                    "limit_type": getattr(exc, "limit_type", None),
                     "retryable": True,
                 }
             )
@@ -1587,6 +1636,7 @@ class ComputerRunner:
                 model,
                 on_rate_limit=on_rate_limit,
                 caller=run.task_id,
+                long_cooldown_limit=RATE_LIMIT_LONG_COOLDOWN_SEC,
             ):
                 if isinstance(event, TextDelta):
                     parts.append(event.content)
@@ -2210,6 +2260,8 @@ class ComputerRunner:
                 turn.provider_error = exc.provider_detail
                 turn.provider_error_raw = exc.body
                 turn.retry_after = exc.retry_after
+                turn.retry_after_source = getattr(exc, "retry_after_source", None)
+                turn.limit_type = getattr(exc, "limit_type", None)
                 turn.retry_attempts = len(run.http_attempts or [])
                 turn.http_attempts = list(run.http_attempts or [])
                 # The provider was asked and did not answer, so there is no reply
@@ -2222,6 +2274,15 @@ class ComputerRunner:
                 # longer has to guess at a request whose serialisation it could
                 # not see.
                 turn.wire = _wire_of(run.last_provider)
+                long_wait = getattr(exc, "long_cooldown_seconds", None)
+                if long_wait is not None:
+                    # The provider asked us to wait longer than the run's
+                    # cooldown budget, so the run ends here with the provider's
+                    # own restriction reported -- no silent 27-minute wait.
+                    turn.long_cooldown_seconds = float(long_wait)
+                    run.status = STATUS_ERROR
+                    run.message = _rate_limit_message(exc, long_wait)
+                    return None, run.message
                 run.status = STATUS_ERROR
                 run.message = exc.message
                 return None, exc.message
