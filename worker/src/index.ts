@@ -41,7 +41,7 @@ import {
   upsertUser,
 } from "./store";
 
-const API_PREFIXES = ["/threads", "/computer", "/ai", "/sysinfo", "/file", "/cdp", "/screen", "/websockify", "/ws"];
+const API_PREFIXES = ["/threads", "/computer", "/ai", "/sysinfo", "/file", "/cdp", "/screen", "/websockify", "/ws", "/routines"];
 
 function isProxyPath(path: string): boolean {
   if (path === "/health") return true;

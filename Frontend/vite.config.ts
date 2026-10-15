@@ -27,6 +27,10 @@ export default defineConfig({
       // the login form would 404 in dev and the app would be unusable.
       "/auth": BACKEND,
       "/threads": BACKEND,
+      // /routines is the browser-facing routine surface; without this the dev
+      // server would serve the SPA's index.html for it and the panel could
+      // never read a schedule.
+      "/routines": BACKEND,
       "/computer": BACKEND,
       "/screen": BACKEND,
       "/sysinfo": BACKEND,
