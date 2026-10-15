@@ -1,7 +1,9 @@
-import { Check, Hourglass, Loader2, Terminal, X } from "lucide-react";
+import { useState } from "react";
+import { CalendarClock, Check, Hourglass, Loader2, Terminal, X } from "lucide-react";
 import { botForRole } from "../store";
 import { useCore } from "../core";
 import { fmtDuration } from "../lib/format";
+import { RoutinesPanel } from "../components/RoutinesPanel";
 
 const COLUMNS = [
   { id: "queued", label: "In queue", icon: Hourglass, color: "var(--text-3)" },
@@ -13,6 +15,11 @@ export function TasksView() {
   const run = useCore((s) => s.run);
   const steps = run?.steps || [];
   const busy = run && run.phase !== "done" && run.phase !== "idle";
+  // Two things live under "Tasks": the plan the Commander is running right now,
+  // and the recurring routines that run themselves later.  They are one view
+  // because they are the same idea -- work the workforce owns -- but they are
+  // kept as separate modes so neither can be mistaken for the other.
+  const [mode, setMode] = useState<"activity" | "scheduled">("activity");
 
   return (
     <div className="tasks">
@@ -21,15 +28,39 @@ export function TasksView() {
           <div>
             <div className="tasks__title">Tasks</div>
             <div className="tasks__sub">
-              {steps.length
-                ? `${steps.filter((s) => s.status === "done").length} of ${steps.length} steps completed`
-                : "A plan appears here the moment the Commander assigns it."}
+              {mode === "scheduled"
+                ? "Recurring work the workforce runs on a schedule."
+                : steps.length
+                  ? `${steps.filter((s) => s.status === "done").length} of ${steps.length} steps completed`
+                  : "A plan appears here the moment the Commander assigns it."}
             </div>
           </div>
-          {busy ? <span className="dot dot--working" /> : null}
+          <div className="tasks__head-right">
+            {mode === "activity" && busy ? <span className="dot dot--working" /> : null}
+            <div className="seg" role="tablist" aria-label="Tasks view">
+              <button
+                className={`seg__item${mode === "activity" ? " seg__item--on" : ""}`}
+                role="tab"
+                aria-selected={mode === "activity"}
+                onClick={() => setMode("activity")}
+              >
+                <Loader2 size={15} /> Activity
+              </button>
+              <button
+                className={`seg__item${mode === "scheduled" ? " seg__item--on" : ""}`}
+                role="tab"
+                aria-selected={mode === "scheduled"}
+                onClick={() => setMode("scheduled")}
+              >
+                <CalendarClock size={15} /> Scheduled
+              </button>
+            </div>
+          </div>
         </div>
 
-        {!steps.length ? (
+        {mode === "scheduled" ? (
+          <RoutinesPanel />
+        ) : !steps.length ? (
           <div
             className="t-card"
             style={{ padding: 20, color: "var(--text-2)", fontSize: 13.5 }}
@@ -117,7 +148,7 @@ export function TasksView() {
           </div>
         )}
 
-        {run && run.startedAt ? (
+        {mode === "activity" && run && run.startedAt ? (
           <div style={{ marginTop: 18, fontSize: 12, color: "var(--text-3)" }}>
             Run started {fmtDuration(Date.now() - run.startedAt)} ago
           </div>

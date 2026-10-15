@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { BOTS, BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
 import { useCore } from "../core";
-import { useAgentStates } from "../lib/agents";
+import { useAgentStates, activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
 import { speechSupported, startDictation } from "../lib/voice";
@@ -508,7 +508,7 @@ function StepCard({ step, busy }: { step: Step; busy: boolean }) {
         <span className="step-card__heading">
           <span className="step-card__title">{step.title}</span>
           <span className="step-card__agent">
-            {busy ? `${bot.name} is working…` : step.status === "done" ? "completed" : "waiting"}
+            {busy ? `${bot.name} · ${stepActivity(step)}…` : step.status === "done" ? "completed" : "waiting"}
           </span>
         </span>
         <ChevronRight className="step-card__chev" size={17} />
@@ -549,12 +549,7 @@ function RunBanner() {
   const run = useCore((s) => s.run);
   const activeThreadId = useCore((s) => s.activeThreadId);
   if (!run || run.threadId !== activeThreadId || run.phase === "done") return null;
-  const label =
-    run.phase === "planning"
-      ? "Commander is planning the approach…"
-      : run.phase === "synthesizing"
-        ? "Commander is writing the final answer…"
-        : "Workers are running on the computer…";
+  const label = activityLabel(run) || "Working";
   return (
     <div className="runbanner" role="status" aria-live="polite">
       <span className="dot dot--working" />

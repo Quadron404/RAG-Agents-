@@ -39,6 +39,12 @@ TESTS = (
     # the network boundary and Codespace wake are mocked here and labelled so.
     "test_routines_tools",
     "test_routines_execute",
+    # The browser-facing routines routes the UI uses to view and manage a
+    # schedule.  The edge client is stubbed: what is proven here is the gateway
+    # -- the owner is the session's Google subject and never a client argument,
+    # an unconfigured deployment says so instead of showing an empty list, and
+    # an edge error is surfaced rather than swallowed.
+    "test_routines_api",
     # Phase 6 Gmail: the mailbox is a separate grant from sign-in, its tokens are
     # encrypted and never exposed, a revoked grant is permanent (not retried
     # forever), a transient failure is retryable, and disconnect revokes at

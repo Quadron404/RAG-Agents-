@@ -2500,6 +2500,270 @@ textarea {
   color: var(--text-2);
 }
 
+/* ---- scheduled routines (Tasks › Scheduled) ------------------------------ */
+
+.tasks__head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.routines {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.routines__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 0;
+}
+
+.routines__count {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-3);
+  letter-spacing: 0.01em;
+}
+
+.routines__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.routine {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg2);
+  box-shadow: var(--shadow-1);
+  padding: 13px 14px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+}
+
+.routine:hover {
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--line));
+}
+
+.routine--paused {
+  opacity: 0.78;
+}
+
+.routine__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.routine__disclosure {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.routine__disclosure:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.routine__ident {
+  min-width: 0;
+  flex: 1;
+}
+
+.routine__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.routine__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.routine__meta svg {
+  width: 12px;
+  height: 12px;
+}
+
+.routine__sep {
+  opacity: 0.5;
+}
+
+.routine__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.routine__prompt {
+  margin: 10px 0 0 32px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.runs {
+  margin: 12px 0 0 32px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.runs__msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.runs__msg--err {
+  color: var(--red);
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 55%, transparent);
+}
+
+.run-row:last-child {
+  border-bottom: 0;
+}
+
+.run-row__when {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-row__detail {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.routines__state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg2);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.routines__state--muted,
+.routines__state--empty {
+  align-items: flex-start;
+}
+
+.routines__state--muted svg,
+.routines__state--empty svg {
+  color: var(--text-3);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.routines__state-title {
+  font-weight: 650;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.routines__state-sub {
+  color: var(--text-3);
+  line-height: 1.55;
+  font-size: 12.5px;
+}
+
+.routines__example {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.routines__retry {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.routines__retry:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .tasks__head {
+    flex-wrap: wrap;
+  }
+  .tasks__head-right {
+    gap: 8px;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .routine__prompt,
+  .runs {
+    margin-left: 0;
+  }
+  .run-row__detail {
+    text-align: left;
+    white-space: normal;
+  }
+}
+
 /* ============================= computer ================================ */
 
 .computer {

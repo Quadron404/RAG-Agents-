@@ -1,6 +1,45 @@
-import type { BotDef, Run } from "../store";
+import type { BotDef, Run, Step } from "../store";
 
 export type AgentStatus = "online" | "thinking" | "working" | "waiting" | "completed" | "offline";
+
+/**
+ * What a running tool is actually doing, in the user's terms.
+ *
+ * These labels are derived from the tool call the executor reported, never
+ * invented ahead of it: a step only says "Searching the web" because a
+ * ``web_search`` call is in flight right now.  The point is that the person
+ * watching sees the real activity rather than a generic spinner.
+ */
+const TOOL_ACTIVITY: Record<string, string> = {
+  web_search: "Searching the web",
+  fetch_url: "Reading a page",
+  browse: "Browsing",
+  browser: "Browsing",
+  browser_screenshot: "Looking at the screen",
+  shell: "Running a command",
+  read_file: "Reading a file",
+  write_file: "Writing a file",
+  list_dir: "Listing files",
+};
+
+/** The live label for the whole run, from its phase and in-flight tools. */
+export function activityLabel(run: Run | null): string {
+  if (!run || run.phase === "done" || run.phase === "idle") return "";
+  if (run.phase === "planning") return "Thinking · planning the approach";
+  if (run.phase === "synthesizing") return "Preparing the final answer";
+  const working = run.steps.filter((s) => s.status === "working");
+  const runningTool = working.flatMap((s) => s.tools).find((t) => t.status === "running");
+  if (runningTool && TOOL_ACTIVITY[runningTool.tool]) return TOOL_ACTIVITY[runningTool.tool];
+  if (working.length > 1) return `Working · ${working.length} specialists at once`;
+  return "Working";
+}
+
+/** The live label for one step, from the tool it currently has in flight. */
+export function stepActivity(step: Step): string {
+  const running = step.tools.find((t) => t.status === "running");
+  if (running && TOOL_ACTIVITY[running.tool]) return TOOL_ACTIVITY[running.tool];
+  return "working";
+}
 
 export interface AgentState {
   status: AgentStatus;

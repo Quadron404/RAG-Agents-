@@ -36,6 +36,7 @@ from .providers import build_providers
 from .restricted.runtime import RestrictedRuntime
 from .routines import RoutineContext, reset_current as reset_routine_context
 from .routines import set_current as set_routine_context
+from .routines.client import RoutineClient
 from .tools.executor import Executor
 from .tools.workspace import WorkspaceClient
 from .vm import vnc as vnc_bridge
@@ -498,6 +499,128 @@ async def create_thread(request: Request, body: NewThreadBody):
 async def list_threads(request: Request):
     principal = _principal(request)
     return {"threads": db.list_threads(principal.user_id)}
+
+
+# ---------------------------------------------------------------------------
+# Routines, browser-facing.
+#
+# The authority for a routine is the edge: the Cloudflare Worker owns the D1
+# row, the recurrence clock and the run ledger, because a schedule has to keep
+# firing while this backend -- and the Codespace it runs on -- is stopped.  The
+# agent already manages routines through chat; these routes are the same surface
+# for the UI, so a person can see what is scheduled without having to ask.
+#
+# They add no new authority.  The browser is never handed the shared internal
+# token -- that has to stay server-side -- so the signed-in session is turned
+# into the one key the edge understands, the caller's Google subject, and this
+# process presents the internal token on the user's behalf.  When the edge is
+# not configured, or the account has no routine identity, every route answers
+# ``available: false`` with a reason, so the UI can say so plainly instead of
+# rendering an empty list that reads as "you have no routines".
+# ---------------------------------------------------------------------------
+
+
+def _routine_owner_sub(principal: Principal) -> str:
+    # The Google subject is what the edge keys routines on; it is the identity
+    # the Worker asserted for this session and can never come from the client.
+    return str(principal.user.get("google_sub") or "")
+
+
+@app.get("/routines")
+async def list_routines(request: Request):
+    principal = _principal(request)
+    client = RoutineClient.from_settings(settings)
+    if client is None:
+        return {
+            "ok": False,
+            "available": False,
+            "error": "Routines are not configured on this deployment.",
+            "routines": [],
+        }
+    owner_sub = _routine_owner_sub(principal)
+    if not owner_sub:
+        return {
+            "ok": False,
+            "available": False,
+            "error": "This account has no routine identity.",
+            "routines": [],
+        }
+    result = await client.list_for(owner_sub)
+    body = result.get("body") or {}
+    if result.get("status") != 200 or not body.get("ok"):
+        return {
+            "ok": False,
+            "available": True,
+            "error": str(body.get("error") or "The routine service did not answer."),
+            "routines": [],
+        }
+    return {"ok": True, "available": True, "routines": body.get("routines") or []}
+
+
+@app.get("/routines/{routine_id}/runs")
+async def routine_runs(request: Request, routine_id: str, limit: int = 20):
+    principal = _principal(request)
+    client = RoutineClient.from_settings(settings)
+    if client is None:
+        return {
+            "ok": False,
+            "available": False,
+            "error": "Routines are not configured on this deployment.",
+            "runs": [],
+        }
+    owner_sub = _routine_owner_sub(principal)
+    if not owner_sub:
+        return {"ok": False, "available": False, "error": "This account has no routine identity.", "runs": []}
+    result = await client.runs(routine_id, owner_sub, limit=max(1, min(limit, 100)))
+    body = result.get("body") or {}
+    if result.get("status") != 200 or not body.get("ok"):
+        return {
+            "ok": False,
+            "available": True,
+            "error": str(body.get("error") or "The routine service did not answer."),
+            "runs": [],
+        }
+    return {"ok": True, "available": True, "runs": body.get("runs") or []}
+
+
+@app.post("/routines/{routine_id}/pause")
+async def pause_routine(request: Request, routine_id: str):
+    return await _routine_lifecycle(lambda client, sub: client.pause(routine_id, sub), request)
+
+
+@app.post("/routines/{routine_id}/resume")
+async def resume_routine(request: Request, routine_id: str):
+    return await _routine_lifecycle(lambda client, sub: client.resume(routine_id, sub), request)
+
+
+@app.delete("/routines/{routine_id}")
+async def delete_routine(request: Request, routine_id: str):
+    return await _routine_lifecycle(lambda client, sub: client.delete(routine_id, sub), request)
+
+
+async def _routine_lifecycle(call, request: Request) -> dict:
+    """Run one pause/resume/delete against the edge and normalize the answer.
+
+    All three are the same shape: resolve the caller to their Google subject,
+    ask the edge to act on that owner's routine, and report success with the
+    updated row (or the edge's own error) rather than guessing at the outcome.
+    """
+    principal = _principal(request)
+    client = RoutineClient.from_settings(settings)
+    if client is None:
+        return {"ok": False, "available": False, "error": "Routines are not configured on this deployment."}
+    owner_sub = _routine_owner_sub(principal)
+    if not owner_sub:
+        return {"ok": False, "available": False, "error": "This account has no routine identity."}
+    result = await call(client, owner_sub)
+    body = result.get("body") or {}
+    if result.get("status") != 200 or not body.get("ok"):
+        return {
+            "ok": False,
+            "available": True,
+            "error": str(body.get("error") or "The routine service did not answer."),
+        }
+    return {"ok": True, "available": True, "routine": body.get("routine")}
 
 
 @app.get("/threads/{thread_id}/messages")
