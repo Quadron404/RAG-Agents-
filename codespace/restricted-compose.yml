@@ -1,0 +1,100 @@
+# The restricted-browsing sandbox.
+#
+# Three containers, two networks, and the whole point is which one each service
+# is on:
+#
+#   restricted-internal  (internal: true)  -- no route off the host.  The
+#                        browser and the shell live here and nowhere else.
+#   restricted-egress    (a normal bridge) -- the gateway lives here too, and
+#                        it is the only place that can reach the internet.
+#
+# So the browser and the shell have exactly one reachable peer: the gateway.
+# Setting --proxy-server on Chrome, or unsetting it, does not matter -- there is
+# no packet path out except the proxy.  That is what makes the allowlist a
+# boundary instead of a suggestion.  The services' own URL checks are defence in
+# depth on top of this.
+#
+# The backend on the host reaches the browser, shell and gateway through the
+# 127.0.0.1 ports below.  Reaching *into* a container is not egress from it, and
+# the browser and shell still cannot open an outbound connection.
+#
+# Started by codespace/restricted-sandbox.sh, not by hand -- that script checks
+# Docker is present and then verifies the boundary actually holds.
+name: rag-restricted
+
+services:
+  gateway:
+    image: rag-restricted:latest
+    command:
+      - python3
+      - -m
+      - app.restricted.gateway
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9111"
+      - --allowlist
+      - /etc/rag-restricted/allowlist
+    volumes:
+      # The owner's allowlist, mounted read-only: the gateway can read the policy
+      # and can never rewrite it.
+      - ${RESTRICTED_ALLOWLIST_PATH:-/etc/rag-restricted/allowlist}:/etc/rag-restricted/allowlist:ro
+    networks:
+      - restricted-internal
+      - restricted-egress
+    ports:
+      - "127.0.0.1:9111:9111"
+    restart: unless-stopped
+
+  browser:
+    image: rag-restricted:latest
+    command:
+      - python3
+      - -m
+      - app.restricted.browser_service
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9110"
+      - --allowlist
+      - /etc/rag-restricted/allowlist
+      - --gateway
+      - http://gateway:9111
+      - --profile
+      - /tmp/rag-restricted-profile
+    volumes:
+      - ${RESTRICTED_ALLOWLIST_PATH:-/etc/rag-restricted/allowlist}:/etc/rag-restricted/allowlist:ro
+    networks:
+      # Internal only.  No egress network, so no route off the host.
+      - restricted-internal
+    ports:
+      - "127.0.0.1:9110:9110"
+    shm_size: "1gb"
+    restart: unless-stopped
+
+  shell:
+    image: rag-restricted:latest
+    command:
+      - python3
+      - -m
+      - app.restricted.shell_service
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9112"
+      - --workdir
+      - /workspace
+    volumes:
+      # The workspace is the one thing the shell is meant to touch, so it is the
+      # one thing mounted in.
+      - ${WORKSPACE:-.}:/workspace
+    networks:
+      - restricted-internal
+    ports:
+      - "127.0.0.1:9112:9112"
+    restart: unless-stopped
+
+networks:
+  restricted-internal:
+    internal: true
+  restricted-egress: {}

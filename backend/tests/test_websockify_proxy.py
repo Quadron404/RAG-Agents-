@@ -30,6 +30,8 @@ os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="rag-wsproxy-test-"))
 from fastapi.testclient import TestClient  # noqa: E402
 from websockets.asyncio.server import serve  # noqa: E402
 
+import tests.support as support  # noqa: E402
+
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 from app.vm import websockify_proxy  # noqa: E402
@@ -109,9 +111,21 @@ def main() -> int:
     main_module.computer.settings.screen_ws_port = port
 
     try:
-        # The relay itself: /websockify is no longer behind a session gate, so
-        # this is now simply "does the byte path work".
+        # An attacker with no session must be refused before any byte flows.
+        anon = TestClient(app)
+        refused = False
+        try:
+            with anon.websocket_connect("/websockify", subprotocols=["binary"]):
+                pass
+        except Exception:  # noqa: BLE001
+            refused = True
+        check(refused, "an unauthenticated /websockify connection is denied")
+
+        # The relay itself, behind exactly the gate production uses: same-origin
+        # mean the session cookie rides along, so /websockify is protected by the
+        # same credential as the page.  This really is "does the byte path work".
         user = TestClient(app)
+        support.attach_session(user)
         echoed = None
         protocol = None
         try:

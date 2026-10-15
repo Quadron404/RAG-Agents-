@@ -448,6 +448,7 @@ const TOOL_META: Record<string, { icon: typeof Globe; color: string }> = {
   write_file: { icon: FileText, color: "var(--amber)" },
   list_dir: { icon: FileText, color: "var(--amber)" },
   browser: { icon: Monitor, color: "var(--violet)" },
+  browse: { icon: Monitor, color: "var(--violet)" },
   browser_screenshot: { icon: Monitor, color: "var(--violet)" },
 };
 

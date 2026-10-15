@@ -180,7 +180,7 @@ log " noVNC     $ws_state   127.0.0.1:$WEBSOCKIFY_PORT  (loopback only)"
 log " backend   $api_state   :$BACKEND_PORT"
 
 if [ -s "$PUBLIC_URL_FILE" ]; then
-  log " public    $(cat "$PUBLIC_URL_FILE")  (no sign-in)"
+  log " public    $(cat "$PUBLIC_URL_FILE")  (upstream; set as BACKEND_ORIGIN)"
   log " screen    $(cat "$PUBLIC_URL_FILE")/websockify  (via the app, not exposed directly)"
 else
   log " public    (tunnel not up yet; check $DESKTOP_LOG_DIR/cloudflared.log)"
@@ -189,8 +189,9 @@ fi
 
 if [ -s "$PUBLIC_URL_FILE" ]; then
   log ""
-  log " NOTE: this URL has no passphrase. Anyone who has it has the app, the"
-  log "       files and the screen. Restart the tunnel to invalidate it."
+  log " NOTE: sign-in happens at the Cloudflare Worker, not here. Keep this tunnel"
+  log "       URL private anyway -- it is the Worker's upstream. Restart the tunnel"
+  log "       to move it."
 fi
 
 log "======================================"

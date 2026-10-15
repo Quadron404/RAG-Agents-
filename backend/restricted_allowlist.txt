@@ -1,0 +1,29 @@
+# Restricted-browsing allowlist -- the owner's file, not the agent's.
+#
+# Every destination an ordinary agent may reach is listed here, one rule per
+# line.  A destination that is not listed is refused, and refused again on the
+# wire at the gateway, so an empty file (the default below) means no ordinary
+# agent can browse anywhere at all.  Add rules, do not widen the code.
+#
+# Format, one per line:
+#
+#   example.com            host, any port the browser can reach
+#   example.com:443        host and one port
+#   *.example.com          host and any subdomain, same port rule
+#
+# A rule is a host, not an address or a path: a line containing '/' or '://' is
+# refused, so a pasted URL cannot be misread as a hostname.  Rules beginning with
+# '#' and blank lines are ignored.  Wildcards are only the single leading '*.'
+# form -- '*', '*.com' and a bare '*' are refused, so a rule cannot accidentally
+# approve the whole internet.
+#
+# The deployed file is /etc/rag-restricted/allowlist, root-owned, edited only
+# with:
+#
+#   sudo codespace/restricted-policy.sh add example.com
+#
+# This checkout copy is the fallback used when that file is absent (local runs
+# and CI).  Keep it empty to stay closed by default, or list your own approved
+# hosts below:
+#
+# api.duckduckgo.com

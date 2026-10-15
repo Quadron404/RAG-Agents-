@@ -118,6 +118,149 @@ class Settings:
     groq_model: str = field(default_factory=lambda: _get("GROQ_MODEL", "qwen/qwen3.8-27b").strip())
     groq_base_url: str = field(default_factory=lambda: _get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"))
 
+    # --- Ordinary agent roles (commander / worker / email / summaries) ----
+    # These are text roles and are deliberately separate from the computer
+    # controller's GROQ_MODEL above, which stays on its vision model.  The
+    # default is the GPT-OSS 120B model the platform targets, with a smaller
+    # fallback available when a request does not need the larger one.
+    agent_provider: str = field(default_factory=lambda: _get("AGENT_PROVIDER", "groq"))
+    agent_model: str = field(default_factory=lambda: _get("AGENT_MODEL", "openai/gpt-oss-120b"))
+    agent_fallback_model: str = field(default_factory=lambda: _get("AGENT_FALLBACK_MODEL", "openai/gpt-oss-20b"))
+    agent_max_completion_tokens: int = field(
+        default_factory=lambda: int(_get("AGENT_MAX_COMPLETION_TOKENS", "2048"))
+    )
+    agent_reasoning_effort: str = field(default_factory=lambda: _get("AGENT_REASONING_EFFORT", "low"))
+
+    # --- Authentication and the internal gateway --------------------------
+    # The browser never sees these.  GOOGLE_CLIENT_SECRET, APP_ENCRYPTION_KEY
+    # and RAG_INTERNAL_TOKEN are all runtime secrets supplied by Wrangler (the
+    # Worker) or the Codespace environment; none is ever written to a file in
+    # the repository.
+    google_client_id: str = field(default_factory=lambda: _get("GOOGLE_CLIENT_ID", "").strip())
+    google_client_secret: str = field(default_factory=lambda: _get("GOOGLE_CLIENT_SECRET", "").strip())
+    google_auth_url: str = field(
+        default_factory=lambda: _get("GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth")
+    )
+    google_token_url: str = field(
+        default_factory=lambda: _get("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token")
+    )
+    google_jwks_url: str = field(
+        default_factory=lambda: _get("GOOGLE_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
+    )
+    google_userinfo_url: str = field(
+        default_factory=lambda: _get("GOOGLE_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo")
+    )
+    #: Google's token-revocation endpoint.  Called best-effort on disconnect so
+    #: the granted refresh token is actually invalidated at Google rather than
+    #: only forgotten locally.  The token is sent in the body and never logged.
+    google_revoke_url: str = field(
+        default_factory=lambda: _get("GOOGLE_REVOKE_URL", "https://oauth2.googleapis.com/revoke")
+    )
+    #: How long before a Gmail access token's stated expiry it is refreshed, so a
+    #: token is never handed out moments before it stops working.
+    gmail_refresh_skew_seconds: int = field(
+        default_factory=lambda: int(_get("GMAIL_REFRESH_SKEW_SECONDS", "60"))
+    )
+
+    # --- Bot sender for owner-only notifications -----------------------------
+    # Dedicated bot-owned sender mailbox (never the owner's Gmail). Preferred:
+    # if sending with Gmail API, use bot_refresh_token; if SMTP, use SMTP creds.
+    bot_sender_provider: str = field(
+        default_factory=lambda: _get("BOT_SENDER_PROVIDER", "").strip().lower()
+    )  # gmail|smtp
+    bot_sender_email: str = field(
+        default_factory=lambda: _get("BOT_SENDER_EMAIL", "").strip()
+    )
+    bot_sender_refresh_token: str = field(
+        default_factory=lambda: _get("BOT_SENDER_REFRESH_TOKEN", "").strip()
+    )
+    # Gmail API uses same client as OAuth for token exchange? We reuse google_token_url/ids
+    bot_sender_smtp_host: str = field(
+        default_factory=lambda: _get("BOT_SMTP_HOST", "").strip()
+    )
+    bot_sender_smtp_port: int = field(
+        default_factory=lambda: int(_get("BOT_SMTP_PORT", "587") or 587)
+    )
+    bot_sender_smtp_user: str = field(
+        default_factory=lambda: _get("BOT_SMTP_USER", "").strip()
+    )
+    bot_sender_smtp_password: str = field(
+        default_factory=lambda: _get("BOT_SMTP_PASSWORD", "").strip()
+    )
+    bot_sender_smtp_use_tls: bool = field(
+        default_factory=lambda: _get_bool("BOT_SMTP_USE_TLS", "1")
+    )
+    bot_sender_smtp_use_ssl: bool = field(
+        default_factory=lambda: _get_bool("BOT_SMTP_USE_SSL", "0")
+    )
+    #: The stable public origin the Worker serves at.  Used only to build the
+    #: OAuth redirect URI, which must match what Google has registered
+    #: byte-for-byte.  Empty means "derive from the incoming request".
+    public_base_url: str = field(default_factory=lambda: _get("PUBLIC_BASE_URL", "").rstrip("/"))
+    #: The Cloudflare Worker's origin.  Routines live at the edge (D1), because a
+    #: schedule has to keep running while this backend is stopped, so the routine
+    #: tools are clients of the Worker rather than of a local table.  Empty means
+    #: "use PUBLIC_BASE_URL", which is the same origin the browser reaches.
+    worker_origin: str = field(default_factory=lambda: _get("WORKER_ORIGIN", "").rstrip("/"))
+    #: Secret shared only between the Cloudflare Worker and this backend.  When
+    #: set, every protected route requires it (or a same-origin session), which
+    #: is what makes a random Quick Tunnel URL insufficient to reach the API.
+    rag_internal_token: str = field(default_factory=lambda: _get("RAG_INTERNAL_TOKEN", "").strip())
+    app_encryption_key: str = field(default_factory=lambda: _get("APP_ENCRYPTION_KEY", "").strip())
+    #: HMAC key for session identifiers.  Falls back to the encryption key so a
+    #: single configured secret still hashes sessions; a dedicated value is
+    #: preferred so rotating one does not rotate both.
+    session_secret: str = field(default_factory=lambda: _get("SESSION_SECRET", "").strip())
+    session_ttl_seconds: int = field(default_factory=lambda: int(_get("SESSION_TTL_SECONDS", str(60 * 60 * 24 * 30))))
+
+    # --- Passive summaries ------------------------------------------------
+    # A conversation is summarised after this many seconds without activity.
+    summary_idle_seconds: int = field(default_factory=lambda: int(_get("SUMMARY_IDLE_SECONDS", "600")))
+    history_token_budget: int = field(default_factory=lambda: int(_get("HISTORY_TOKEN_BUDGET", "3000")))
+
+    # --- Restricted browsing for ordinary agents --------------------------
+    # Ordinary agents must not share the computer-control browser or the
+    # personal Chrome profile, and their web access must pass a genuine,
+    # network-level allowlist instead of a URL string check.  When this is on,
+    # the network tools (browse / fetch_url / web_search / shell) are routed
+    # through the restricted runtime and fail closed when it is not available;
+    # the one unrestricted browser tool is removed from the ordinary-agent
+    # registry entirely, so there is no second door.  Off is the default only so
+    # an un-configured checkout keeps working; the Codespace launcher turns it
+    # on.  Turning it on with an empty allowlist allows nothing, which is the
+    # intended default-deny.
+    restricted_enabled: bool = field(default_factory=lambda: _get_bool("RESTRICTED_BROWSING", "0"))
+    # The owner-controlled allowlist.  /etc/rag-restricted/allowlist is the
+    # deployed path precisely because it is root-owned and mode 0644 on the
+    # Codespace: the unprivileged ordinary agent can read it and cannot write
+    # it.  The repo file is only a fallback for a developer machine, and is
+    # never the source of truth once the deployed path exists.
+    restricted_allowlist_path: str = field(
+        default_factory=lambda: _get("RESTRICTED_ALLOWLIST_PATH", "").strip()
+    )
+    # The allowlisting forward proxy.  The isolated browser and the fetch tool
+    # can only leave through this socket, and the sandbox's firewall drops
+    # everything else, so a browser that ignores its own URL check still cannot
+    # reach a destination the proxy refuses.
+    restricted_gateway_url: str = field(
+        default_factory=lambda: _get("RESTRICTED_GATEWAY_URL", "http://127.0.0.1:9111").rstrip("/")
+    )
+    # The separate browser service.  Its own profile directory and its own
+    # debug port, neither of which is the computer-control browser's.
+    restricted_browser_url: str = field(
+        default_factory=lambda: _get("RESTRICTED_BROWSER_URL", "http://127.0.0.1:9110").rstrip("/")
+    )
+    restricted_profile_dir: str = field(
+        default_factory=lambda: _get("RESTRICTED_PROFILE_DIR", "/tmp/rag-restricted-profile")
+    )
+    # The shell that runs the ordinary agent's commands.  It must live inside
+    # the same network sandbox as the browser, or a single `curl` walks around
+    # the gateway.  Empty means "not deployed", and the shell tool then refuses
+    # rather than silently running on the unrestricted host.
+    restricted_shell_url: str = field(
+        default_factory=lambda: _get("RESTRICTED_SHELL_URL", "").rstrip("/")
+    )
+
     # The loop's own limits, all deliberately small: a control loop that can run
     # a hundred clicks is a control loop that can empty someone's wallet or
     # navigate somewhere it should not.

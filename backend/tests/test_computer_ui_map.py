@@ -1121,8 +1121,11 @@ class AnElementIdReachesTheMachine(unittest.TestCase):
         # reads it -- same role, name, tag and type as the entry the fresh map
         # resolved, which is what makes it the same control.
         runner.computer.hit_element = {
+            # The same live DOM token the fresh map resolves V1 to, so the point
+            # is provably the control the id named -- the model's "Post text box"
+            # wording is wrong and must not override it.
             "role": "button", "name": "Send", "tag": "button",
-            "type": "", "text": "", "context": "the composer",
+            "type": "", "text": "", "context": "the composer", "dom_id": 42,
         }
         run = asyncio.run(finish(runner, TASK))
 

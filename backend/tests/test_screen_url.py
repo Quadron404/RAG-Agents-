@@ -20,11 +20,19 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def read_published(path: str) -> tuple[str, str]:
     """Ask the running app to describe the tunnel, in a fresh process."""
+    # The route now requires an authenticated session (the whole point of the
+    # post-auth app), so the probe signs in through the app's own session
+    # machinery before asking.
     probe = (
+        "import os, tempfile\n"
+        "os.environ['DATA_DIR'] = tempfile.mkdtemp(prefix='rag-screen-probe-')\n"
         "from fastapi.testclient import TestClient\n"
-        "from app.main import app\n"
+        "from app.main import app, db, auth\n"
         "import json\n"
+        "_u = db.upsert_user('screen-probe', 'probe@example.com', True, 'Probe', '')\n"
+        "_rec = auth.sessions.create(_u['id'])\n"
         "c = TestClient(app)\n"
+        "c.cookies.set('rag_session', _rec['token'])\n"
         "print(json.dumps(c.get('/screen/config').json()))\n"
     )
     run = subprocess.run(

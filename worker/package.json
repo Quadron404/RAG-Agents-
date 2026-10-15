@@ -1,0 +1,21 @@
+{
+  "name": "rag-agents-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.12.21",
+    "@cloudflare/workers-types": "^4.20260702.0",
+    "typescript": "^5.6.3",
+    "vitest": "~3.2.0",
+    "wrangler": "4.72.0"
+  }
+}

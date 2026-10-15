@@ -11,6 +11,48 @@ import sys
 
 TESTS = (
     "test_ui_served",
+    # Phase 1 security: authentication, ownership and isolation.  Runs early
+    # because every later feature test assumes the protected routes hold.
+    "test_auth",
+    # Phase 3 ordinary-agent orchestration: routing, the canonical transcript
+    # and the context built from it, long-term memory with provenance, and the
+    # passive-summary job.  Deliberately separate from the computer-control
+    # suite, which they must not touch.
+    "test_agent_routing",
+    "test_agent_history",
+    "test_agent_memory",
+    "test_agent_summaries",
+    # Phase 4 restricted browsing: the owner-controlled allowlist, the
+    # destination/SSRF guard, the network gateway that enforces them, and the
+    # tool wiring that makes the restricted browser the only one an ordinary
+    # agent can reach.  The gateway test mocks only the upstream socket (a stub
+    # dials a local origin); the policy, the guard and the refusals are real.
+    "test_restricted_policy",
+    "test_restricted_guard",
+    "test_restricted_gateway",
+    "test_restricted_tools",
+    # Phase 5 recurring routines.  The tools an ordinary agent calls to create
+    # and manage routines (identity from the bound context, never the model's
+    # arguments), and the dispatch endpoint the Worker's scheduler drives (one
+    # run executed once, retryable failures retained, terminal failures failed).
+    # The edge's own recurrence and run ledger are proven in the Worker suite;
+    # the network boundary and Codespace wake are mocked here and labelled so.
+    "test_routines_tools",
+    "test_routines_execute",
+    # Phase 6 Gmail: the mailbox is a separate grant from sign-in, its tokens are
+    # encrypted and never exposed, a revoked grant is permanent (not retried
+    # forever), a transient failure is retryable, and disconnect revokes at
+    # Google.  The Google token endpoint is stubbed here; test_auth drives the
+    # real exchange shape and the identity-binding rejection.
+    "test_gmail_connection",
+    # Phase 7 owner-only notifications: an agent may email its OWNER and nobody
+    # else, from a dedicated bot-owned sender, with the recipient resolved from
+    # the verified session -- never from a tool argument, a message body or a
+    # page.  The mail provider is mocked (no message leaves the process); what is
+    # proven is the enforcement: recipient/sender are fixed, cross-owner access
+    # is refused, an unbound owner or unconfigured sender fails closed, a draft
+    # is delivered once, and the audit is owner-isolated and secret-free.
+    "test_notification_owner_only",
     "test_screen_url",
     "test_screen_isolation",
     "test_tunnel_url",

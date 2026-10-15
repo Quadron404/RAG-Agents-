@@ -21,10 +21,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import Settings
-from app.computer.runner import ComputerRunner, ComputerTurnTrace, STATUS_DONE, _backoff_delay
-from app.providers.base import LLMMessage, TextDelta
+from app.computer.runner import (
+    ComputerRunner,
+    ComputerTurnTrace,
+    STATUS_DONE,
+    STATUS_ERROR,
+    _backoff_delay,
+)
+from app.providers.base import (
+    LLMMessage,
+    TextDelta,
+    ToolCallEvent,
+    MODEL_MAX_RATE_LIMIT_RETRIES,
+)
 from app.providers.errors import ProviderHTTPError
 from app.providers.router import ProviderUnavailable, Router
+
+# The provider layer paces real model calls ten seconds apart.  These tests drive
+# many sequential requests through the same in-process gate, so the gap is zeroed
+# exactly as the computer-control module does -- the point here is the failure
+# path, not the pacing window.
+import app.providers.base as _provider_base  # noqa: E402
+
+_provider_base.MODEL_CALL_GAP_SECONDS = 0.0
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -52,8 +71,18 @@ class FakeProvider:
         if isinstance(outcome, Exception):
             raise outcome
         async def gen():
-            for piece in outcome:
-                yield TextDelta(piece)
+            # A scripted command object is delivered as a native tool call, which
+            # is how a real endpoint delivers one and the only shape the loop can
+            # accept now.  Anything else is prose.  Reuses the computer-control
+            # module's converter so both suites agree on what a reply means.
+            from tests.test_computer_control import _to_tool_call
+
+            call = _to_tool_call(outcome) if isinstance(outcome, str) else None
+            if call is not None:
+                yield ToolCallEvent(call)
+            else:
+                for piece in outcome:
+                    yield TextDelta(piece)
         return gen()
 
 
@@ -140,10 +169,17 @@ def test_429_is_reported_as_reached_not_unreachable():
 
 
 def test_429_is_retried_with_bounded_backoff_then_fails_cleanly():
-    """A run of 429s must retry a bounded number of times, not spam."""
+    """A run of 429s must retry a bounded number of times, not spam.
+
+    The bound now lives in the provider layer (``stream_model``), which owns the
+    429 retry policy: one initial send plus ``MODEL_MAX_RATE_LIMIT_RETRIES``
+    retries.  What this pins is that the number is finite and every refusal is
+    recorded -- not a specific runner-side constant.
+    """
     provider = FakeProvider([http_error(429, "Too Many Requests", RATE_LIMIT_BODY, retry_after=0.01)])
     runner = make_runner(provider, computer_max_http_attempts=3)
     run = new_run(provider="mistral")
+    bound = MODEL_MAX_RATE_LIMIT_RETRIES + 1
 
     try:
         run_one_request(runner, run)
@@ -152,13 +188,14 @@ def test_429_is_retried_with_bounded_backoff_then_fails_cleanly():
     except ProviderHTTPError as exc:
         check("repeated 429 eventually raises", True, exc.message)
         check(
-            "attempts are bounded (3 sends, not an unbounded retry loop)",
-            provider.calls == 3,
+            f"attempts are bounded ({bound} sends, not an unbounded retry loop)",
+            provider.calls == bound,
             f"{provider.calls} provider calls",
         )
-        check("every refusal is recorded", len(run.http_attempts) == 3, str(len(run.http_attempts)))
-        check("attempts are numbered 1..3",
-              [a["attempt"] for a in run.http_attempts] == [1, 2, 3],
+        check("every refusal is recorded", len(run.http_attempts) == bound,
+              str(len(run.http_attempts)))
+        check(f"attempts are numbered 1..{bound}",
+              [a["attempt"] for a in run.http_attempts] == list(range(1, bound + 1)),
               str([a["attempt"] for a in run.http_attempts]))
         check("each attempt records the http status",
               all(a["http_status"] == 429 for a in run.http_attempts))
@@ -183,18 +220,26 @@ def test_400_is_not_retried():
         check("401 preserves the provider message", "Invalid API key" in exc.message, exc.message)
 
 
-def test_5xx_is_retried():
+def test_5xx_is_surfaced_immediately_not_re_sent():
+    """``stream_model`` only auto-retries 429; a 5xx is handed straight back.
+
+    The refusal is still marked retryable, so a higher layer may choose to
+    retry it -- but the request layer itself must not silently re-send a 5xx in
+    a storm, which is what this pins (exactly one send, error preserved).
+    """
     provider = FakeProvider([http_error(503, "Service Unavailable", "upstream down", retry_after=0.0)])
     runner = make_runner(provider, computer_max_http_attempts=2)
     run = new_run(provider="openrouter")
 
     try:
         run_one_request(runner, run)
-        check("503 raises after retries", False, "no exception")
+        check("503 raises immediately", False, "no exception")
     except ProviderHTTPError as exc:
-        check("503 raises after retries", True, exc.message)
-        check("503 is retryable", exc.retryable is True)
-        check("503 sent 2 attempts", provider.calls == 2, str(provider.calls))
+        check("503 raises immediately", True, exc.message)
+        check("503 is still marked retryable for a higher layer", exc.retryable is True)
+        check("503 is sent exactly once, not re-sent", provider.calls == 1, str(provider.calls))
+        check("the provider's 5xx words survive", "upstream down" in exc.provider_detail,
+              exc.provider_detail)
 
 
 # --- 2. the unbound `raw` ---------------------------------------------------
@@ -220,13 +265,16 @@ def test_failure_path_never_references_unbound_raw():
         run.trace = []
 
         try:
-            command, error, raw = asyncio.get_event_loop().run_until_complete(
-                runner._next_command(run, bounds=None, image=None, first_turn=True)
+            command, error = asyncio.get_event_loop().run_until_complete(
+                runner._next_command(run)
             )
         except BaseException as exc:                      # noqa: BLE001 - that is the point
             check(f"{label}: no secondary exception escapes the failure path", False,
                   f"{type(exc).__name__}: {exc}")
             continue
+        # The reply is kept on the turn, not returned: `_next_command` returns
+        # (command, error) and the raw reply lives on the trace it recorded.
+        raw = run.trace[-1].raw if run.trace else ""
 
         check(f"{label}: failure path returns without raising", True)
         check(f"{label}: no command is invented", command is None, repr(command))
@@ -272,8 +320,8 @@ def test_malformed_provider_response_is_reported_not_crashed():
     run = new_run(provider="mistral")
 
     try:
-        command, error, raw = asyncio.get_event_loop().run_until_complete(
-            runner._next_command(run, bounds=None, image=None, first_turn=True)
+        command, error = asyncio.get_event_loop().run_until_complete(
+            runner._next_command(run)
         )
         check("malformed response does not crash the loop", True)
         check("malformed response yields no command", command is None)
@@ -351,25 +399,29 @@ def test_a_refusal_a_retry_recovered_from_is_recorded_on_the_turn():
     provider = FakeProvider([
         http_error(429, "Too Many Requests", RATE_LIMIT_BODY, retry_after=0.0),
         # navigate, because the first turn of a run has no screenshot yet and
-        # the parser rightly refuses anything with coordinates in it.
-        ['{"type":"navigate","url":"http://127.0.0.1:9000/test"}'],
+        # the parser rightly refuses anything with coordinates in it.  A bare
+        # JSON command string, delivered as a native tool call.
+        '{"type":"navigate","url":"http://127.0.0.1:9000/test"}',
     ])
     runner = make_runner(provider, computer_max_http_attempts=3)
     run = new_run(provider="mistral")
 
     try:
-        command, error, raw = asyncio.get_event_loop().run_until_complete(
-            runner._next_command(run, bounds=None, image=None, first_turn=True)
+        command, error = asyncio.get_event_loop().run_until_complete(
+            runner._next_command(run)
         )
     except BaseException as exc:                          # noqa: BLE001
         check("a recovered refusal still produces a command", False, f"{type(exc).__name__}: {exc}")
         return
+    raw = run.trace[-1].raw if run.trace else ""
 
     check("a recovered refusal still produces a command", command is not None,
           f"command={command!r}")
     check("a recovered request is not an error", error == "", repr(error))
-    check("the reply after the retry is kept verbatim",
-          '"type":"navigate"' in raw, raw[:60])
+    call = (run.trace[-1].tool_call or {}) if run.trace else {}
+    check("the reply after the retry is kept on the turn",
+          call.get("name") == "navigate" and "127.0.0.1:9000" in (call.get("arguments") or ""),
+          repr(call))
     check("the refusal travelled with the reply", provider.calls == 2, str(provider.calls))
 
     turn = run.trace[-1]
@@ -434,6 +486,10 @@ def test_a_run_that_did_not_fail_has_no_failure_key_at_all():
     )
     failed.http_attempts = [{"attempt": 1, "status": 429}, {"attempt": 2, "status": 429},
                             {"attempt": 3, "status": 429}]
+    # A failure block is emitted only for a run that actually stopped badly:
+    # `_failure` reads `run.status`, so a run left at STATUS_DONE must stay
+    # banner-free even with an error-bearing turn on it.
+    run.status = STATUS_ERROR
     run.trace.append(failed)
     failure = run.trace_report(include_images=False, providers=[],
                                default_provider="mistral")["failure"]
@@ -450,7 +506,7 @@ def main() -> int:
         test_429_is_reported_as_reached_not_unreachable,
         test_429_is_retried_with_bounded_backoff_then_fails_cleanly,
         test_400_is_not_retried,
-        test_5xx_is_retried,
+        test_5xx_is_surfaced_immediately_not_re_sent,
         test_failure_path_never_references_unbound_raw,
         test_unbound_local_error_is_impossible_by_construction,
         test_malformed_provider_response_is_reported_not_crashed,

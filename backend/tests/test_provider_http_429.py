@@ -25,6 +25,13 @@ from app.providers.base import LLMMessage
 from app.providers.errors import ProviderHTTPError
 from app.providers.openai_compat import OpenAICompatProvider
 
+# Pacing is not what this module checks, and the 429/503 scripts make their own
+# waits explicit; zero the ten-second inter-call gap so back-to-back requests do
+# not inherit it.
+import app.providers.base as _provider_base  # noqa: E402
+
+_provider_base.MODEL_CALL_GAP_SECONDS = 0.0
+
 RESULTS: list[tuple[str, bool, str]] = []
 
 
@@ -156,7 +163,8 @@ def test_real_429_over_the_wire():
             check("the provider's own message is extracted from the JSON body",
                   "Rate limit reached for mistral-small-2506" in exc.provider_detail,
                   exc.provider_detail)
-            check("the raw body is kept verbatim", exc.body == RATE_LIMIT_BODY)
+            check("the provider's raw body is kept verbatim in the error body",
+                  RATE_LIMIT_BODY in exc.body)
             check("the summary says Provider reached, never 'could not be reached'",
                   exc.message.startswith("Provider reached")
                   and "could not be reached" not in exc.message,
@@ -176,18 +184,25 @@ def test_real_401_is_not_retried_over_the_wire():
                   srv.httpd.threads == 1, f"{srv.httpd.threads} requests hit the server")
 
 
-def test_real_503_is_retried_a_bounded_number_of_times_over_the_wire():
+def test_real_503_is_surfaced_without_a_retry_storm():
+    """A non-429 failure is handed back immediately, over the real wire.
+
+    ``stream_model`` owns the bounded 429 retry policy; anything else (here a
+    503) is raised on the first response.  The check is that it is not silently
+    re-sent -- and that the status it really carried is the one reported.
+    """
     with CountingServer((503, {"content-type": "application/json", "retry-after": "0"},
                          json.dumps({"error": {"message": "upstream is down"}}))) as srv:
         runner = runner_for(provider_for(srv.url))
         runner.settings.computer_max_http_attempts = 3
         try:
             ask(runner)
-            check("a real 503 raises after its attempts", False, "no exception")
+            check("a real 503 raises", False, "no exception")
         except ProviderHTTPError as exc:
-            check("a real 503 raises after its attempts", True, exc.message)
-            check("a real 503 was re-sent, and only as often as allowed",
-                  srv.httpd.threads == 3, f"{srv.httpd.threads} requests hit the server")
+            check("a real 503 raises", True, exc.message)
+            check("a real 503 is sent exactly once, not re-sent in a storm",
+                  srv.httpd.threads == 1, f"{srv.httpd.threads} requests hit the server")
+            check("the 503 status is the one reported", exc.status == 503, str(exc.status))
 
 
 def test_real_retry_after_date_form():
@@ -242,7 +257,7 @@ def main() -> int:
     for fn in [
         test_real_429_over_the_wire,
         test_real_401_is_not_retried_over_the_wire,
-        test_real_503_is_retried_a_bounded_number_of_times_over_the_wire,
+        test_real_503_is_surfaced_without_a_retry_storm,
         test_real_retry_after_date_form,
         test_real_non_json_error_body_is_still_shown,
         test_connection_refused_is_not_reported_as_reached,

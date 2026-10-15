@@ -1,0 +1,8 @@
+# Dependencies of the restricted browsing services only.
+#
+# The sandbox image (codespace/restricted.Dockerfile) installs these instead of
+# the full backend requirements: the gateway, the separate browser and the
+# sandboxed shell need an HTTP client and a WebDriver, nothing else.  Keeping the
+# image small keeps the thing that touches the network small, which is the point.
+httpx>=0.27
+selenium>=4.20

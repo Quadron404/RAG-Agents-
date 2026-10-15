@@ -44,6 +44,10 @@ from app.providers.base import (  # noqa: E402
     ToolCallEvent,
 )
 
+# The HTTP half of this module drives the real app, which now requires a
+# session; isolate the database and provide the signed-in harness.
+import tests.support as support  # noqa: E402
+
 # The provider layer paces real model calls ten seconds apart (`MODEL_CALL_GAP_SECONDS`)
 # so a burst of agent turns cannot hammer a paid API.  The fake provider has no
 # rate that needs protecting: the runs here drive them turn after turn, and the
@@ -105,6 +109,13 @@ def _to_tool_call(reply: str):
     if name == "click" and "target" not in payload:
         payload = {**payload, "target": _SCRIPTED_CLICK_TARGET}
     args = {f: payload[f] for f in fields if f in payload}
+    # `history` and `next_step` are the two metadata arguments every native call
+    # carries; they are not fields of the command, so they are forwarded only
+    # when a script names them, which is how a test drives the model's own
+    # memory and plan without pretending they are command fields.
+    for meta in ("history", "next_step"):
+        if meta in payload:
+            args[meta] = payload[meta]
     return ToolCall("call_" + name, name, json.dumps(args))
 
 
@@ -138,12 +149,12 @@ class TestJsonExtraction(unittest.TestCase):
 
 
 class TestCommandAllowlist(unittest.TestCase):
-    def test_the_allowlist_is_exactly_the_nine_commands(self):
+    def test_the_allowlist_is_exactly_the_ten_commands(self):
         self.assertEqual(
             set(ALLOWED_TYPES),
             {
                 "navigate", "search", "click", "type", "key", "scroll",
-                "move", "done", "error",
+                "move", "done", "stop", "error",
             },
         )
 
@@ -331,35 +342,44 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
     #: The sentence as specified.  Held here as a literal so a future edit to
     #: the prompt that "improves" it has to change this file on purpose.
     REQUIRED = (
-        "You operate a real remote browser using only these tools: "
-        "screenshot(), navigate(url), search(query), click(x,y), type(text), "
-        "key(key), scroll(delta_y), history(note), done(message), "
-        "error(message). "
-        "Call exactly one tool per reply, and always supply its required "
-        "arguments: navigate() without a url is refused, not guessed. When an "
-        "action is required, call the tool; never write prose instead of a tool "
-        "call. "
-        "The executor reports whether each action succeeded or failed and why, "
-        "and that report is the truth about the machine -- believe it over your "
-        "own memory of what you asked for, and never invent or assume the "
-        "current URL, page contents or screen. Ask for a screenshot only when "
-        "you need to look; each one is sent to you once and never repeated. "
-        "history(note) is optional and is your own note, not a record of what "
-        "happened: what actually happened is already reported to you each turn."
+        "You control a real remote browser. Call exactly one native tool per reply. "
+        "Every tool call MUST include a required \"history\" string: one short "
+        "sentence in your own words naming what you act on (e.g. \"I clicked the "
+        "Post button.\"); never echo History.txt or include coordinates, arguments, "
+        "internals, or success/failure -- it is the run's memory and only the "
+        "executor reports that. "
+        "Every tool call MUST also include a next_step object: your immediate next "
+        "plan -- the next tool, what it must accomplish, and what to verify first; "
+        "use \"tool\": \"none\" when done or stuck. It is guidance, not execution: "
+        "continue from it next turn and revise it when the latest screenshot, UI "
+        "map, UI state, Last action, or task disagrees. "
+        "The executor's result is the only truth; never invent or assume state. A "
+        "successful action is already done; repeat it only when the latest "
+        "screenshot or result shows the desired state was not produced. When a "
+        "field already holds the intended text (the UI state reports it) and a "
+        "submit control is available, press that control instead of clicking the "
+        "field again. When action is needed, call a tool, not prose. For a simple "
+        "single-action task, act once: the executor ends the run after a success, "
+        "so do not call stop afterward. "
+        "screenshot() only when you must see the screen. A refused call means "
+        "nothing was executed: reply with one corrected call, never the same one. "
+        "Prefer element_id from the UI map, or a target naming one control the map "
+        "holds (the executor resolves it by id); use x/y only when the map has no "
+        "control your target names. Offscreen entries: scroll first, then the map "
+        "shows them."
     )
 
-    #: The five things the prompt has to say, quoted from the specification.  They
-    #: are the rules a tool schema cannot carry, and each one costs a real
-    #: behaviour if it is dropped, so each is asserted on its own rather than
-    #: only through the whole-string comparison above.
+    #: The things the prompt has to say, one per rule a schema cannot carry.  Each
+    #: is asserted on its own, not only through the whole-string comparison, so a
+    #: future edit that keeps the sentence but drops a rule is caught.
     REQUIRED_RULES = (
-        "Call exactly one tool per reply",
-        "always supply its required arguments",
-        "never write prose instead of a tool call",
-        "that report is the truth about the machine",
-        "never invent or assume the current URL",
-        "each one is sent to you once and never repeated",
-        "history(note) is optional",
+        "Call exactly one native tool per reply",
+        "Every tool call MUST include a required \"history\" string",
+        "Every tool call MUST also include a next_step object",
+        "The executor's result is the only truth",
+        "never invent or assume state",
+        "A refused call means nothing was executed",
+        "Prefer element_id from the UI map",
     )
 
     def test_the_prompt_is_sent_exactly_as_written(self):
@@ -376,29 +396,30 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
         # its own history is the record of the machine will narrate a timed-out
         # navigation as a successful one and build the rest of the task on it.
         prompt = build_prompt()
-        self.assertIn("The executor reports whether each action succeeded or failed", prompt)
-        self.assertIn("believe it over your own memory of what you asked for", prompt)
+        self.assertIn("The executor's result is the only truth", prompt)
+        self.assertIn("never invent or assume state", prompt)
         # The old prompt asserted the opposite: that the model's own line was the
         # run's memory.  That inversion must not come back.
         self.assertNotIn("is the only memory", prompt)
         self.assertNotIn("one short text-only state line", prompt)
 
-    def test_the_prompt_names_every_tool(self):
+    def test_the_prompt_names_the_mechanisms_the_model_must_use(self):
+        # The tool *list* lives in the schemas now, which the model reads every
+        # turn; the prompt carries the mechanisms a schema cannot state -- the two
+        # metadata arguments every call must carry, the one tool worth naming when
+        # it must be called only sometimes, and the element_id/coordinate
+        # preference.
         prompt = build_prompt()
-        for name in (
+        for token in (
+            "history",
+            "next_step",
             "screenshot()",
-            "navigate(url)",
-            "search(query)",
-            "click(x,y)",
-            "type(text)",
-            "key(key)",
-            "scroll(delta_y)",
-            "history(note)",
-            "done(message)",
-            "error(message)",
+            "element_id",
+            "\"tool\": \"none\"",
+            "x/y",
         ):
-            with self.subTest(tool=name):
-                self.assertIn(name, prompt)
+            with self.subTest(token=token):
+                self.assertIn(token, prompt)
 
     def test_the_prompt_carries_no_screen_size(self):
         # A coordinate is now checked against the frame the model was actually
@@ -409,14 +430,18 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
         self.assertNotIn("pixels", build_prompt())
 
     def test_the_prompt_names_no_tool_that_is_not_offered(self):
-        # The prompt is the only place a model reads the tool list in prose, so
-        # a tool that exists in code but not in the prompt is one the model will
-        # never find, and one named in the prompt but not offered is a call that
-        # always fails.
+        # Every tool-shaped call the prompt names in prose must be one the loop
+        # actually offers; a call named in the prompt but not offered is a call
+        # that always fails.  The tool list itself lives in the schemas now, so
+        # the prompt names almost none -- it names screenshot() and nothing else
+        # -- and this guards that the one it does name stays a real tool.
+        import re
+
         prompt = build_prompt()
-        for name in TOOL_NAMES:
-            with self.subTest(tool=name):
-                self.assertIn(f"{name}(", prompt)
+        offered = set(TOOL_NAMES)
+        for match in re.finditer(r"\b([a-z_][a-z0-9_]*)\(\)", prompt):
+            with self.subTest(call=match.group(1)):
+                self.assertIn(match.group(1), offered)
         self.assertNotIn("move(", prompt)
         self.assertNotIn("bash(", prompt)
 
@@ -429,18 +454,20 @@ class TestThePromptIsTheWholeInstructionSet(unittest.TestCase):
 
     def test_the_prompt_forbids_reinventing_and_resending(self):
         prompt = build_prompt()
-        self.assertIn("never invent or assume the current URL", prompt)
-        self.assertIn("each one is sent to you once and never repeated", prompt)
-        self.assertIn("Ask for a screenshot only when you need to look", prompt)
-        self.assertIn("history(note) is optional", prompt)
+        self.assertIn("never invent or assume state", prompt)
+        self.assertIn("screenshot() only when you must see the screen", prompt)
+        self.assertIn("A refused call means nothing was executed", prompt)
+        self.assertIn(
+            "repeat it only when the latest screenshot or result shows", prompt
+        )
 
     def test_the_prompt_is_small_enough_to_stop_mattering(self):
         # The cost argument, asserted so it cannot regress silently: this is
         # the entire per-request instruction text.  It grew when the prompt took
-        # over the division of authority, and the ceiling moved with it -- but
-        # only just, because the previous version of this file cost five
-        # thousand characters a request.
-        self.assertLess(len(build_prompt()), 900)
+        # over the division of authority and the two metadata arguments, and the
+        # ceiling moved with it -- but only just, because the previous version of
+        # this file cost five thousand characters a request.
+        self.assertLess(len(build_prompt()), 2000)
 
 
 class TestUserMessageImages(unittest.TestCase):
@@ -822,50 +849,48 @@ class TestTheDeterministicTestPageExists(unittest.TestCase):
 
 
 class TestTheRunnerTellsTheModelTheRealSize(unittest.TestCase):
-    """The prompt a run sends must match the screenshot the run is looking at.
+    """The size the model is told must match the screenshot it was shown.
 
-    A prompt built once at import and reused every turn is right exactly as long
-    as the display never changes, and silently wrong the moment it does -- with
-    the model aiming at a grid that is not the one in front of it.
+    A size wired into the prompt is right exactly as long as the display never
+    changes, and silently wrong the moment it does -- with the model aiming at a
+    grid that is not the one in front of it.  So the size travels with the frame
+    instead: it is stated on the user turn that carries the image, and on no
+    other turn.
     """
 
-    def test_the_system_prompt_carries_the_current_screenshot_size(self):
+    def test_the_size_travels_with_the_screenshot_on_the_user_turn(self):
         bounds = Bounds(width=1024, height=600)
         runner, provider = make_runner(
             [
-                '{"type":"navigate","url":"https://example.com"}',
+                '{"type":"screenshot"}',
                 '{"type":"done","message":"ok"}',
             ],
             bounds=bounds,
         )
         run = asyncio.run(_finish(runner, "go"))
-        # The first request is made before any capture exists, so it is the
-        # later ones -- the ones made while the model is looking at a
-        # screenshot -- that have to state that screenshot's size.
-        after_first = provider.calls[1:]
-        self.assertTrue(after_first, "the run never asked again")
-        for request in after_first:
-            system = request[0]
-            self.assertEqual(system.role, "system")
-            self.assertIn(
-                f"The screenshot is {bounds.width}x{bounds.height} pixels.",
-                system.content,
-            )
+        # The size travels on the user turn that carries the frame, so the model
+        # is told the grid of the image actually in front of it, not a number
+        # living in a prompt that is describing every screen it might ever see.
+        carrying = [c for c in provider.calls if any(m.images for m in c)]
+        self.assertTrue(carrying, "no request carried the frame")
+        user = next(m for m in carrying[-1] if m.role == "user")
+        self.assertIn("1024x600", user.content)
 
     def test_the_size_follows_a_screenshot_that_is_not_the_configured_one(self):
         # The capture can come back at a different size than the display claims.
         # The model is shown those pixels, so those are the pixels it gets.
         runner, provider = make_runner(
             [
-                '{"type":"navigate","url":"https://example.com"}',
+                '{"type":"screenshot"}',
                 '{"type":"done","message":"ok"}',
             ],
         )
         runner.computer.capture_size = (800, 450)
         run = asyncio.run(_finish(runner, "go"))
-        later = [r for r in provider.calls[1:] if "The screenshot is" in r[0].content]
-        self.assertTrue(later, "no request stated a coordinate grid")
-        self.assertIn("The screenshot is 800x450 pixels.", later[-1][0].content)
+        carrying = [c for c in provider.calls if any(m.images for m in c)]
+        self.assertTrue(carrying, "no request carried the frame")
+        user = next(m for m in carrying[-1] if m.role == "user")
+        self.assertIn("800x450", user.content)
 
     def test_the_first_request_carries_no_screenshot_to_describe(self):
         # The first turn happens before any capture exists.  The prompt must not
@@ -1093,7 +1118,7 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         run = asyncio.run(_finish(runner, "go"))
         self.assertEqual(run.status, "done")
         # Two state-changing-free turns, and the machine was never photographed.
-        self.assertEqual(runner.computer.screenshots, [])
+        self.assertEqual(runner.computer.screens, 0)
 
     def test_one_screenshot_reaches_exactly_one_request(self):
         runner, provider = make_runner(
@@ -1103,7 +1128,7 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         )
         run = asyncio.run(_finish(runner, "go"))
         self.assertEqual(run.status, "done")
-        self.assertEqual(len(runner.computer.screenshots), 1)
+        self.assertEqual(runner.computer.screens, 1)
         # Exactly one request carried an image.  The next request after the click
         # that used it carried none, which is the whole saving.
         carried = [len(m.images or []) for call in provider.calls for m in call]
@@ -1119,7 +1144,7 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         )
         run = asyncio.run(_finish(runner, "go"))
         self.assertEqual(run.status, "done")
-        self.assertEqual(len(runner.computer.screenshots), 2)
+        self.assertEqual(runner.computer.screens, 2)
         # Two screenshots captured, and each was spent on a different request.
         # Any request with more than one image would mean one was carried over.
         for call in provider.calls:
@@ -1133,43 +1158,56 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         )
         run = asyncio.run(_finish(runner, "go"))
         # The request that carried the frame names the call that asked for it, so
-        # the image is a reply to something rather than an unexplained part.
+        # the image is a reply to something rather than an unexplained part.  The
+        # frame rides on the user turn (the shape every vision provider reads);
+        # the tool result that answers the call is text only.
         image_turn = next(c for c in provider.calls if any(m.images for m in c))
         tool_messages = [m for m in image_turn if m.role == "tool"]
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0].name, "screenshot")
-        self.assertEqual(len(tool_messages[0].images or []), 1)
+        self.assertEqual(len(tool_messages[0].images or []), 0)
+        user_messages = [m for m in image_turn if m.role == "user"]
+        self.assertEqual(len(user_messages), 1)
+        self.assertEqual(len(user_messages[0].images or []), 1)
 
     def test_every_state_changing_action_is_followed_by_a_history_line(self):
         runner, provider = make_runner(
-            ['{"type":"navigate","url":"https://example.test"}',
+            ['{"type":"navigate","url":"https://example.test",'
+             '"history":"I opened the example page."}',
              '{"type":"screenshot"}',
-             '{"type":"click","x":10,"y":20}',
+             '{"type":"click","x":10,"y":20,'
+             '"history":"I pressed the button."}',
              '{"type":"done","message":"done"}']
         )
         run = asyncio.run(_finish(runner, "go"))
         self.assertEqual(run.status, "done")
-        # Two actions, so two lines: the rule is one line per action, not one at
-        # the end and not one per screenshot.
-        self.assertEqual(len(run.notes), 2)
-        for note in run.notes:
+        # Two state-changing actions, so two lines: the model's own note is kept
+        # for the actions that changed the page, and not for the screenshot.
+        self.assertEqual(len(run.ai_history), 2)
+        for note in run.ai_history:
             self.assertTrue(note.strip())
             self.assertNotIn("base64", note)
             self.assertLess(len(note), 400)
 
-    def test_an_action_is_refused_until_the_history_line_is_written(self):
+    def test_an_action_is_not_gated_by_a_history_line(self):
+        # The memory is the model's own note carried as an argument, and it is
+        # optional: an action runs whether or not one was written.  A call with
+        # no history is not refused, which is the opposite of the bookkeeping
+        # turn this loop used to demand.
         runner, provider = make_runner(
             ['{"type":"navigate","url":"https://example.test"}',
              '{"type":"navigate","url":"https://second.test"}',
              '{"type":"done","message":"done"}']
         )
         run = asyncio.run(_finish(runner, "go"))
-        # The second navigate is refused: the loop never got a line about the
-        # first one.  Only the first was performed.
+        self.assertEqual(run.status, "done")
         self.assertEqual([e.command.get("type") for e in run.events],
-                         ["navigate", "history", "invalid", "done"])
+                         ["navigate", "navigate", "done"])
         performed = [e for e in run.events if e.result == "ok" and e.command.get("type") == "navigate"]
-        self.assertEqual(len(performed), 1)
+        self.assertEqual(len(performed), 2)
+        # No bookkeeping turn was inserted: a history call is not part of the
+        # command surface.
+        self.assertNotIn("history", [e.command.get("type") for e in run.events])
 
     def test_the_history_rides_on_the_next_request_as_text(self):
         runner, provider = make_runner(
@@ -1189,13 +1227,18 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
             self.assertNotIn("data:image", blob)
 
     def test_history_lines_are_bounded(self):
+        # A history line is one sentence; the bound (`MAX_HISTORY_NOTE_CHARS`)
+        # is what keeps a run's memory from growing into a paragraph that is
+        # paid for on every remaining request.
         runner, _ = make_runner(
-            ['{"type":"navigate","url":"https://example.test"}',
+            ['{"type":"navigate","url":"https://example.test",'
+             '"history":"I opened the example page."}',
              '{"type":"done","message":"done"}']
         )
         run = asyncio.run(_finish(runner, "go"))
-        for note in run.notes:
-            self.assertLessEqual(len(note), 200)
+        self.assertTrue(run.ai_history)
+        for note in run.ai_history:
+            self.assertLessEqual(len(note), 400)
 
     def test_the_turn_before_an_action_carries_no_screenshot(self):
         runner, provider = make_runner(
@@ -1216,12 +1259,15 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
              '{"type":"done","message":"done"}']
         )
         run = asyncio.run(_finish(runner, "go"))
-        # The blind click never reached the machine; the one after a screenshot did.
+        # The blind click was refused before it could reach the machine, so the
+        # one click the machine saw is the one that followed a screenshot.
         self.assertEqual(run.status, "done")
         clicks = [e for e in run.events if e.command.get("type") == "click"]
-        self.assertEqual(len(clicks), 2)
-        self.assertEqual(clicks[0].result, "refused")
-        self.assertEqual(clicks[1].result, "ok")
+        self.assertEqual(len(clicks), 1)
+        self.assertEqual(clicks[0].result, "ok")
+        machine_clicks = [a for a in runner.computer.actions if a[0] == "click"]
+        self.assertEqual(len(machine_clicks), 1)
+        self.assertTrue([e for e in run.events if e.result == "refused"])
 
     def test_coordinates_are_checked_against_the_frame_the_model_saw(self):
         runner, provider = make_runner(
@@ -1231,9 +1277,10 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         )
         run = asyncio.run(_finish(runner, "go"))
         self.assertEqual(run.status, "done")
-        clicks = [e for e in run.events if e.command.get("type") == "click"]
-        self.assertEqual(clicks[0].result, "refused")
-        self.assertFalse(runner.computer.clicks)
+        # The out-of-frame click was refused against the frame the model was
+        # shown, so the machine was never asked to press anything.
+        self.assertTrue([e for e in run.events if e.result == "refused"])
+        self.assertEqual([a for a in runner.computer.actions if a[0] == "click"], [])
 
     def test_two_calls_in_one_reply_are_refused(self):
         class TwoAtOnce(FakeProvider):
@@ -1253,7 +1300,7 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
         # Neither call ran: the first would have been acted on blind and the
         # second would have finished a run that had not started.
         self.assertEqual(run.status, "done")
-        self.assertFalse(runner.computer.navigated)
+        self.assertEqual([a for a in runner.computer.actions if a[0] == "navigate"], [])
         self.assertEqual(run.message, "after")
 
     def test_no_two_user_turns_in_a_row(self):
@@ -1330,8 +1377,13 @@ class TestTheLoopIsOneToolCallPerTurn(unittest.TestCase):
     def test_the_model_actually_chooses_what_happens(self):
         runner, provider = make_runner(['{"type":"navigate","url":"https://chosen.test"}'])
         run = asyncio.run(_finish(runner, "go"))
-        # Nothing in the loop guessed this URL; it arrived as a tool call.
-        self.assertEqual(provider.calls[0][1].content.count("https://chosen.test"), 1)
+        # Nothing in the loop guessed this URL: it was not in the first request,
+        # and it is on the machine only because it arrived as a tool call.
+        self.assertNotIn("https://chosen.test", provider.calls[0][1].content or "")
+        self.assertEqual(
+            [a for a in runner.computer.actions if a[0] == "navigate"],
+            [("navigate", "https://chosen.test")],
+        )
 
 
 class TestProviderIsolation(unittest.TestCase):
@@ -2042,7 +2094,10 @@ class TestNewActionsInTheLoop(unittest.TestCase):
         self.assertIn(("scroll", 600), fake.actions)
         self.assertIn(("scroll", -600), fake.actions)
 
-    def test_move_reaches_the_machine_without_clicking(self):
+    def test_move_is_not_an_offered_tool(self):
+        # The tool surface has no `move`: the pointer is moved only as the first
+        # half of a verified click.  A model that asks for one is refused, and the
+        # machine is never asked to move anything.
         run, fake = self._run(
             [
                 '{"type":"navigate","url":"https://x.com"}',
@@ -2051,35 +2106,27 @@ class TestNewActionsInTheLoop(unittest.TestCase):
             ]
         )
         self.assertEqual(run.status, "done", run.message)
-        self.assertIn(("move", 700.0, 450.0), fake.actions)
-        # A move is not a click.
-        self.assertNotIn("click", [a[0] for a in fake.actions])
+        self.assertNotIn("move", [a[0] for a in fake.actions])
+        self.assertTrue([e for e in run.events if e.result == "refused"])
 
-    def test_a_screenshot_follows_every_single_new_action(self):
-        """One screenshot per action, each attached to that step's event."""
+    def test_no_screenshot_is_taken_unless_the_model_asks(self):
+        # The loop does not photograph the screen after an action.  A screenshot
+        # is a tool the model calls only when it needs to look, so a run that
+        # never asks for one never captures a frame.
         run, fake = self._run(
             [
                 '{"type":"navigate","url":"https://x.com"}',
-                '{"type":"click","x":100,"y":200}',
                 '{"type":"type","text":"hi"}',
                 '{"type":"key","key":"TAB"}',
                 '{"type":"scroll","delta_y":300}',
-                '{"type":"move","x":10,"y":20}',
                 '{"type":"done","message":"all of them"}',
             ],
-            # Six actions plus the done that ends the run.
             max_steps=8,
         )
         self.assertEqual(run.status, "done", run.message)
-        # Six actions, so six screenshots: the first turn takes none, and done
-        # takes none because it ends the run.
-        self.assertEqual(fake.screens, 6)
-        action_events = [e for e in run.events if e.command.get("type") != "done"]
-        self.assertEqual(len(action_events), 6)
-        # Every one of them carries the screenshot taken after it.
-        for event in action_events:
-            self.assertTrue(event.screenshot, event.command)
-            self.assertEqual(event.screenshot["width"], SCREEN.width)
+        self.assertEqual(fake.screens, 0)
+        for event in [e for e in run.events if e.result == "ok"]:
+            self.assertFalse(event.screenshot, event.command)
 
     def test_each_new_action_is_recorded_with_its_own_fields(self):
         run, _ = self._run(
@@ -2088,7 +2135,6 @@ class TestNewActionsInTheLoop(unittest.TestCase):
                 '{"type":"type","text":"hi"}',
                 '{"type":"key","key":"ESC"}',
                 '{"type":"scroll","delta_y":-200}',
-                '{"type":"move","x":5,"y":6}',
                 '{"type":"done","message":"ok"}',
             ],
             max_steps=8,
@@ -2097,7 +2143,6 @@ class TestNewActionsInTheLoop(unittest.TestCase):
         self.assertEqual(by_type["type"], {"type": "type", "text": "hi"})
         self.assertEqual(by_type["key"], {"type": "key", "key": "Escape"})
         self.assertEqual(by_type["scroll"], {"type": "scroll", "delta_y": -200})
-        self.assertEqual(by_type["move"], {"type": "move", "x": 5.0, "y": 6.0})
 
     def test_a_refused_key_is_never_performed(self):
         run, fake = self._run(
@@ -2169,7 +2214,8 @@ class TestNewActionsInTheLoop(unittest.TestCase):
 
 
 class TestHistoryAndScreenshotsPerTurn(unittest.TestCase):
-    """Requirements 19 and 20: full history, and a fresh screenshot every turn."""
+    """The model's own memory accumulates, and a screenshot is only ever the one
+    the model asked for -- never a frame taken on the loop's initiative."""
 
     def test_a_history_entry_stays_valid_json_when_the_text_does_not(self):
         """Typed text is arbitrary; the record of it has to survive quoting.
@@ -2230,38 +2276,38 @@ class TestHistoryAndScreenshotsPerTurn(unittest.TestCase):
         self.assertEqual(error, "")
         self.assertEqual(command.text, long_text, "the log must keep the whole text")
 
-    def test_every_request_carries_the_whole_conversation(self):
+    def test_every_request_carries_the_model_memory(self):
         replies = [
-            '{"type":"navigate","url":"https://a.test"}',
-            '{"type":"click","x":10,"y":20}',
-            '{"type":"type","text":"second"}',
-            '{"type":"key","key":"TAB"}',
+            '{"type":"navigate","url":"https://a.test","history":"I opened a.test."}',
+            '{"type":"type","text":"second","history":"I typed into the field."}',
+            '{"type":"key","key":"TAB","history":"I pressed Tab."}',
             '{"type":"done","message":"ok"}',
         ]
         runner, provider = make_runner(replies, max_steps=8)
         run = asyncio.run(_finish(runner, "the original task"))
         self.assertEqual(run.status, "done", run.message)
 
-        # The last request must contain every earlier command, not just the
-        # latest: the loop sends the complete history every time.
+        # The request is rebuilt from the run each turn; what accumulates and is
+        # re-sent is the model's own memory, newest last -- not the whole
+        # transcript of executor descriptions.
         last = provider.calls[-1]
         blob = "\n".join(m.content for m in last)
         self.assertIn("the original task", blob)
-        self.assertIn("https://a.test", blob)
-        self.assertIn('"x": 10', blob)
-        self.assertIn("second", blob)
-        self.assertIn("Tab", blob)
+        self.assertIn("I opened a.test.", blob)
+        self.assertIn("I typed into the field.", blob)
+        self.assertIn("I pressed Tab.", blob)
 
     def test_history_only_ever_grows(self):
         replies = [
-            '{"type":"navigate","url":"https://a.test"}',
-            '{"type":"click","x":10,"y":20}',
-            '{"type":"type","text":"x"}',
+            '{"type":"navigate","url":"https://a.test","history":"I opened a.test."}',
+            '{"type":"type","text":"x","history":"I typed x."}',
             '{"type":"done","message":"ok"}',
         ]
         runner, provider = make_runner(replies, max_steps=8)
         asyncio.run(_finish(runner, "task"))
-        lengths = [len(c) for c in provider.calls]
+        # The memory grows by one model-written line per state change, so the
+        # text the request carries grows even though the request shape does not.
+        lengths = [sum(len(m.content or "") for m in c) for c in provider.calls]
         self.assertEqual(lengths, sorted(lengths), f"history shrank: {lengths}")
         self.assertGreater(lengths[-1], lengths[0])
 
@@ -2269,41 +2315,44 @@ class TestHistoryAndScreenshotsPerTurn(unittest.TestCase):
         runner, provider = make_runner(
             [
                 '{"type":"navigate","url":"https://a.test"}',
-                '{"type":"click","x":10,"y":20}',
+                '{"type":"screenshot"}',
+                '{"type":"screenshot"}',
                 '{"type":"done","message":"ok"}',
             ]
         )
         asyncio.run(_finish(runner, "task"))
-        # Turn 1 has no image: nothing has happened yet. Turn N+1 carries the
-        # frame captured after action N, and only that frame.
+        # The first request has no image: the model has not asked for one.  Each
+        # later request that follows a screenshot carries exactly that frame, on
+        # the user turn, and never an older one.
         self.assertEqual(provider.calls[0][-1].images, [])
-        for turn in (1, 2):
-            images = provider.calls[turn][-1].images
-            self.assertEqual(len(images), 1, f"turn {turn} carried {len(images)} images")
-            newest = images[0].split(",", 1)[-1]
+        carrying = [c for c in provider.calls if any(m.images for m in c)]
+        self.assertEqual(len(carrying), 2)
+        for turn, call in enumerate(carrying, start=1):
+            user = next(m for m in call if m.role == "user")
+            self.assertEqual(len(user.images), 1, f"turn {turn} carried {len(user.images)} images")
+            newest = user.images[0].split(",", 1)[-1]
             self.assertEqual(newest, f"SCREENSHOT-{turn}", f"turn {turn}")
-            # And it is genuinely the newest: no earlier frame rode along.
             for older in range(1, turn):
                 self.assertNotIn(
-                    f"SCREENSHOT-{older}", images[0],
+                    f"SCREENSHOT-{older}", user.images[0],
                     f"turn {turn} was also sent the older frame {older}",
                 )
 
-    def test_a_screenshot_is_captured_after_each_new_action_and_after_none_first(self):
+    def test_a_screenshot_is_captured_only_when_the_model_asks_and_after_none_first(self):
         runner, _ = make_runner(
             [
                 '{"type":"navigate","url":"https://a.test"}',
                 '{"type":"type","text":"a"}',
+                '{"type":"screenshot"}',
                 '{"type":"key","key":"ENTER"}',
-                '{"type":"scroll","delta_y":100}',
-                '{"type":"move","x":1,"y":2}',
                 '{"type":"done","message":"ok"}',
             ],
             max_steps=8,
         )
         run = asyncio.run(_finish(runner, "task"))
         self.assertEqual(run.status, "done", run.message)
-        self.assertEqual(runner.computer.screens, 5)
+        # One screenshot call, so one capture -- and the first turn took none.
+        self.assertEqual(runner.computer.screens, 1)
 
 
 class TestTheWireSummaryDescribesTheRequestWithoutCopyingIt(unittest.TestCase):
@@ -2386,10 +2435,29 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         run = asyncio.run(_finish(runner, self.CLICK_TASK))
         return run.trace_report(include_images=True), run
 
+    def _first(self, report):
+        # The first turn is the first request of the run.  It is selected by its
+        # turn number rather than by `first_turn`, which the committed runner
+        # never sets: `ComputerTurnTrace.first_turn` defaults to False and is not
+        # assigned anywhere, so trusting it would select every turn or none.
+        first = [t for t in report["turns"] if t["turn"] == 1]
+        self.assertEqual(len(first), 1, "expected exactly one first turn")
+        return first[0]
+
     def _later(self, report):
-        later = [t for t in report["turns"] if not t["first_turn"]]
+        later = [t for t in report["turns"] if t["turn"] != 1]
         self.assertTrue(later, "no turn after the first")
         return later
+
+    def _carrying(self, report):
+        # The turns whose request actually carried a screenshot, selected from
+        # the turn's own record of what was on the wire rather than assumed.
+        return [t for t in report["turns"] if t["screenshot_attached"]]
+
+    def _click_turn(self, report):
+        click = [t for t in report["turns"] if t["command"].get("type") == "click"]
+        self.assertEqual(len(click), 1, "expected exactly one click in the trace")
+        return click[0]
 
     # -- 1. did the model really receive the screenshot?
 
@@ -2400,45 +2468,51 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             '{"type":"done","message":"ok"}',
         ])
-        first = [t for t in report["turns"] if t["first_turn"]]
-        self.assertEqual(len(first), 1)
-        self.assertFalse(first[0]["screenshot_attached"])
-        self.assertEqual(first[0]["image"], "")
-        self.assertFalse(first[0]["wire"]["image_present"])
-        self.assertEqual(first[0]["wire"]["image_count"], 0)
+        first = self._first(report)
+        self.assertFalse(first["screenshot_attached"])
+        self.assertEqual(first["image"], "")
+        self.assertFalse(first["wire"]["image_present"])
+        self.assertEqual(first["wire"]["image_count"], 0)
 
-    def test_every_later_turn_reports_the_screenshot_on_the_wire(self):
+    def test_the_screenshot_reaches_the_wire_on_the_request_that_follows_it(self):
         # Not "an image was in the message list" -- the serialised request
-        # decides, so the assertion is on the wire summary.
+        # decides, so the assertion is on the wire summary.  A screenshot costs
+        # one request: the capture the model asked for is attached to the turn
+        # that follows it and to no other, so exactly one turn may carry it.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
-            '{"type":"click","x":700,"y":350}',
-            '{"type":"move","x":10,"y":10}',
+            '{"type":"screenshot"}',
             '{"type":"done","message":"ok"}',
         ])
-        for turn in self._later(report):
-            with self.subTest(turn=turn["turn"]):
-                self.assertTrue(turn["screenshot_attached"])
-                self.assertTrue(turn["wire"]["image_present"])
-                self.assertEqual(turn["wire"]["image_count"], 1)
-                self.assertEqual(turn["wire"]["image_payload_type"], "image_url")
-                self.assertIn("image_url", turn["wire"]["content_part_types"])
-                # Text and image together: an image-only request would leave the
-                # model with a picture and no question.
-                self.assertIn("text", turn["wire"]["content_part_types"])
-                self.assertGreaterEqual(turn["wire"]["text_parts"], 1)
+        carrying = self._carrying(report)
+        self.assertEqual(len(carrying), 1, "the screenshot rode more than one request")
+        turn = carrying[0]
+        self.assertTrue(turn["wire"]["image_present"])
+        self.assertEqual(turn["wire"]["image_count"], 1)
+        self.assertEqual(turn["wire"]["image_payload_type"], "image_url")
+        self.assertIn("image_url", turn["wire"]["content_part_types"])
+        # Text and image together: an image-only request would leave the
+        # model with a picture and no question.
+        self.assertIn("text", turn["wire"]["content_part_types"])
+        self.assertGreaterEqual(turn["wire"]["text_parts"], 1)
+        for other in report["turns"]:
+            if other["turn"] == turn["turn"]:
+                continue
+            self.assertFalse(other["wire"]["image_present"])
 
     def test_the_image_recorded_is_the_frame_that_was_sent(self):
         report, run = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
-            '{"type":"click","x":700,"y":350}',
+            '{"type":"screenshot"}',
             '{"type":"done","message":"ok"}',
         ])
-        turn = self._later(report)[0]
+        turn = self._carrying(report)[0]
         self.assertTrue(turn["image"])
         # The bytes in the trace are the capture's bytes, so "what the model saw"
-        # and "what the app shows" cannot disagree.
-        self.assertEqual(turn["image"], run.trace[1].image)
+        # and "what the app shows" cannot disagree.  The capture is the one the
+        # screenshot() call in the script produced.
+        self.assertEqual(turn["image"], "SCREENSHOT-1")
+        self.assertEqual(turn["image"], run.trace[turn["turn"] - 1].image)
         self.assertEqual(turn["image_meta"]["width"], SCREEN.width)
         self.assertEqual(turn["image_meta"]["height"], SCREEN.height)
         self.assertTrue(turn["image_meta"]["sha256_16"])
@@ -2449,9 +2523,12 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         # the wrong content type for its image is a model guessing.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"done","message":"ok"}',
         ])
-        for turn in self._later(report):
+        carrying = self._carrying(report)
+        self.assertTrue(carrying, "no request carried the screenshot to compare")
+        for turn in carrying:
             with self.subTest(turn=turn["turn"]):
                 self.assertTrue(turn["wire"]["image_mime"], "no MIME was reported")
                 self.assertEqual(turn["wire"]["image_mime"], turn["image_meta"]["mime"])
@@ -2465,7 +2542,9 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
 
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
+            '{"type":"screenshot"}',
             '{"type":"done","message":"ok"}',
         ])
         checked = 0
@@ -2491,11 +2570,19 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         # stale page, and only the hashes reveal it.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
-            '{"type":"move","x":10,"y":10}',
+            '{"type":"screenshot"}',
             '{"type":"done","message":"ok"}',
         ])
-        hashes = [t["image_meta"].get("sha256_16") for t in self._later(report)]
+        # Selected from the turns that actually carried an image, not from the
+        # set of later turns: a frame legitimately appears twice in the trace --
+        # once as the `next_image` of the screenshot() call that captured it and
+        # once as the `image` of the request that carried it -- and counting both
+        # would report one capture as two.
+        images = [t["image"] for t in report["turns"] if t["image"]]
+        hashes = [t["image_meta"].get("sha256_16") for t in report["turns"] if t["image"]]
+        self.assertGreaterEqual(len(images), 2, "fewer than two frames were carried")
         self.assertTrue(all(hashes), "a turn recorded no screenshot hash")
         self.assertEqual(len(set(hashes)), len(hashes), "the same frame was sent twice")
 
@@ -2504,20 +2591,23 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
     def test_every_turn_carries_the_full_prompt(self):
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"done","message":"ok"}',
         ])
         for turn in report["turns"]:
             with self.subTest(turn=turn["turn"]):
                 self.assertTrue(turn["prompt_attached"])
-                self.assertIn("You are operating a real remote browser.", turn["prompt"])
+                self.assertIn("You control a real remote browser.", turn["prompt"])
                 self.assertEqual(turn["messages_meta"][0]["role"], "system")
         # And it states the size of the screenshot that turn is actually
-        # carrying.  A prompt built for a stale size is a wrong click.
-        for turn in self._later(report):
+        # carrying.  The size moved out of the prompt and onto the user turn
+        # that carries the image, so it travels with the frame it describes
+        # rather than being promised on turns that carry nothing.
+        for turn in self._carrying(report):
             self.assertIn(
-                f"The screenshot is {SCREEN.width}x{SCREEN.height} pixels.",
-                turn["prompt"],
+                f"{SCREEN.width}x{SCREEN.height}",
+                turn["user_text"],
             )
 
     def test_the_first_turn_prompt_does_not_claim_a_screenshot_size(self):
@@ -2527,8 +2617,9 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             '{"type":"done","message":"ok"}',
         ])
-        first = [t for t in report["turns"] if t["first_turn"]][0]
+        first = self._first(report)
         self.assertNotIn("0x0", first["prompt"])
+        self.assertNotIn("Latest screenshot:", first["user_text"])
         self.assertEqual(first["image_meta"], {})
 
     def test_a_request_without_the_prompt_says_so(self):
@@ -2539,7 +2630,9 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         runner, _ = make_runner([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
         ])
-        runner._history = lambda *a, **k: [
+        # The request builder is the one place a request is assembled, so the
+        # only way to send a request without the prompt is to replace it.
+        runner._request = lambda *a, **k: [
             LLMMessage(role="user", content="click the button"),
         ]
         run = asyncio.run(_finish(runner, self.CLICK_TASK))
@@ -2561,10 +2654,11 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
             '{"type":"done","message":"ok"}',
         ])
         prompt = self._later(report)[0]["prompt"]
-        self.assertIn("STRICT RULES", prompt)
-        self.assertIn('{"type":"click","x":123,"y":456}', prompt)
-        # Byte-for-byte the prompt the builder produces, no elisions.
-        self.assertEqual(prompt, build_prompt(SCREEN.width, SCREEN.height))
+        self.assertIn("You control a real remote browser.", prompt)
+        self.assertIn("Call exactly one native tool per reply.", prompt)
+        # Byte-for-byte the prompt the builder produces, no elisions and no
+        # per-turn interpolated size: the prompt does not vary.
+        self.assertEqual(prompt, build_prompt())
 
     def test_the_user_turn_is_carried_in_full_and_not_as_a_preview(self):
         # The panel shows what the user side of the request said.  A 400-char
@@ -2579,10 +2673,20 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         long = "TASK " + ("x" * 900)
         runner, _ = make_runner([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":10,"y":20}',
             '{"type":"done","message":"ok"}',
         ])
-        runner._history = lambda *a, **k: [LLMMessage(role="user", content=long)]
+        # Inject the long user text at the one point a request is assembled,
+        # keeping the image the real builder would attach, so the screenshot
+        # note the carrying turn appends is exercised as well.
+        runner._request = lambda run, image, note: [
+            LLMMessage(
+                role="user",
+                content=long + ("\n\nLatest screenshot attached." if image else ""),
+                images=[image] if image else [],
+            )
+        ]
         report = asyncio.run(_finish(runner, self.CLICK_TASK)).trace_report(include_images=False)
         for turn in report["turns"]:
             with self.subTest(turn=turn["turn"]):
@@ -2609,43 +2713,52 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         self.assertEqual(report["last_model"], report["turns"][-1]["model"])
         self.assertEqual(report["last_provider"], report["turns"][-1]["provider"])
 
-    def test_the_prompt_states_the_size_of_the_screenshot_being_sent(self):
+    def test_the_screenshot_size_is_stated_on_the_turn_that_carries_it(self):
         from app.computer.commands import Bounds
 
         report, _ = self._report(
             [
-                '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+                '{"type":"screenshot"}',
                 '{"type":"done","message":"ok"}',
             ],
             bounds=Bounds(width=1024, height=600),
         )
-        self.assertIn("The screenshot is 1024x600 pixels.", self._later(report)[0]["prompt"])
+        carrying = self._carrying(report)
+        self.assertTrue(carrying, "no request carried the screenshot")
+        self.assertIn("1024x600", carrying[0]["user_text"])
 
-    def test_the_screenshot_dimensions_match_the_prompt_and_the_frame(self):
+    def test_the_screenshot_dimensions_match_the_note_and_the_frame(self):
         from app.computer.commands import Bounds
 
         report, _ = self._report(
             [
-                '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+                '{"type":"screenshot"}',
                 '{"type":"done","message":"ok"}',
             ],
             bounds=Bounds(width=1024, height=600),
         )
-        turn = self._later(report)[0]
-        self.assertIn("1024x600", turn["prompt"])
+        turn = self._carrying(report)[0]
+        self.assertIn("1024x600", turn["user_text"])
         self.assertEqual(turn["image_meta"]["width"], 1024)
         self.assertEqual(turn["image_meta"]["height"], 600)
 
     # -- 3. what exactly did the model return?
 
-    def test_the_raw_reply_is_kept_verbatim(self):
-        raw = '{"type":"click","x":700,"y":350}'
+    def test_the_native_call_is_kept_verbatim(self):
+        # A native tool-call reply carries no assistant text -- these endpoints
+        # answer with `content: null` -- so `raw` is empty by construction and
+        # the reply itself is kept from the tool call, not from invented text.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
-            raw,
             '{"type":"done","message":"ok"}',
         ])
-        self.assertIn(raw, [t["raw"] for t in report["turns"]])
+        done = [t for t in report["turns"] if t["tool_call"].get("name") == "done"]
+        self.assertTrue(done, "the done call was not recorded")
+        self.assertEqual(done[0]["raw"], "")
+        self.assertEqual(
+            json.loads(done[0]["tool_call"]["arguments"]),
+            {"message": "ok"},
+        )
 
     def test_a_prose_reply_is_preserved_not_replaced(self):
         # The exact symptom under investigation.  If the trace swapped this for a
@@ -2659,14 +2772,21 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         )
         self.assertIn(prose, [t["raw"] for t in report["turns"]])
 
-    def test_a_fenced_code_block_reply_is_preserved_verbatim(self):
+    def test_a_fenced_code_block_reply_is_unwrapped_into_a_call(self):
+        # A fence is a formatting artefact of a model writing in a chat UI, so
+        # the command it wraps is unwrapped and used as the native call it names
+        # -- the reply is not lost, and it is not kept as prose either.
         fenced = '```json\n{"type":"click","x":10,"y":20}\n```'
-        report, _ = self._report(
-            ['{"type":"navigate","url":"https://example.com/computer-test.html"}', fenced],
-            max_steps=2,
-            max_retries=0,
-        )
-        self.assertIn(fenced, [t["raw"] for t in report["turns"]])
+        report, _ = self._report([
+            '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
+            fenced,
+            '{"type":"done","message":"ok"}',
+        ])
+        click = self._click_turn(report)
+        self.assertEqual(click["tool_call"]["name"], "click")
+        self.assertEqual(click["command"], {"type": "click", "x": 10, "y": 20})
+        self.assertEqual(click["raw"], "")
 
     def test_an_unusable_reply_shows_the_parser_error_beside_the_raw_text(self):
         report, _ = self._report(
@@ -2695,59 +2815,60 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         # The reply that causes a retry is the evidence for why the retry
         # happened.  Collapsing retries into one entry erased it, and made a
         # model that ignored its instructions look like one clean failure.
+        #
+        # Two prose replies carry the same `<no-call>` refusal signature, and the
+        # committed loop stops on the second identical refusal rather than asking
+        # a third time -- so the observable number of attempts here is two, and
+        # both must be their own turn.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             "Search for it",
             "still talking",
-            '{"type":"done","message":"ok"}',
         ])
         second = [t for t in report["turns"] if t["step"] == 2]
-        self.assertEqual(len(second), 3, "the three attempts collapsed into one entry")
+        self.assertEqual(len(second), 2, "the two attempts collapsed into one entry")
         self.assertEqual(
             [t["raw"] for t in second],
-            ["Search for it", "still talking", '{"type":"done","message":"ok"}'],
+            ["Search for it", "still talking"],
         )
-        self.assertEqual([t["attempt"] for t in second], [0, 1, 2])
-        # Three real requests, so three numbers in the run, all on one step.
-        self.assertEqual([t["turn"] for t in second], [2, 3, 4])
-        for turn in second:
-            self.assertTrue(turn["screenshot_attached"], "a retry lost the screenshot")
-        # The first two never produced a command, so the run executed nothing
-        # for them; only the third is the one that drove the machine.
-        self.assertEqual([bool(t["command"]) for t in second], [False, False, True])
+        self.assertEqual([t["attempt"] for t in second], [0, 1])
+        # Two real requests, so two numbers in the run, all on one step.
+        self.assertEqual([t["turn"] for t in second], [2, 3])
+        # Neither produced a command, so the run executed nothing for them.
+        self.assertEqual([bool(t["command"]) for t in second], [False, False])
 
     # -- 4. what exactly did the executor receive?
 
     def test_the_executor_command_is_the_parsed_command(self):
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"done","message":"ok"}',
         ])
-        click = [t for t in report["turns"] if t["command"].get("type") == "click"]
-        self.assertEqual(len(click), 1)
-        self.assertEqual(click[0]["command"], {"type": "click", "x": 700, "y": 350})
-        self.assertTrue(click[0]["execution"]["executed"])
-        self.assertTrue(click[0]["execution"]["accepted"])
-        self.assertEqual(click[0]["execution"]["x"], 700)
-        self.assertEqual(click[0]["execution"]["actual_pointer_x"], 700)
-        self.assertEqual(click[0]["execution"]["actual_pointer_y"], 350)
-        self.assertTrue(click[0]["execution"]["landed"])
-        self.assertGreaterEqual(click[0]["execution"]["duration_ms"], 0)
+        click = self._click_turn(report)
+        self.assertEqual(click["command"], {"type": "click", "x": 700, "y": 350})
+        self.assertTrue(click["execution"]["executed"])
+        self.assertTrue(click["execution"]["accepted"])
+        self.assertEqual(click["execution"]["x"], 700)
+        self.assertEqual(click["execution"]["actual_pointer_x"], 700)
+        self.assertEqual(click["execution"]["actual_pointer_y"], 350)
+        self.assertTrue(click["execution"]["landed"])
+        self.assertGreaterEqual(click["execution"]["duration_ms"], 0)
 
     def test_a_refused_action_is_shown_as_not_executed(self):
         runner, _ = make_runner([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":10,"y":10}',
         ])
         runner.computer.fail_on = ("click",)
         run = asyncio.run(_finish(runner, self.CLICK_TASK))
         report = run.trace_report(include_images=False)
-        click = [t for t in report["turns"] if t["command"].get("type") == "click"]
-        self.assertTrue(click, "the click that failed was not in the trace")
-        self.assertFalse(click[0]["execution"]["executed"])
-        self.assertFalse(click[0]["execution"]["accepted"])
-        self.assertIn("click failed", click[0]["execution"]["error"])
+        click = self._click_turn(report)
+        self.assertFalse(click["execution"]["executed"])
+        self.assertFalse(click["execution"]["accepted"])
+        self.assertIn("click failed", click["execution"]["error"])
     def test_a_terminal_command_is_marked_terminal(self):
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
@@ -2766,6 +2887,7 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         # loop and a broken one.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"done","message":"ok"}',
         ])
@@ -2789,31 +2911,33 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
     def test_a_refused_action_is_named_as_refused(self):
         runner, _ = make_runner([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":10,"y":10}',
         ])
         runner.computer.fail_on = ("click",)
         run = asyncio.run(_finish(runner, self.CLICK_TASK))
         report = run.trace_report(include_images=False)
-        click = [t for t in report["turns"] if t["command"].get("type") == "click"][0]
+        click = self._click_turn(report)
         self.assertEqual(click["execution"]["outcome"], "refused")
         self.assertIn("click failed", click["execution"]["error"])
 
-    def test_a_click_is_followed_by_the_next_screenshot(self):
-        # The before/after pair is the only way to see whether the click changed
-        # anything on screen.
+    def test_no_screenshot_is_taken_unless_the_model_asks_for_one(self):
+        # The old loop captured a frame after every action, so a run of twelve
+        # steps paid for twelve images whether the model looked at them or not.
+        # A click now gets no camera of its own: the next frame is captured only
+        # when the model calls screenshot(), and the after-shot lives on that
+        # call rather than on the action that preceded it.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"done","message":"ok"}',
         ])
-        click = [t for t in report["turns"] if t["command"].get("type") == "click"][0]
-        self.assertTrue(click["next_image"])
-        self.assertTrue(click["next_image_meta"]["sha256_16"])
-        self.assertNotEqual(
-            click["next_image_meta"]["sha256_16"],
-            click["image_meta"]["sha256_16"],
-            "the after-shot is the same frame as the before-shot",
-        )
+        click = self._click_turn(report)
+        self.assertEqual(click["next_image"], "", "the click captured a frame on its own")
+        shot = [t for t in report["turns"] if t["command"].get("type") == "screenshot"][0]
+        self.assertTrue(shot["next_image"], "the requested capture was not recorded")
+        self.assertTrue(shot["next_image_meta"]["sha256_16"])
 
     def test_a_terminal_turn_has_no_after_shot(self):
         # There is nothing left to do, so nothing was captured.  A missing
@@ -2830,31 +2954,28 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
     # -- protocol visibility
 
     def test_the_protocol_is_stated_per_turn(self):
+        from app.computer.commands import SCREENSHOT_ACTIONS
+
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             '{"type":"done","message":"ok"}',
         ])
-        first = [t for t in report["turns"] if t["first_turn"]][0]
-        self.assertEqual(first["allowed_types"], ["navigate", "search"])
-        self.assertTrue(first["json_only"])
-        later = self._later(report)[0]
-        # The seven things a model may do to something it can see.  This is the
-        # list the model is being held to, and it is deliberately without
-        # navigate and search.
+        # Every turn states the parser's whole allowlist, and the narrower list
+        # of what may be done to something visible.  Reporting only the narrow
+        # one would hide that re-navigating is still legal; reporting only the
+        # wide one would hide the rule the model is held to.
+        for turn in report["turns"]:
+            with self.subTest(turn=turn["turn"]):
+                self.assertEqual(turn["allowed_types"], list(ALLOWED_TYPES))
+                self.assertEqual(turn["screenshot_types"], list(SCREENSHOT_ACTIONS))
+        # The first-turn restriction -- no coordinate before there is a frame to
+        # read one from -- is stated once, on the run report.
         self.assertEqual(
-            later["screenshot_types"],
-            ["click", "type", "key", "scroll", "move", "done", "error"],
+            report["protocol"]["first_turn_allowed"],
+            ["navigate", "search", "error", "screenshot"],
         )
-        # And the wider truth: re-navigating is still legal, and the inspector
-        # must not pretend the parser forbids it.
-        for kind in ALLOWED_TYPES:
-            self.assertIn(kind, later["allowed_types"])
-        self.assertIn("navigate", later["allowed_types"])
-        self.assertIn("search", later["allowed_types"])
-        # And no coordinate is legal before there is a screenshot to read one
-        # from.
-        self.assertNotIn("click", first["allowed_types"])
-        self.assertNotIn("move", first["allowed_types"])
+        self.assertNotIn("click", report["protocol"]["first_turn_allowed"])
+        self.assertNotIn("move", report["protocol"]["first_turn_allowed"])
 
     def test_the_two_action_lists_cannot_drift_from_the_parser(self):
         # The visible-target list is a subset of what the parser accepts, and it
@@ -2871,27 +2992,29 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
         ])
-        self.assertEqual(report["protocol"]["first_turn_allowed"], ["navigate", "search"])
-        self.assertEqual(list(report["protocol"]["after_screenshot_allowed"]), list(ALLOWED_TYPES))
+        protocol = report["protocol"]
+        self.assertEqual(protocol["tools"], list(TOOL_NAMES))
         self.assertEqual(
-            report["protocol"]["after_screenshot_visible_target"],
-            ["click", "type", "key", "scroll", "move", "done", "error"],
+            protocol["first_turn_allowed"],
+            ["navigate", "search", "error", "screenshot"],
         )
-        self.assertTrue(report["protocol"]["json_only"])
+        self.assertFalse(protocol["json_only"])
+        self.assertTrue(protocol["screenshots_on_request_only"])
 
 
-    def test_json_only_is_claimed_for_every_turn_and_earned(self):
-        # `json_only` is what the UI shows as "JSON only".  It has to be true on
-        # every turn, and it has to be backed by the strict parser actually
-        # running -- otherwise it is a label with nothing behind it.
+    def test_json_only_is_not_claimed_because_the_protocol_is_native(self):
+        # `json_only` described the old protocol, where the model replied with a
+        # JSON object in its text.  The loop speaks native tool calls now, so the
+        # flag is false on every turn, and the trace instead proves the calls
+        # parsed: a claimed JSON turn that did not parse was the lie to catch.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
             '{"type":"done","message":"ok"}',
         ])
         for turn in report["turns"]:
             with self.subTest(turn=turn["turn"]):
-                self.assertTrue(turn["json_only"])
-                self.assertTrue(turn["parse_ok"], "a claimed JSON turn that did not parse")
+                self.assertFalse(turn["json_only"])
+                self.assertTrue(turn["parse_ok"], "a call that did not parse")
                 self.assertEqual(turn["parse_error"], "")
 
     def test_the_conversation_history_is_never_trimmed(self):
@@ -3003,6 +3126,7 @@ class TestTheTraceEndpoint(unittest.TestCase):
 
         cls.main = main_module
         cls.client = TestClient(main_module.app)
+        support.attach_session(cls.client)
 
     def _register(self, replies, **kwargs):
         runner, _ = make_runner(replies, **kwargs)

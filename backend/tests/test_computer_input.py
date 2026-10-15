@@ -26,9 +26,26 @@ class RecordingXdotool:
         self.calls: list[list[str]] = []
         self.returncode = 0
         self.stderr = ""
+        #: Where the fake X server believes the pointer is.  A real display
+        #: answers `getmouselocation`; without this the pointer readback that
+        #: every action now performs would report (None, None) and every click
+        #: would look like it missed.  Set by the last `mousemove`.
+        self.pointer: tuple | None = None
 
     def __call__(self, *args: str, timeout: int = 10):
         self.calls.append(list(args))
+        if args and args[0] == "mousemove":
+            rest = [a for a in args[1:] if a != "--sync"]
+            if len(rest) >= 2:
+                try:
+                    self.pointer = (int(rest[0]), int(rest[1]))
+                except (TypeError, ValueError):
+                    pass
+        elif args and args[0] == "getmouselocation" and self.pointer is not None:
+            x, y = self.pointer
+            return subprocess_Result(
+                self.returncode, self.stderr, f"X={x}\nY={y}\n".encode()
+            )
         result = subprocess_Result(self.returncode, self.stderr)
         return result
 
@@ -685,7 +702,10 @@ class TestTheClickItselfRefusesRatherThanClamping(XdotoolTestCase):
         self.assertTrue(result["ok"], result.get("error"))
         self.assertEqual((result["x"], result["y"]), (1364, 767))
         pressed = [c for c in self.recorder.calls if c[0] in ("mousemove", "click")]
-        self.assertEqual(pressed, [["mousemove", "--sync", "1364", "767", "click", "1"]])
+        self.assertEqual(
+            pressed,
+            [["mousemove", "--sync", "1364", "767"], ["click", "--clearmodifiers", "1"]],
+        )
 
     def test_a_move_is_refused_on_the_same_boundary(self):
         for x, y in ((-1, 0), (0, -1), (1365, 0), (0, 768)):
@@ -767,10 +787,11 @@ class TestRoutesOverRealHttp(XdotoolTestCase):
                 self.assertIn(expect, self.recorder.argv)
 
     def test_click_moves_then_presses_in_one_invocation(self):
-        # The whole click must be one xdotool call.  Two calls -- mousemove, then
-        # click -- leaves a gap between two X round trips, and anything that moves
-        # the pointer in that gap puts the button press somewhere the caller never
-        # asked for.  This is the most likely reason clicks missed their target.
+        # The click is a move that X is made to confirm (`--sync`) followed
+        # immediately by the button event, with the pointer position read back
+        # in between.  Nothing else may slip between the verified position and
+        # the press, or the button could come down somewhere the caller never
+        # asked for.  This pins that sequence and the absence of any other move.
         self.recorder.calls.clear()
         status, body = self.post("/computer/click", {"x": 700, "y": 350})
         self.assertEqual(status, 200, body)
@@ -779,22 +800,32 @@ class TestRoutesOverRealHttp(XdotoolTestCase):
         # is about the calls that move or press anything.
         self.assertEqual(
             [c for c in self.recorder.calls if c[0] in ("mousemove", "click")],
-            [["mousemove", "--sync", "700", "350", "click", "1"]],
-            "the move and the press must share one X connection",
+            [["mousemove", "--sync", "700", "350"], ["click", "--clearmodifiers", "1"]],
+            "the move must be confirmed, then pressed, with no other pointer motion",
         )
         # --sync, or the click is queued against the position the pointer has not
         # reached yet.
-        self.assertIn("--sync", self.recorder.argv)
+        self.assertTrue(
+            any(c[:1] == ["mousemove"] and "--sync" in c for c in self.recorder.calls),
+            "the move must be --sync or the press races the pointer",
+        )
 
     def test_a_click_reports_where_the_pointer_actually_ended_up(self):
         # The point of the exercise: a click that missed must be visible as a
-        # mismatch rather than looking exactly like one that worked.
+        # mismatch rather than looking exactly like one that worked.  The click
+        # verifies the pointer readback before pressing, so a drift is refused
+        # outright and both the requested and the actual point are named.
         daemon._pointer_position = lambda: (702, 348)
         self.recorder.calls.clear()
         result = daemon._computer_click(700, 350)
-        self.assertTrue(result["ok"])
+        self.assertFalse(result["ok"], "a drifted click must not claim to land")
         self.assertEqual((result["actual_x"], result["actual_y"]), (702, 348))
-        self.assertFalse(result["landed"], "a drifted click must not claim to land")
+        self.assertFalse(result["move_verified"])
+        self.assertEqual(
+            [c for c in self.recorder.calls if c[0] == "click"],
+            [],
+            "a click whose pointer never arrived still pressed the button",
+        )
 
     def test_a_click_that_lands_says_so(self):
         daemon._pointer_position = lambda: (700, 350)

@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rag-agents",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Worker serves the built Vite frontend and is the stable workers.dev origin.
+  // Everything under /auth is handled at the edge; the API and WebSocket paths are
+  // proxied to the Codespace backend.
+  "assets": {
+    "directory": "../Frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rag-agents-auth",
+      "database_id": "55e7322a-4dba-4a41-acc4-273c902d97d2",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // The single durable scheduler.  Every minute the Worker materialises due
+  // routines into D1 and dispatches what it can; that is why a routine can fire
+  // while the Codespace is stopped.  A Cron Trigger is always-on and costs
+  // nothing to leave running, so there is no reason for the backend to keep a
+  // timer of its own.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "GOOGLE_AUTH_URL": "https://accounts.google.com/o/oauth2/v2/auth",
+    "GOOGLE_TOKEN_URL": "https://oauth2.googleapis.com/token",
+    "GOOGLE_JWKS_URL": "https://www.googleapis.com/oauth2/v3/certs",
+    "SESSION_TTL_SECONDS": "2592000",
+    // Replace after creating the Google OAuth client and bringing the backend up.
+    "GOOGLE_CLIENT_ID": "REPLACE_ME.apps.googleusercontent.com",
+    "BACKEND_ORIGIN": "https://backend.invalid",
+    // Durable routines / Codespace lifecycle.  GITHUB_TOKEN is a *secret*
+    // (`wrangler secret put GITHUB_TOKEN`) with Codespaces read/write; it is
+    // never a var.  CODESPACE_NAME names the Codespace the scheduler may start
+    // when a routine is due and the backend is asleep.
+    "GITHUB_API_URL": "https://api.github.com",
+    "CODESPACE_NAME": "",
+    "CODESPACE_READY_TIMEOUT_MS": "60000",
+    "CODESPACE_POLL_INTERVAL_MS": "5000",
+    "ROUTINE_MAX_ATTEMPTS": "5",
+    "ROUTINE_DISPATCH_BATCH": "20",
+    "ROUTINE_RETRY_BASE_MS": "60000"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

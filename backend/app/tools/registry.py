@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import List
 
+from ..email.tools import notification_tools
+from ..routines.tools import routine_tools
 from .base import Tool
 
 
@@ -19,7 +21,9 @@ def worker_tools() -> List[Tool]:
         ),
         Tool(
             "fetch_url",
-            "Fetch a URL and return its readable text content.",
+            "Fetch a URL and return its readable text content. Goes through the "
+            "restricted gateway, so only allowlisted sites are reachable and "
+            "redirects to other destinations are refused.",
             {
                 "type": "object",
                 "properties": {"url": {"type": "string"}},
@@ -65,12 +69,16 @@ def worker_tools() -> List[Tool]:
             },
         ),
         Tool(
-            "browser",
-            "Control the agent's persistent browser inside the microVM. "
-            "It retains one session across calls, so goto, then click/type/scroll all act on the same live page. "
-            "Actions: goto (url), text (read visible page text), click (selector or x/y pixel coords in the 1280x800 viewport), "
-            "type (text, optionally with enter=true), press (key like ENTER/TAB), scroll (dx/dy), back, forward, eval (script). "
-            "Every action returns a fresh screenshot image plus the page title/url.",
+            "browse",
+            "Browse a website through the restricted browser. It keeps one session "
+            "across calls, so goto, then click/type/scroll act on the same live page. "
+            "Only sites the owner has approved on the allowlist can be reached; every "
+            "other destination, every non-http(s) scheme, and every private or internal "
+            "address is refused by the network gateway. This browser is separate from "
+            "the computer-control browser and has no logins or cookies. "
+            "Actions: goto (url), text (read visible page text), click (selector), "
+            "type (text, optionally enter=true), press (key like ENTER/TAB), scroll (dx/dy), "
+            "back, forward, eval (script).",
             {
                 "type": "object",
                 "properties": {
@@ -79,10 +87,8 @@ def worker_tools() -> List[Tool]:
                         "enum": ["goto", "text", "click", "type", "press", "scroll", "back", "forward", "eval"],
                         "description": "what to do",
                     },
-                    "url": {"type": "string", "description": "URL for goto"},
+                    "url": {"type": "string", "description": "URL for goto; must be an http(s) site on the allowlist"},
                     "selector": {"type": "string", "description": "CSS selector for click/type"},
-                    "x": {"type": "integer", "description": "x pixel in 1280-wide viewport"},
-                    "y": {"type": "integer", "description": "y pixel in 800-tall viewport"},
                     "text": {"type": "string", "description": "text to type"},
                     "enter": {"type": "boolean", "description": "press Enter after typing"},
                     "key": {"type": "string", "description": "key name for press (ENTER, TAB, ESC, ...)"},
@@ -94,7 +100,7 @@ def worker_tools() -> List[Tool]:
                 "required": ["action"],
             },
         ),
-    ]
+    ] + routine_tools() + notification_tools()
 
 
 def commander_tools() -> List[Tool]:

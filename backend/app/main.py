@@ -9,16 +9,23 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .agents import memory as agent_memory
+from .agents import routines as agent_routines
+from .agents import summaries as agent_summaries
 from .agents.commander import Commander
+from .agents.conversation import assemble_context
+from .auth import google as google_oauth
+from .auth.deps import INTERNAL_HEADER, AuthService, Principal
+from .auth.sessions import COOKIE_NAME
 from .computer.runner import ComputerRunner
 from .config import Settings, load_settings
 from .db import Database
-from .providers.base import LLMMessage
+from .email import gmail as gmail_connection
 from .providers.router import (
     Router,
     computer_model_for,
@@ -26,6 +33,9 @@ from .providers.router import (
     computer_providers,
 )
 from .providers import build_providers
+from .restricted.runtime import RestrictedRuntime
+from .routines import RoutineContext, reset_current as reset_routine_context
+from .routines import set_current as set_routine_context
 from .tools.executor import Executor
 from .tools.workspace import WorkspaceClient
 from .vm import vnc as vnc_bridge
@@ -34,10 +44,19 @@ from .workspace import WorkspaceManager
 
 settings = load_settings()
 db = Database(os.path.join(settings.data_dir, "rag.db"))
+auth = AuthService(settings, db)
 providers = build_providers(settings)
 router = Router(providers, settings)
 computer = WorkspaceManager(settings)
-executor = Executor(settings)
+# Ordinary agents get a browser of their own: a separate, logged-out browser
+# behind an owner-controlled allowlist and a network gateway.  It is wired into
+# the executor below so the network tools cannot leave by any other path.
+restricted = RestrictedRuntime(settings)
+executor = Executor(settings, restricted=restricted, db=db)
+#: Routines are ordinary, non-computer tasks by definition, so they run on an
+#: executor with no computer attached.  A scheduled task can never wander onto
+#: the personal Chrome or the shared desktop.
+routine_executor = Executor(settings, restricted=restricted, db=db)
 commander = Commander(router, executor)
 
 
@@ -72,27 +91,297 @@ app = FastAPI(title="RAG Agents Backend", lifespan=lifespan)
 # process, so it does not need an exception here either.
 
 
-# NOTE: the passphrase gate, its session cookie, the login screen and
-# /auth/login|/status|logout were removed from this file at the owner's request.
-# The app is now served to anyone who can reach it, and the Quick Tunnel is a
-# public URL, so /file, /ai/*, /websockify and the Computer view (a live
-# keyboard-driven Chrome) are reachable by whoever finds the link.  There is no
-# authentication left to restore from here: the commit before the removal is in
-# git history if it is ever wanted back.
+# ---------------------------------------------------------------------------
+# Authentication and the internal gateway.
+#
+# The previous passphrase gate was removed and the app was briefly served to
+# anyone who could reach the Quick Tunnel, which exposed /file, /ai/*,
+# /websockify and the Computer view to whoever found the link.  That is undone
+# here with a real Google identity, server-side sessions and a shared internal
+# token that only the Cloudflare Worker knows.
+#
+# Two independent checks guard every protected route:
+#   1. the request must have come through the trusted gateway
+#      (RAG_INTERNAL_TOKEN) once one is configured; and
+#   2. it must carry a valid session cookie mapping to a stored user.
+# A client-supplied user_id is never used for authorization again.
+# ---------------------------------------------------------------------------
+
+
+def _principal(request: Request) -> Principal:
+    return auth.require_principal(request)
+
+
+def _redirect_uri(request: Request, path: str) -> str:
+    """The exact callback URI Google must have registered.
+
+    ``PUBLIC_BASE_URL`` wins when set, because behind the Worker the request's
+    own scheme/host is the tunnel's, not the stable public one.  Falling back to
+    the request origin keeps local development working without configuration.
+    """
+    if settings.public_base_url:
+        return f"{settings.public_base_url}{path}"
+    base = str(request.base_url).rstrip("/")
+    return f"{base}{path}"
+
+
+def _gmail_status(user_id: str) -> dict:
+    """The mailbox state for one user, safe to send to the browser.
+
+    Only the address and a coarse status leave here -- never a token, and never
+    the encrypted columns.  ``autoReply`` is carried alongside because it is a
+    per-connection preference the Settings panel reads.
+    """
+    connection = db.get_gmail_connection(user_id)
+    summary = gmail_connection.connection_summary(connection)
+    summary["autoReply"] = bool(connection and connection.get("auto_reply"))
+    return summary
+
+
+def _is_secure(request: Request) -> bool:
+    if settings.public_base_url.startswith("https://"):
+        return True
+    return request.url.scheme == "https"
+
+
+def _set_session_cookie(response: Response, token: str, request: Request) -> None:
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=_is_secure(request),
+        samesite="lax",
+        path="/",
+    )
+
+
+@app.get("/auth/session")
+async def auth_session(request: Request):
+    """Who is signed in, whether Gmail is connected, and the CSRF token.
+
+    Public on purpose: the frontend calls it before it knows whether anyone is
+    signed in, and it returns an anonymous shape rather than a 401 in that case.
+    It never reveals another user's address or connection status.
+    """
+    principal = auth.optional_principal(request)
+    if not principal:
+        return {"authenticated": False, "user": None, "gmail": {"connected": False}}
+    user = principal.user
+    gmail = _gmail_status(principal.user_id)
+    return {
+        "authenticated": True,
+        "csrf": principal.session.get("csrf", ""),
+        "user": {
+            "id": user["id"],
+            "email": user.get("email", ""),
+            "name": user.get("name", ""),
+            "picture": user.get("picture", ""),
+            "timezone": user.get("timezone", "UTC"),
+        },
+        "gmail": gmail,
+    }
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request, next: str = "/"):
+    """Begin the login-only Google flow (``openid email profile``)."""
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    verifier, _ = google_oauth.pkce_pair()
+    state = google_oauth.new_state()
+    nonce = google_oauth.new_nonce()
+    redirect_uri = _redirect_uri(request, "/auth/callback")
+    db.create_oauth_state(state, "login", "", verifier, nonce, redirect_uri)
+    url = google_oauth.build_authorization_url(
+        settings=settings,
+        redirect_uri=redirect_uri,
+        state=state,
+        nonce=nonce,
+        verifier=verifier,
+        mode="login",
+    )
+    return RedirectResponse(url)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    """Exchange the code, validate the id_token, and rotate into a session."""
+    error = request.query_params.get("error")
+    if error:
+        return RedirectResponse("/?auth=denied")
+    state = request.query_params.get("state", "")
+    code = request.query_params.get("code", "")
+    if not state or not code:
+        raise HTTPException(status_code=400, detail="missing state or code")
+    record = db.consume_oauth_state(state)
+    if not record or record.get("mode") != "login":
+        db.audit_login("", "", "rejected", "invalid_or_reused_state")
+        raise HTTPException(status_code=400, detail="invalid or expired sign-in state")
+
+    tokens = await google_oauth.exchange_code(
+        settings=settings,
+        code=code,
+        redirect_uri=str(record["redirect_uri"]),
+        verifier=str(record["code_verifier"]),
+    )
+    id_token = str(tokens.get("id_token") or "")
+    if not id_token:
+        db.audit_login("", "", "rejected", "no_id_token")
+        raise HTTPException(status_code=400, detail="no identity token returned")
+    jwks = await google_oauth.fetch_jwks(settings)
+    claims = google_oauth.verify_login_token(settings, id_token, jwks, str(record["nonce"]))
+    user = db.upsert_user(
+        str(claims["sub"]),
+        email=str(claims.get("email") or ""),
+        email_verified=bool(claims.get("email_verified")),
+        name=str(claims.get("name") or ""),
+        picture=str(claims.get("picture") or ""),
+    )
+    db.audit_login(str(claims["sub"]), str(user["id"]), "success", "")
+    session = auth.sessions.create(str(user["id"]))
+    response = RedirectResponse("/")
+    _set_session_cookie(response, str(session["token"]), request)
+    return response
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    token = auth.cookie_token(request)
+    auth.sessions.revoke(token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/auth/gmail/status")
+async def gmail_status(request: Request):
+    """The signed-in user's real mailbox connection state.
+
+    Separate from ``/auth/session`` so the edge can answer the session quickly
+    while the backend -- which owns the connection record -- remains the single
+    source of truth for whether a mailbox is connected.  Never returns a token.
+    """
+    principal = _principal(request)
+    return _gmail_status(principal.user_id)
+
+
+@app.get("/auth/gmail/connect")
+async def gmail_connect(request: Request):
+    """Start the separate Gmail consent for the signed-in user."""
+    principal = auth.require_principal(request)
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    verifier, _ = google_oauth.pkce_pair()
+    state = google_oauth.new_state()
+    nonce = google_oauth.new_nonce()
+    redirect_uri = _redirect_uri(request, "/auth/gmail/callback")
+    db.create_oauth_state(state, "gmail", principal.user_id, verifier, nonce, redirect_uri)
+    url = google_oauth.build_authorization_url(
+        settings=settings,
+        redirect_uri=redirect_uri,
+        state=state,
+        nonce=nonce,
+        verifier=verifier,
+        mode="gmail",
+        login_hint=str(principal.user.get("email") or ""),
+    )
+    return RedirectResponse(url)
+
+
+@app.get("/auth/gmail/callback")
+async def gmail_callback(request: Request):
+    """Bind a granted mailbox to the SAME identity that owns the session."""
+    principal = auth.require_principal(request)
+    error = request.query_params.get("error")
+    if error:
+        return RedirectResponse("/?gmail=denied")
+    state = request.query_params.get("state", "")
+    code = request.query_params.get("code", "")
+    record = db.consume_oauth_state(state) if state else None
+    if not record or record.get("mode") != "gmail" or str(record.get("user_id")) != principal.user_id:
+        raise HTTPException(status_code=400, detail="invalid or expired Gmail authorization state")
+    if not code:
+        raise HTTPException(status_code=400, detail="missing authorization code")
+
+    tokens = await google_oauth.exchange_code(
+        settings=settings,
+        code=code,
+        redirect_uri=str(record["redirect_uri"]),
+        verifier=str(record["code_verifier"]),
+    )
+    id_token = str(tokens.get("id_token") or "")
+    if not id_token:
+        raise HTTPException(status_code=400, detail="no identity token returned")
+    jwks = await google_oauth.fetch_jwks(settings)
+    claims = google_oauth.verify_login_token(settings, id_token, jwks, str(record["nonce"]))
+    # The binding check: consent must have been granted by the same Google
+    # subject that owns the session.  A different account is a hard rejection.
+    if str(claims["sub"]) != str(principal.user["google_sub"]):
+        db.audit_login(str(claims["sub"]), principal.user_id, "rejected", "gmail_subject_mismatch")
+        return RedirectResponse("/?gmail=wrong_account")
+
+    refresh = str(tokens.get("refresh_token") or "")
+    if not refresh:
+        # Google omits refresh_token when the grant already exists; treat as
+        # needing explicit reconsent rather than silently doing nothing.
+        return RedirectResponse("/?gmail=no_refresh_token")
+    db.save_gmail_connection(
+        user_id=principal.user_id,
+        google_sub=str(claims["sub"]),
+        email=str(claims.get("email") or ""),
+        scope=str(tokens.get("scope") or " ".join(google_oauth.GMAIL_FULL_SCOPES)),
+        refresh_token_enc=auth.encrypt_secret(refresh),
+        access_token_enc=auth.encrypt_secret(str(tokens.get("access_token") or "")),
+        token_expiry=time.time() + float(tokens.get("expires_in") or 0),
+    )
+    return RedirectResponse("/?gmail=connected")
+
+
+@app.post("/auth/gmail/disconnect")
+async def gmail_disconnect(request: Request):
+    """Forget the mailbox and revoke the grant at Google.
+
+    The remote revocation is best-effort: the local record is removed either way,
+    so a network failure cannot make "disconnect" appear to have failed.  The
+    refresh token is read only to hand to Google's revoke endpoint and is never
+    logged.
+    """
+    principal = _principal(request)
+    connection = db.get_gmail_connection(principal.user_id)
+    if connection:
+        refresh = auth.decrypt_secret(str(connection.get("refresh_token_enc") or ""))
+        if refresh:
+            try:
+                await google_oauth.revoke_token(settings=settings, token=refresh)
+            except Exception:  # noqa: BLE001 - revocation is best-effort
+                pass
+    db.delete_gmail_connection(principal.user_id)
+    return {"ok": True, "gmail": _gmail_status(principal.user_id)}
 
 
 class NewThreadBody(BaseModel):
-    user_id: str
     title: str = "New conversation"
 
 
 class SendBody(BaseModel):
-    user_id: str
     text: str
 
 
+class RoutineExecuteBody(BaseModel):
+    routine_id: str = ""
+    routine_run_id: str = ""
+    idempotency_key: str = ""
+    owner_id: str = ""
+    owner_sub: str = ""
+    agent_id: str = ""
+    name: str = ""
+    task_prompt: str = ""
+    scheduled_for: int = 0
+
+
 class ComputerBody(BaseModel):
-    user_id: str = "default"
+    pass
 
 
 @app.get("/health")
@@ -101,42 +390,141 @@ async def health():
         "ok": True,
         "computer": computer.describe(),
         "providers": list(providers.keys()),
+        "agent": {"provider": settings.agent_provider, "model": settings.agent_model},
         "commander": settings.commander_provider,
         "worker": settings.worker_provider,
+        "restricted": restricted.describe(),
     }
 
 
+@app.post("/internal/summaries/run")
+async def internal_summaries_run(request: Request):
+    """One scheduler tick: prepare and execute due conversation summaries.
+
+    This is the seam the external scheduler drives; there is no timer inside the
+    process.  Guarded by the shared internal token when one is configured (the
+    gateway is the caller), and otherwise by a signed-in session so local
+    development still works without opening an unauthenticated endpoint.
+    """
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+    results = await agent_summaries.run_due_summaries(db, router, settings)
+    return {"ok": True, "results": results}
+
+
+#: The durable-job kind for one routine execution.  The job id is derived from
+#: the edge's idempotency key, so a run the edge dispatches twice -- because a
+#: lease expired, or a rename raced a retry -- is executed at most once.
+ROUTINE_JOB_KIND = "routine.run"
+#: Delay before retrying a routine whose provider asked us to come back later.
+ROUTINE_RETRY_DELAY_SECONDS = 120.0
+
+
+@app.post("/internal/routines/execute")
+async def internal_routines_execute(request: Request, body: RoutineExecuteBody):
+    """Execute one due routine, exactly once, and report the real result.
+
+    Called by the Worker's scheduler, so it is guarded by the shared internal
+    token.  A run is only ever answered ``ok`` with the text the task actually
+    produced; a rate limit or outage answers retryable so the edge delays the
+    run, and a terminal failure is reported as such rather than hidden.
+    """
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+
+    job_id = f"routine.run:{body.idempotency_key or body.routine_run_id or body.routine_id}"
+    existing = db.get_job(job_id)
+    if existing and existing.get("status") == "done":
+        return {"ok": True, "result": existing.get("result") or "", "deduplicated": True}
+
+    db.enqueue_job(
+        ROUTINE_JOB_KIND,
+        body.owner_id,
+        {
+            "routine_id": body.routine_id,
+            "routine_run_id": body.routine_run_id,
+            "task_prompt": body.task_prompt,
+        },
+        job_id=job_id,
+    )
+    if not db.start_job(job_id, lease_seconds=600.0):
+        current = db.get_job(job_id)
+        if current and current.get("status") == "done":
+            return {"ok": True, "result": current.get("result") or "", "deduplicated": True}
+        # Another dispatcher holds a live lease on this run.
+        return {"ok": False, "retryable": True, "error_code": "in_progress"}
+
+    try:
+        outcome = await agent_routines.run_routine_task(
+            router, settings, routine_executor, body.model_dump()
+        )
+    except Exception as exc:
+        retryable, code = agent_routines.classify_failure(exc)
+        if retryable:
+            db.requeue_job(job_id, delay_seconds=ROUTINE_RETRY_DELAY_SECONDS, error_code=code)
+        else:
+            db.complete_job(job_id, "failed", error_code=code)
+        return {
+            "ok": False,
+            "retryable": retryable,
+            "error_code": code,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if outcome.get("ok"):
+        db.complete_job(job_id, "done", result=str(outcome.get("result") or ""))
+        return {"ok": True, "result": outcome.get("result") or ""}
+    code = str(outcome.get("error_code") or "failed")
+    db.complete_job(job_id, "failed", error_code=code)
+    return {"ok": False, "retryable": False, "error_code": code}
+
+
 @app.post("/threads")
-async def create_thread(body: NewThreadBody):
-    thread_id = db.create_thread(body.user_id, body.title)
-    return {"thread_id": thread_id, "user_id": body.user_id, "title": body.title}
+async def create_thread(request: Request, body: NewThreadBody):
+    # The owner is the session, never the body.  Any client-supplied user_id is
+    # ignored because the model no longer exists on the request body.
+    principal = _principal(request)
+    thread_id = db.create_thread(principal.user_id, body.title)
+    return {"thread_id": thread_id, "user_id": principal.user_id, "title": body.title}
 
 
 @app.get("/threads")
-async def list_threads(user_id: str):
-    return {"threads": db.list_threads(user_id)}
+async def list_threads(request: Request):
+    principal = _principal(request)
+    return {"threads": db.list_threads(principal.user_id)}
 
 
 @app.get("/threads/{thread_id}/messages")
-async def get_messages(thread_id: str):
-    if not db.get_thread(thread_id):
+async def get_messages(request: Request, thread_id: str):
+    principal = _principal(request)
+    if not db.thread_owned_by(thread_id, principal.user_id):
         return {"error": "thread not found"}
     return {"messages": db.list_messages(thread_id)}
 
 
 @app.post("/threads/{thread_id}/send")
-async def send_message(thread_id: str, body: SendBody):
-    if not db.get_thread(thread_id):
+async def send_message(request: Request, thread_id: str, body: SendBody):
+    principal = _principal(request)
+    if not db.thread_owned_by(thread_id, principal.user_id):
         return {"error": "thread not found"}
     events: list = []
-    db.add_message(thread_id, "user", body.text, agent="user")
-    await run_commander_on_thread(thread_id, body.user_id, body.text, events.append)
+    user_message_id = db.add_message(thread_id, "user", body.text, agent="user")
+    await run_commander_on_thread(
+        thread_id, principal.user_id, body.text, events.append, user_message_id=user_message_id
+    )
     return {"events": events}
 
 
 @app.post("/computer/start")
-async def computer_start(body: ComputerBody):
+async def computer_start(request: Request, body: ComputerBody):
     """Power the computer on.  Idempotent: the agent supervises the stack."""
+    _principal(request)
     result = await computer.start()
     if result.get("ok"):
         executor.use_computer(_client())
@@ -144,8 +532,9 @@ async def computer_start(body: ComputerBody):
 
 
 @app.post("/computer/stop")
-async def computer_stop(body: ComputerBody):
+async def computer_stop(request: Request, body: ComputerBody):
     """Close the browser session, leaving the screen itself available."""
+    _principal(request)
     result = await computer.stop()
     if result.get("ok"):
         executor.use_computer(_client())
@@ -153,7 +542,8 @@ async def computer_stop(body: ComputerBody):
 
 
 @app.get("/computer")
-async def computer_list():
+async def computer_list(request: Request):
+    _principal(request)
     return {"computers": computer.list_computers()}
 
 
@@ -177,7 +567,8 @@ class ComputerProviderBody(BaseModel):
 
 
 @app.get("/ai/computer/providers")
-async def ai_computer_providers():
+async def ai_computer_providers(request: Request):
+    _principal(request)
     """The providers a computer-control run may be pointed at.
 
     Name, display label, model and whether a key is present -- and nothing
@@ -197,7 +588,8 @@ async def ai_computer_providers():
 
 
 @app.post("/ai/computer/start")
-async def ai_computer_start(body: ComputerTaskBody):
+async def ai_computer_start(request: Request, body: ComputerTaskBody):
+    _principal(request)
     """Hand a task to the computer-control model and return straight away.
 
     Synchronous on purpose.  A control loop runs for as many model calls and
@@ -230,7 +622,8 @@ async def ai_computer_start(body: ComputerTaskBody):
 
 
 @app.post("/ai/computer/{task_id}/provider")
-async def ai_computer_set_provider(task_id: str, body: ComputerProviderBody):
+async def ai_computer_set_provider(request: Request, task_id: str, body: ComputerProviderBody):
+    _principal(request)
     """Point the next request at a different provider, keeping the run.
 
     The task, the recorded history and the step count are all untouched: only
@@ -258,7 +651,8 @@ async def ai_computer_set_provider(task_id: str, body: ComputerProviderBody):
 
 
 @app.get("/ai/computer/{task_id}")
-async def ai_computer_status(task_id: str):
+async def ai_computer_status(request: Request, task_id: str):
+    _principal(request)
     run = ai_computer.get(task_id)
     if run is None:
         return {"error": "no such computer-control task"}
@@ -266,7 +660,8 @@ async def ai_computer_status(task_id: str):
 
 
 @app.get("/ai/computer/{task_id}/trace")
-async def ai_computer_trace(task_id: str, images: bool = True):
+async def ai_computer_trace(request: Request, task_id: str, images: bool = True):
+    _principal(request)
     """The whole model-in/model-out trace of one run, for the AI Inspector.
 
     Answers the four questions that a status line cannot: was the screenshot
@@ -298,7 +693,8 @@ async def ai_computer_trace(task_id: str, images: bool = True):
 
 
 @app.post("/ai/computer/{task_id}/stop")
-async def ai_computer_stop(task_id: str):
+async def ai_computer_stop(request: Request, task_id: str):
+    _principal(request)
     if not await ai_computer.stop(task_id):
         return {"error": "no such computer-control task"}
     return {"ok": True, "task_id": task_id}
@@ -309,7 +705,8 @@ async def _computer_url() -> str:
 
 
 @app.get("/sysinfo")
-async def proxy_sysinfo(user_id: str = ""):
+async def proxy_sysinfo(request: Request):
+    _principal(request)
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(f"{await _computer_url()}/sysinfo")
@@ -320,8 +717,8 @@ async def proxy_sysinfo(user_id: str = ""):
 
 @app.get("/file")
 async def proxy_file(
+    request: Request,
     path: str = Query("", alias="path"),
-    user_id: str = "",
     download: bool = False,
 ):
     """Relay a workspace file, or hand it back untouched as an attachment.
@@ -331,6 +728,7 @@ async def proxy_file(
     to be downloadable.  ``download=1`` only adds a Content-Disposition header;
     the bytes are the agent's bytes in both cases.
     """
+    _principal(request)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(f"{await _computer_url()}/file", params={"path": path})
@@ -349,7 +747,8 @@ async def proxy_file(
 
 
 @app.get("/cdp/status")
-async def proxy_cdp_status(user_id: str = ""):
+async def proxy_cdp_status(request: Request):
+    _principal(request)
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(f"{await _computer_url()}/cdp/status")
@@ -452,9 +851,10 @@ async def screen_config(request: Request):
     makes the session cookie first-party for the WebSocket upgrade: the browser
     has already proved who it is to load the page, and carries the same cookie
     when it opens the screen.  Nothing about the screen can be reached without
-    that cookie, which is what makes an unguessable-but-not-secret tunnel URL
+    that     cookie, which is what makes an unguessable-but-not-secret tunnel URL
     acceptable here.
     """
+    _principal(request)
     origin, age = _published_url()
     # Only advertise a public route we can actually vouch for.
     public = f"{origin}/websockify" if origin else ""
@@ -479,12 +879,13 @@ async def screen_config(request: Request):
 
 
 @app.get("/screen/status")
-async def screen_status():
+async def screen_status(request: Request):
     """Real health of the computer's display, for the UI's status line.
 
     Only a local TCP probe and a status call into the agent: no frame ever
     passes through the backend or the model.
     """
+    _principal(request)
     target = _screen_endpoint()
     if target is None:
         return _screen_payload(False, {}, note="the screen is disabled")
@@ -509,7 +910,8 @@ async def _ensure_display() -> None:
 
 
 @app.post("/screen/ensure")
-async def screen_ensure():
+async def screen_ensure(request: Request):
+    _principal(request)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{await _computer_url()}/display/ensure")
@@ -519,12 +921,42 @@ async def screen_ensure():
 
 
 @app.post("/screen/browser/restart")
-async def screen_browser_restart():
+async def screen_browser_restart(request: Request):
     """Restart the remote browser; the screen then follows the real state."""
+    _principal(request)
     result = await computer.restart_browser()
     if not result.get("ok"):
         return JSONResponse(content=result, status_code=502)
     return JSONResponse(content=result)
+
+
+async def _ws_authenticate(websocket: WebSocket) -> Optional[Principal]:
+    """Authenticate a WebSocket the way every HTTP route is authenticated.
+
+    A browser cannot add a header to its own WS handshake, so the trusted
+    gateway (the Worker) adds the internal token for the backend to check, and
+    either asserts the identity itself (``x-rag-user-sub``, the edge owns the
+    session) or the browser proves identity with the first-party session cookie.
+    When no internal token is configured (local development) the session alone
+    is accepted.  Denied sockets are closed with 1008 so no data is exchanged.
+    """
+    gateway_ok = False
+    if auth.internal_configured:
+        upstream = websocket.headers.get(INTERNAL_HEADER, "")
+        if not auth.websocket_internal_valid(upstream):
+            await websocket.close(code=1008)
+            return None
+        gateway_ok = True
+    if gateway_ok:
+        asserted = auth.asserted_principal(websocket.headers)
+        if asserted:
+            return asserted
+    token = websocket.cookies.get(COOKIE_NAME)
+    principal = auth.principal_from_token(token)
+    if not principal:
+        await websocket.close(code=1008)
+        return None
+    return principal
 
 
 @app.websocket("/websockify")
@@ -541,6 +973,8 @@ async def ws_websockify(websocket: WebSocket):
     process, so the RFB stream and 5900 stay on loopback and the tunnel is the
     only door.
     """
+    if await _ws_authenticate(websocket) is None:
+        return
     target = websockify_proxy.loopback_websockify_url(computer.websockify_port)
     await websockify_proxy.proxy_websockify(websocket, target)
 
@@ -553,6 +987,8 @@ async def ws_screen(websocket: WebSocket):
     development.  The socket carries raw RFB, so status and control stay on the
     HTTP routes above and the client never has to demultiplex two protocols.
     """
+    if await _ws_authenticate(websocket) is None:
+        return
     target = _screen_endpoint()
     if target is None:
         await websocket.close(code=1008)
@@ -567,10 +1003,16 @@ async def ws_screen(websocket: WebSocket):
 @app.websocket("/ws/{user_id}")
 async def ws_endpoint(websocket: WebSocket, user_id: str):
     # The app session is a control channel: it starts the computer, runs the
-    # agents and reads their conversations.  It used to require the same session
-    # cookie as everything else; there is no auth left on this socket.
+    # agents and reads their conversations.  The identity is the session cookie,
+    # never the path segment -- a client claiming someone else's user_id in the
+    # URL must still prove the matching cookie, and the sender's id is taken
+    # from the authenticated session instead.
+    principal = await _ws_authenticate(websocket)
+    if principal is None:
+        return
+    owner_id = principal.user_id
     await websocket.accept()
-    await websocket.send_json({"type": "connected", "user_id": user_id})
+    await websocket.send_json({"type": "connected", "user_id": owner_id})
     active_thread = None
     try:
         while True:
@@ -583,13 +1025,15 @@ async def ws_endpoint(websocket: WebSocket, user_id: str):
                 if not text.strip():
                     await websocket.send_json({"type": "error", "error": "empty message"})
                     continue
-                if not thread_id or not db.get_thread(thread_id):
-                    thread_id = db.create_thread(user_id, text[:50])
+                if not thread_id or not db.thread_owned_by(thread_id, owner_id):
+                    thread_id = db.create_thread(owner_id, text[:50])
                     await websocket.send_json({"type": "thread", "thread_id": thread_id})
                 active_thread = thread_id
-                db.add_message(thread_id, "user", text, agent="user")
+                user_message_id = db.add_message(thread_id, "user", text, agent="user")
                 await websocket.send_json({"type": "user_ack", "thread_id": thread_id})
-                await run_commander_on_thread(thread_id, user_id, text, _ws_emit(websocket))
+                await run_commander_on_thread(
+                    thread_id, owner_id, text, _ws_emit(websocket), user_message_id=user_message_id
+                )
 
             elif kind == "computer_status":
                 # "Is the computer there?"  The agent's own answer is the
@@ -660,24 +1104,73 @@ async def ws_endpoint(websocket: WebSocket, user_id: str):
         pass
 
 
-async def run_commander_on_thread(thread_id: str, user_id: str, text: str, emit) -> None:
-    memory = db.recall(user_id)
-    context: list = []
-    for m in db.list_messages(thread_id, tail=40):
-        if m["role"] == "user":
-            context.append(LLMMessage("user", m["content"]))
-        elif m["role"] == "assistant" and m["agent"] == "commander":
-            context.append(LLMMessage("assistant", m["content"]))
-    if memory:
-        context.append(LLMMessage("system", "Long-term memory:\n" + json.dumps(memory, indent=2)))
+async def run_commander_on_thread(
+    thread_id: str, user_id: str, text: str, emit, user_message_id: int = 0
+) -> None:
+    """Produce one assistant turn from the canonical transcript.
 
-    result = await commander.run(text, context, emit)
+    The transcript is the source of truth: the current user turn is already
+    stored (``user_message_id``) and is excluded when assembling context, because
+    the agent runner appends the same text itself.  That is the fix for the
+    newest question having appeared twice in the model's prompt.
+
+    Tool calls and their results are recorded back into the transcript as they
+    happen, so a later turn -- or a summary -- sees the work that was actually
+    done rather than only the final answers.
+    """
+    memory_text = agent_memory.memory_text_for(db, user_id)
+    summary_row = db.latest_summary(thread_id)
+    summary_text = str((summary_row or {}).get("content") or "")
+
+    rows = db.list_messages(thread_id, tail=200)
+    context = assemble_context(
+        rows,
+        query=text,
+        token_budget=settings.history_token_budget,
+        exclude_id=user_message_id or None,
+        summary_text=summary_text,
+        memory_text=memory_text,
+    )
+
+    def record(entry: dict) -> None:
+        db.add_message(
+            thread_id,
+            str(entry.get("role") or "tool"),
+            str(entry.get("content") or ""),
+            agent=str(entry.get("agent") or ""),
+            data=entry.get("data") if isinstance(entry.get("data"), dict) else {},
+        )
+
+    # Routine tools need the caller's identity, but tool execution has no
+    # request.  Bind it for the duration of this turn (and only this turn):
+    # owner_sub is the verified Google subject, so a routine can only ever be
+    # created or read for the signed-in user.
+    user_row = db.get_user(user_id) or {}
+    context_token = set_routine_context(
+        RoutineContext(
+            user_id=user_id,
+            google_sub=str(user_row.get("google_sub") or ""),
+            agent_id="commander",
+            conversation_id=thread_id,
+            timezone=str(user_row.get("timezone") or "UTC"),
+        )
+    )
+    try:
+        result = await commander.run(text, context, emit, record=record)
+    finally:
+        reset_routine_context(context_token)
     db.add_message(thread_id, "assistant", result["text"], agent="commander")
     for report in result.get("reports", []):
         title = report.get("title", "")
         role = report.get("role", "")
-        agent = report.get("agent", "")
         db.add_message(thread_id, "assistant", report["report"], agent=f"worker:{role}:{title}")
+
+    # A conversation that just advanced is (re)armed for passive summarisation:
+    # the summary only becomes due after the configured quiet period, so an
+    # active conversation is never summarised mid-thought.
+    db.touch_conversation_activity(
+        thread_id, user_id, db.last_message_id(thread_id), settings.summary_idle_seconds
+    )
 
 
 def _ws_emit(websocket: WebSocket):

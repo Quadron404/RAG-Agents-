@@ -1,27 +1,39 @@
 import { create } from "zustand";
 import { useUi } from "./store";
+import { currentCsrf, currentUserId } from "./auth";
 import type { ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
 
 /* ============================================================================
    Backend addressing — same-origin in dev (Vite proxy) and production
-   (FastAPI static mount); override with VITE_BACKEND for direct access.
+   (the Worker serves the build and proxies the API); override with
+   VITE_BACKEND for direct access.
    ========================================================================== */
 
 const BACKEND: string = (import.meta.env.VITE_BACKEND as string) || "";
 
 export const api = (path: string): string => (BACKEND ? BACKEND + path : path);
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 /**
  * fetch() for API calls, with the session cookie attached.
  *
- * The app is served from the same origin as the screen -- the Quick Tunnel
- * publishes this process, and the Computer view opens /websockify on the same
- * host -- so the HttpOnly session cookie is what authorises both.  "include" is
- * what makes the browser attach it, and routing every call through one helper
- * means no endpoint can quietly end up without a credential.
+ * The app is served from the same origin as the API, so the HttpOnly session
+ * cookie is what authorises every call; "include" is what makes the browser
+ * attach it.  The edge session is cookie-based, which means a state-changing
+ * call must also echo the per-session CSRF token (read from /auth/session into
+ * the auth store).  Routing every call through one helper is what guarantees no
+ * endpoint quietly ends up without a credential or a CSRF header.
  */
-export const apiFetch = (path: string, init: RequestInit = {}): Promise<Response> =>
-  fetch(api(path), { credentials: "include", ...init });
+export const apiFetch = (path: string, init: RequestInit = {}): Promise<Response> => {
+  const method = (init.method || "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+  if (!SAFE_METHODS.has(method)) {
+    const csrf = currentCsrf();
+    if (csrf) headers.set("x-rag-csrf", csrf);
+  }
+  return fetch(api(path), { credentials: "include", ...init, headers });
+};
 
 export function wsUrl(path: string): string {
   if (BACKEND) {
@@ -30,8 +42,6 @@ export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}${path}`;
 }
-
-export const USER = "me";
 
 /* ============================================================================
    Queued tool calls (promise-based) resolved by ws tool_result messages
@@ -159,7 +169,7 @@ function handleWireEvent(d: WireEvent) {
   const core = useCore.getState();
   switch (d.type) {
     case "connected":
-      useCore.setState({ status: "online", userId: d.user_id || USER });
+      useCore.setState({ status: "online", userId: d.user_id || currentUserId() });
       core.refreshThreads();
       break;
     case "thread": {
@@ -385,7 +395,7 @@ function handleRunEvent(ev: RunEvents) {
 
 export const useCore = create<CoreState>((set, get) => ({
   status: "connecting",
-  userId: USER,
+  userId: currentUserId(),
   threads: [],
   activeThreadId: null,
   messages: {},
@@ -402,7 +412,7 @@ export const useCore = create<CoreState>((set, get) => ({
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     set({ status: "connecting" });
     try {
-      ws = new WebSocket(wsUrl(`/ws/${USER}`));
+      ws = new WebSocket(wsUrl(`/ws/${currentUserId()}`));
     } catch {
       scheduleReconnect();
       return;
@@ -440,7 +450,7 @@ export const useCore = create<CoreState>((set, get) => ({
 
   async refreshThreads() {
     try {
-      const r = await apiFetch(`/threads?user_id=${USER}`);
+      const r = await apiFetch(`/threads?user_id=${currentUserId()}`);
       const d = await r.json();
       set({ threads: d.threads || [] });
       if (!get().activeThreadId && d.threads?.length) {
@@ -456,7 +466,7 @@ export const useCore = create<CoreState>((set, get) => ({
       const r = await apiFetch("/threads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: USER, title: "New conversation" }),
+        body: JSON.stringify({ user_id: currentUserId(), title: "New conversation" }),
       });
       const d = await r.json();
       set({ activeThreadId: d.thread_id, run: null, screen: null });
@@ -531,7 +541,7 @@ export const useCore = create<CoreState>((set, get) => ({
       const r = await apiFetch("/computer/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: USER }),
+        body: JSON.stringify({ user_id: currentUserId() }),
       });
       const d = await r.json();
       if (d.ok) {
@@ -562,7 +572,7 @@ export const useCore = create<CoreState>((set, get) => ({
       await apiFetch("/computer/stop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: USER }),
+        body: JSON.stringify({ user_id: currentUserId() }),
       });
     } catch {
       /* ignore */

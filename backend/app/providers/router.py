@@ -79,22 +79,52 @@ def computer_model_for(settings: Settings, name: str) -> str:
     return settings.computer_model or ""
 
 
+#: The text-only roles.  They all share one provider/model pair (``agent_*``)
+#: and are deliberately separate from computer control, whose routing is driven
+#: by ``COMPUTER_PROVIDER``/``*_MODEL`` and must not be touched by ordinary-agent
+#: configuration.
+AGENT_ROLES = ("commander", "worker", "email", "summary")
+
+
 class Router:
     def __init__(self, providers: Dict[str, object], settings: Settings):
         self.providers = providers
         self.settings = settings
 
+    def is_agent_role(self, role: str) -> bool:
+        return role in AGENT_ROLES
+
+    def fallback_model(self, role: str) -> str:
+        """The smaller model a text role may retry with.
+
+        Only the ordinary agent roles have a fallback.  Computer control does
+        not: a screenshot-driven run that silently downgraded its model would
+        report progress it may not have made, and its model is chosen explicitly
+        per run anyway.
+        """
+        if role in AGENT_ROLES:
+            return self.settings.agent_fallback_model or self.settings.agent_model
+        return ""
+
     def resolve(self, role: str, provider_name: Optional[str] = None) -> Tuple[object, str]:
+        # Ordinary agent roles resolve through the shared ``agent_*`` pair so a
+        # single setting points every text role at the same model.  ``summary``
+        # deliberately resolves to the smaller fallback model: summarising is
+        # mechanical compression, and spending the large model's budget on it is
+        # the token cost this routing exists to avoid.
+        agent = (self.settings.agent_provider, self.settings.agent_model)
         mapping = {
-            "commander": (self.settings.commander_provider, self.settings.commander_model),
-            "worker": (self.settings.worker_provider, self.settings.worker_model),
+            "commander": agent,
+            "worker": agent,
+            "email": agent,
+            "summary": (self.settings.agent_provider, self.settings.agent_fallback_model),
             "browser": (self.settings.browser_provider, self.settings.browser_model),
             "computer": (
                 provider_name or self.settings.computer_provider,
                 None,
             ),
         }
-        chosen, model = mapping.get(role, (self.settings.worker_provider, self.settings.worker_model))
+        chosen, model = mapping.get(role, agent)
         if role == "computer":
             # Resolved per call rather than from settings, because a run can be
             # pointed at a different provider between turns.  The model comes
@@ -125,3 +155,27 @@ class Router:
             provider = self.providers["mock"]
             model = "mock"
         return provider, model
+
+    def resolve_attempts(self, role: str) -> List[Tuple[object, str]]:
+        """Ordered ``(provider, model)`` pairs to try for a text role.
+
+        The primary model first, then the configured fallback when it names a
+        different model and the resolved provider is a real one.  A mock or
+        unresolved provider yields a single attempt: there is nothing to fall
+        back to that would not just be the same mock, and pretending otherwise
+        would hide a misconfiguration.  Computer control never reaches here --
+        changing its model mid-run is exactly what it must not do.
+        """
+        if role not in AGENT_ROLES:
+            return [self.resolve(role)]
+        provider, model = self.resolve(role)
+        attempts: List[Tuple[object, str]] = [(provider, model)]
+        fallback = self.fallback_model(role)
+        if (
+            fallback
+            and fallback != model
+            and model != "mock"
+            and provider is not self.providers.get("mock")
+        ):
+            attempts.append((provider, fallback))
+        return attempts

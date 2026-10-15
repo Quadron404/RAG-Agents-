@@ -54,6 +54,7 @@ async def run_agent_loop(
     emit: EmitFn,
     agent_name: str,
     max_iters: int,
+    record: Optional[Callable[[dict], object]] = None,
 ) -> dict:
     messages: List[LLMMessage] = [LLMMessage("system", system)]
     messages.extend(context)
@@ -93,14 +94,14 @@ async def run_agent_loop(
         for directive in directives:
             await _execute(
                 executor, emit, messages, agent_name, directive["name"],
-                parse_arguments(directive["arguments"]), _new_id("t"),
+                parse_arguments(directive["arguments"]), _new_id("t"), record,
             )
             tool_count += 1
 
         for tc in tool_calls:
             args = parse_arguments(tc.arguments)
             tool_count += 1
-            await _execute(executor, emit, messages, agent_name, tc.name, args, tc.id)
+            await _execute(executor, emit, messages, agent_name, tc.name, args, tc.id, record)
 
     return {"text": _strip_toolcalls(final_text), "tool_count": tool_count}
 
@@ -118,6 +119,7 @@ async def _execute(
     name: str,
     args: dict,
     tool_id: str,
+    record: Optional[Callable[[dict], object]] = None,
 ) -> None:
     await _emit(
         emit,
@@ -145,6 +147,32 @@ async def _execute(
         "tool", output or error, tool_call_id=tool_id, name=name, images=[image] if image else []
     )
     messages.append(message)
+    # Persist the tool turn to the canonical transcript when a recorder is
+    # supplied.  The image is deliberately not recorded: the transcript keeps
+    # what the model read and concluded, not a screenshot that cannot be replayed
+    # into a later, differently-shaped request anyway.
+    if record is not None:
+        try:
+            result = record(
+                {
+                    "role": "tool",
+                    "agent": name,
+                    "content": output or error,
+                    "data": {
+                        "tool": name,
+                        "id": tool_id,
+                        "agent": agent_name,
+                        "error": error,
+                        "args": args,
+                    },
+                }
+            )
+            import asyncio
+
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            pass
 
 
 async def _emit(emit: Optional[EmitFn], event: dict) -> None:

@@ -167,9 +167,9 @@ else
   bad "the published URL is not a trycloudflare origin: ${PUBLIC_URL:-<empty>}"
 fi
 
-# The public URL is not a secret.  What matters is that a request through it
-# reaches the whole app, so every check below is a plain unauthenticated
-# request -- there is no session to acquire.
+# The public URL is the Worker's upstream now, not the front door.  These checks
+# only prove the origin answers and serves the app; the Google-sign-in gate lives
+# at the Worker, not here.
 # ---------------------------------------------------------------------------
 head_ "4. Reaching the app through the tunnel"
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ else
   # The app itself, served with no session of any kind.
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_URL/" 2>/dev/null)"
   if [ "$code" = "200" ]; then
-    ok "the app is served with no sign-in step (GET / -> 200)"
+    ok "the app origin is served (GET / -> 200)"
   else
     bad "GET / returned ${code:-no response}, expected 200"
   fi
@@ -424,12 +424,13 @@ head_ "The URL to open"
 # ---------------------------------------------------------------------------
 if [ -n "$PUBLIC_URL" ]; then
   printf '  \033[1m%s\033[0m\n\n' "$PUBLIC_URL"
-  printf '  The Computer view then connects to %s/websockify,\n' "$PUBLIC_URL"
-  printf '  which the app proxies to websockify on 127.0.0.1:%s.\n\n' "$WEBSOCKIFY_PORT"
-  printf '  This hostname changes every time the tunnel restarts. There is no\n'
-  printf '  passphrase: anyone who has this URL has the app and the screen.\n'
-  printf '  Treat it as a secret in practice, and restart the tunnel to revoke it.\n'
-  printf '  Get the current one any time with: cat %s\n\n' "$PUBLIC_URL_FILE"
+  printf '  This is the backend tunnel: the upstream for the Cloudflare Worker.\n'
+  printf '  Open the Worker origin and sign in with Google instead:\n'
+  printf '  \033[1mhttps://rag-agents.<account>.workers.dev\033[0m\n\n'
+  printf '  The Computer view then connects to /websockify at the Worker, which is\n'
+  printf '  proxied here to websockify on 127.0.0.1:%s.\n\n' "$WEBSOCKIFY_PORT"
+  printf '  This hostname changes every time the tunnel restarts. Keep it private;\n'
+  printf '  get the current one any time with: cat %s\n\n' "$PUBLIC_URL_FILE"
 else
   printf '  no tunnel URL, so there is nothing to open yet.\n\n'
 fi

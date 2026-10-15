@@ -49,8 +49,12 @@ from tests.test_computer_control import SCREEN, FakeComputer, FakeProvider, _fin
 
 #: The OpenRouter reply set every provider is asked to drive, so the two are
 #: provably running the same loop rather than two loops that happen to work.
+#: A coordinate click is only meaningful in the grid of a frame the model has
+#: been shown, so the loop refuses one until a `screenshot()` has defined that
+#: grid.  The script therefore looks once, between the navigation and the click.
 SCRIPT = [
     '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+    '{"type":"screenshot"}',
     '{"type":"click","x":700,"y":350}',
     '{"type":"type","text":"example.com"}',
     '{"type":"key","key":"ENTER"}',
@@ -235,19 +239,27 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
     """4, 10. Raw response parsing and the command schema."""
 
     def test_a_mistral_reply_is_stored_raw_and_parsed_unchanged(self):
-        # The navigate has to come first: a bare click on turn one is refused by
-        # the parser because there is no screenshot yet, and it would be the
-        # parser being right rather than Mistral being wrong.
-        click = '{"type":"click","x":742,"y":418}'
+        # A navigate and a look have to come first: a bare click is refused
+        # because there is no frame to measure its coordinate in, and that would
+        # be the parser being right rather than Mistral being wrong.  A reply is
+        # delivered as a native tool call, so the trace keeps the call it was
+        # sent beside the command it parsed to, and carries no assistant prose.
         runner, run, _ = make_two_provider_runner(
-            replies=['{"type":"navigate","url":"https://example.com"}', click],
+            replies=[
+                '{"type":"navigate","url":"https://example.com"}',
+                '{"type":"screenshot"}',
+                '{"type":"click","x":742,"y":418,"target":"the corner button"}',
+            ],
             provider="mistral",
         )
         report = asyncio.run(_finish_with(runner, run.task, provider="mistral")).trace_report()
         turn = [t for t in report["turns"] if t["command"].get("type") == "click"][0]
-        self.assertEqual(turn["raw"], click, "the reply was rewritten on the way to the trace")
+        self.assertEqual(turn["raw"], "", "a native tool call carries no assistant text")
         self.assertTrue(turn["parse_ok"])
-        self.assertEqual(turn["command"], {"type": "click", "x": 742, "y": 418})
+        self.assertEqual(turn["command"], {"type": "click", "x": 742.0, "y": 418.0})
+        self.assertEqual(turn["tool_call"]["name"], "click")
+        args = json.loads(turn["tool_call"]["arguments"])
+        self.assertEqual((args["x"], args["y"]), (742, 418))
         self.assertEqual(provider_of(turn), "mistral")
 
     def test_the_parser_does_not_know_which_provider_was_asked(self):
@@ -269,6 +281,7 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
                 "scroll": '{"type":"scroll","delta_y":500}',
                 "move": '{"type":"move","x":800,"y":300}',
                 "done": '{"type":"done","message":"Task complete."}',
+                "stop": '{"type":"stop","message":"stopped"}',
                 "error": '{"type":"error","message":"stuck"}',
             }[kind]
             for provider in ("openrouter", "mistral"):
@@ -278,32 +291,32 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
                     self.assertEqual(cmd.type, kind)
 
     def test_a_mistral_run_of_the_whole_script_executes_every_step(self):
-        # The full navigate -> screenshot -> click -> screenshot -> type ->
-        # screenshot -> key -> screenshot -> done chain, driven by Mistral.
+        # The full navigate -> screenshot -> click -> type -> key -> done chain,
+        # driven by Mistral.  The screenshot is a look, not an action: it carries
+        # no execution record, and it is the only request that carries a frame.
         runner, run, _ = make_two_provider_runner(provider="mistral")
         report = asyncio.run(_finish_with(runner, run.task, provider="mistral")).trace_report()
         self.assertEqual([t["command"].get("type") for t in report["turns"]],
-                         ["navigate", "click", "type", "key", "done"])
+                         ["navigate", "screenshot", "click", "type", "key", "done"])
         for turn in report["turns"]:
             self.assertEqual(turn["provider"], "mistral")
             self.assertEqual(turn["model"], DEFAULT_MISTRAL_MODEL)
-        # A screenshot on every turn after the navigate, and a fresh one after
-        # each non-terminal action.
-        for turn in report["turns"][1:]:
-            self.assertTrue(turn["screenshot_attached"], f"turn {turn['turn']} had no screenshot")
-            self.assertTrue(turn["wire"]["image_present"], f"turn {turn['turn']} sent no image")
-        for turn in report["turns"][:-1]:
-            self.assertTrue(turn["next_image"], f"turn {turn['turn']} captured no after-shot")
+            self.assertTrue(turn["prompt"], "every request must carry the prompt")
+        self.assertEqual(
+            [t["screenshot_attached"] for t in report["turns"]],
+            [False, False, True, False, False, False],
+        )
         # The executors ran, not just the parser.  "Return" rather than "ENTER"
         # because the parser normalises key names for xdotool, above the provider
         # -- a model may answer with either and the machine gets the same key.
         self.assertEqual(
-            [t["execution"]["outcome"] for t in report["turns"]],
+            [t["execution"]["outcome"] for t in report["turns"] if t.get("execution")],
             ["executed", "executed", "executed", "executed", "done"],
         )
         self.assertEqual(runner.computer.actions, [
             ("navigate", "https://example.com/computer-test.html"),
-            ("click", 700.0, 350.0),
+            ("move", 700.0, 350.0),
+            ("click", 700, 350),
             ("type", "example.com"),
             ("key", "Return"),
         ])
@@ -334,33 +347,46 @@ class TestBothProvidersGetTheWholeConversationAndTheNewestFrame(unittest.TestCas
             self.assertEqual(a["image"], b["image"])
             self.assertEqual(a["user_text"], b["user_text"])
             self.assertEqual(a["command"], b["command"])
-            self.assertEqual(a["execution"]["outcome"], b["execution"]["outcome"])
+            # The screenshot request performs nothing, so it carries no
+            # execution at all; compare the outcome only where one exists.
+            self.assertEqual(
+                (a.get("execution") or {}).get("outcome"),
+                (b.get("execution") or {}).get("outcome"),
+            )
 
-    def test_the_history_only_grows_and_keeps_the_whole_conversation(self):
+    def test_each_request_has_the_bounded_rebuilt_shape(self):
+        # Each request is reconstructed from the run rather than appended to a
+        # provider-side conversation, so its shape is bounded: a plain turn is
+        # system + the state/user message, and the one turn that carries a
+        # screenshot adds exactly the assistant tool call and its tool result.
+        # Nothing accumulates, which is what makes the same run replayable on a
+        # second provider.
         for provider in ("openrouter", "mistral"):
             with self.subTest(provider=provider):
                 runner, report = self._run_with(provider)
-                counts = [t["message_count"] for t in report["turns"]]
-                self.assertEqual(counts, sorted(counts))
-                # system + task, then a state turn per completed action.
-                self.assertEqual(counts[0], 2)
-                self.assertEqual(counts[-1], 2 + 2 * (len(counts) - 1))
+                for turn in report["turns"]:
+                    roles = [m["role"] for m in turn["messages_meta"]]
+                    if turn["screenshot_attached"]:
+                        self.assertEqual(roles, ["system", "user", "assistant", "tool"])
+                    else:
+                        self.assertEqual(roles, ["system", "user"])
+                self.assertEqual(report["turns"][0]["message_count"], 2)
 
-    def test_every_request_carries_the_prompt_and_the_screenshot_from_the_last_capture(self):
+    def test_the_screenshot_reaches_only_the_request_that_follows_the_capture(self):
         for provider in ("openrouter", "mistral"):
             with self.subTest(provider=provider):
                 runner, report = self._run_with(provider)
-                expected = 0
                 for turn in report["turns"]:
                     if turn["first_turn"]:
                         self.assertFalse(turn["screenshot_attached"], "the first turn had nothing to show yet")
-                    else:
-                        expected += 1
-                        self.assertEqual(
-                            turn["image"], f"SCREENSHOT-{expected}",
-                            f"turn {turn['turn']} was sent a stale frame",
-                        )
-                        self.assertTrue(turn["wire"]["image_present"])
+                # The script looks exactly once, on turn two, for the click.
+                attached = [t["screenshot_attached"] for t in report["turns"]]
+                self.assertEqual(attached, [False, False, True, False, False, False])
+                shot = report["turns"][2]
+                self.assertEqual(shot["image"], "SCREENSHOT-1")
+                self.assertTrue(shot["wire"]["image_present"])
+                # A frame is spent on one request and never replayed.
+                self.assertEqual(attached.count(True), 1)
 
     def test_the_conversation_is_rebuilt_from_the_run_not_held_by_the_provider(self):
         # No provider-side conversation id anywhere.  A run pointed at a second
@@ -404,10 +430,12 @@ class TestSwitchingProviderMidRun(unittest.TestCase):
         # everything after it Mistral.
         self.assertEqual(names, ["openrouter"] * (names.count("openrouter")) + ["mistral"] * names.count("mistral"))
         self.assertEqual(report["task"], "the task")
-        # The conversation did not restart: the message count kept growing
-        # across the boundary rather than dropping back to two.
-        counts = [t["message_count"] for t in report["turns"]]
-        self.assertEqual(counts, sorted(counts))
+        # The context did not restart: every request after the boundary is still
+        # built from the same run, so it carries the same prompt and the same
+        # task OpenRouter was given rather than a blank conversation.
+        for turn in report["turns"]:
+            self.assertTrue(turn["prompt"], f"turn {turn['turn']} lost the prompt at the boundary")
+            self.assertIn("the task", turn["user_text"] or turn["prompt"])
 
     def test_the_history_survives_the_switch_in_full(self):
         runner, run, _ = make_two_provider_runner(provider="openrouter")
@@ -422,10 +450,17 @@ class TestSwitchingProviderMidRun(unittest.TestCase):
         asyncio.run(_finish_with(runner, run.task, provider="openrouter"))
         mistral = runner.router.providers["mistral"]
         self.assertTrue(mistral.calls, "Mistral was never called")
+        # The context is rebuilt from the run, so Mistral is told the same prompt
+        # and the same task OpenRouter was.  There is no replayed assistant
+        # history to carry across: the run itself is the history.
+        for call in mistral.calls:
+            roles = [m.role for m in call]
+            self.assertIn(
+                roles, (["system", "user"], ["system", "user", "assistant", "tool"]),
+                "a request carried a shape the rebuilt context never produces",
+            )
         first_mistral_call = mistral.calls[0]
-        # Everything OpenRouter had already been told, Mistral is told too.
         self.assertTrue(any(m.role == "system" for m in first_mistral_call))
-        self.assertTrue(any(m.role == "assistant" for m in first_mistral_call), "no prior replies carried over")
         self.assertTrue(any("the task" in (m.content or "") for m in first_mistral_call))
 
     def test_set_provider_leaves_the_step_count_and_the_task_alone(self):
@@ -452,9 +487,11 @@ class TestTheProviderSelectorIsAnApi(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         import app.main as main_module
+        from tests import support
 
         cls.main = main_module
         cls.client = TestClient(main_module.app)
+        support.attach_session(cls.client, "provider-api-user")
 
     def setUp(self):
         self._saved = {
@@ -620,9 +657,11 @@ class TestKeysNeverReachTheBrowser(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         import app.main as main_module
+        from tests import support
 
         cls.main = main_module
         cls.client = TestClient(main_module.app)
+        support.attach_session(cls.client, "provider-api-user")
 
     def _assert_clean(self, blob, where):
         for secret in self.SECRETS:

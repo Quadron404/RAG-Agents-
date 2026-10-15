@@ -21,6 +21,8 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="rag-bridge-test-"))
 
+import tests.support as support  # noqa: E402
+
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -76,6 +78,20 @@ main_module._screen_endpoint = lambda: ("127.0.0.1", PORT)  # type: ignore[assig
 
 client = TestClient(app)
 failures: list[str] = []
+
+
+# An anonymous socket must be refused before a single byte crosses the bridge.
+anon = TestClient(app)
+unauth_refused = False
+try:
+    with anon.websocket_connect("/ws/screen"):
+        pass
+except Exception:  # noqa: BLE001
+    unauth_refused = True
+if not unauth_refused:
+    failures.append("an unauthenticated /ws/screen connection was not denied")
+
+support.attach_session(client)
 
 
 

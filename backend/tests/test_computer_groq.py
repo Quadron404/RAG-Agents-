@@ -35,9 +35,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.computer.commands import Bounds, parse_command
+from app.computer.tools import TOOL_NAMES
 from app.computer.runner import ComputerRun, ComputerRunner
 from app.config import load_settings
-from app.providers.base import LLMMessage, summarize_wire
+from app.providers.base import (
+    LLMMessage,
+    MODEL_MAX_RATE_LIMIT_RETRIES,
+    summarize_wire,
+)
 from app.providers.errors import ProviderHTTPError
 from app.providers.groq import DEFAULT_GROQ_MODEL, GroqProvider
 from app.providers.openai_compat import OpenAICompatProvider
@@ -53,8 +58,13 @@ from tests.test_computer_provider_failures import FakeProvider as ScriptedProvid
 
 #: The same reply set the other providers are driven with, so "Groq works" and
 #: "OpenRouter works" mean the same loop ran rather than two loops that differ.
+#: A click is a coordinate in a picture, so the model has to have looked before
+#: it may click: the loop refuses a coordinate click until a `screenshot()` has
+#: defined the grid it is measured in.  The script therefore looks once, between
+#: the navigation and the click -- exactly the shape a real run takes.
 SCRIPT = [
     '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+    '{"type":"screenshot"}',
     '{"type":"click","x":700,"y":350,"target":"a test button"}',
     '{"type":"type","text":"example.com"}',
     '{"type":"key","key":"ENTER"}',
@@ -262,24 +272,36 @@ class TestGroqDrivesTheSameLoop(unittest.TestCase):
         run = run_to_end(runner)
         self.assertEqual(run.status, "done", run.message)
         self.assertEqual(run.message, "Example Domain")
-        self.assertEqual([t.provider for t in run.trace], ["groq"] * 5)
-        self.assertEqual([t.model for t in run.trace], [DEFAULT_GROQ_MODEL] * 5)
-        # The actions that actually reached the computer, in order.  `done` is
-        # not among them: it is the loop terminating on the model's word, not a
-        # tool call dispatched to the machine.
+        self.assertEqual([t.provider for t in run.trace], ["groq"] * 6)
+        self.assertEqual([t.model for t in run.trace], [DEFAULT_GROQ_MODEL] * 6)
+        # The actions that actually reached the computer, in order.  `move` is
+        # the pointer being put on the verified point before the press, and
+        # `done` is not among them: it is the loop terminating on the model's
+        # word, not a tool call dispatched to the machine.
         self.assertEqual([a[0] for a in runner.computer.actions],
-                         ["navigate", "click", "type", "key"])
-        # One capture per turn after the first: the screenshot has to be real
-        # and current, not a stand-in for one.
-        self.assertEqual(runner.computer.screens, 4)
+                         ["navigate", "move", "click", "type", "key"])
+        # Exactly one capture, because the model asked to look exactly once.
+        # The frame is real, and it is spent on the one request that follows
+        # the call that asked for it rather than being re-taken every turn.
+        self.assertEqual(runner.computer.screens, 1)
 
-    def test_the_screenshot_is_on_the_wire_on_every_turn_after_the_first(self):
+    def test_the_screenshot_reaches_the_request_that_follows_the_screenshot_call(self):
+        # A frame lives for exactly one request: the one built right after the
+        # model asked to look.  The script navigates, looks, then clicks, so
+        # request index 2 is the look's result -- and no other request may
+        # inherit the frame or invent one it was never given.
         runner, fakes = make_runner()
         run_to_end(runner)
-        first, later = fakes["groq"].calls[0], fakes["groq"].calls[1:]
-        self.assertFalse(any(m.images for m in first), "turn one has no screenshot to send")
-        self.assertTrue(all(any(m.images for m in turn) for turn in later),
-                        "a turn went to Groq without the newest screenshot")
+        calls = fakes["groq"].calls
+        attached = [any(m.images for m in call) for call in calls]
+        self.assertFalse(attached[0], "turn one has no screenshot to send")
+        self.assertEqual(
+            attached,
+            [False, False, True, False, False, False],
+            f"a frame was sent to the wrong request: {attached}",
+        )
+        frame = [m for m in calls[2] if m.images][-1].images[-1]
+        self.assertEqual(frame, "SCREENSHOT-1", "the newest real frame must be the one sent")
 
     def test_the_trace_names_groq_where_the_selector_does(self):
         runner, _ = make_runner()
@@ -314,24 +336,37 @@ class TestGroqDrivesTheSameLoop(unittest.TestCase):
         self.assertIsNone(command)
         self.assertTrue(reason, "a rejected reply must say why")
 
-        runner, _ = make_runner(replies=['{"type":"click","x":"over there","y":3}'])
+        # The loop only sees native tool calls, so a coordinate click needs a
+        # frame first; the malformed call is offered twice so the same-signature
+        # bound stops the run instead of paying for a retry of the same bytes.
+        bad = '{"type":"click","x":"over there","y":3}'
+        runner, _ = make_runner(replies=['{"type":"screenshot"}', bad, bad])
         run = run_to_end(runner)
         self.assertEqual(run.status, "error")
         self.assertEqual(runner.computer.actions, [], "an invalid command reached the machine")
         self.assertTrue(any(t.parse_error for t in run.trace), [t.parse_error for t in run.trace])
-        self.assertIn("usable command", run.message)
+        self.assertIn("usable call", run.message)
 
     def test_a_prose_groq_reply_is_reported_not_executed(self):
-        runner, _ = make_runner(replies=["Sure! I have navigated to the page for you."])
+        prose = "Sure! I have navigated to the page for you."
+        runner, _ = make_runner(replies=[prose, prose])
         run = run_to_end(runner)
         self.assertEqual(run.status, "error")
         self.assertEqual(runner.computer.actions, [], "a prose reply was executed as an action")
-        self.assertIn("never returned a usable command", run.message)
+        self.assertIn("no tool was called", run.message)
 
     def test_the_allowed_command_set_is_unchanged_by_adding_a_provider(self):
+        # Every *executable* reply the script uses parses: the strict parser is
+        # the same closed set whichever provider answered.  `screenshot` is not
+        # a parsed command -- its effect is the image itself, and it is offered
+        # through the tool catalogue rather than the command parser -- so it is
+        # asserted there instead.
         for reply in SCRIPT:
+            if json.loads(reply).get("type") == "screenshot":
+                continue
             command, _ = parse_command(reply, bounds=Bounds(width=1365, height=768))
             self.assertIsNotNone(command, reply)
+        self.assertIn("screenshot", TOOL_NAMES)
         # And the types Groq may use are the same closed list as before.
         for reply in ['{"type":"teleport","x":1,"y":1}', '{"type":"bash","cmd":"ls"}']:
             command, _ = parse_command(reply, bounds=Bounds(width=1365, height=768))
@@ -342,12 +377,15 @@ class TestGroqErrorsAreHandledLikeTheOthers(unittest.TestCase):
     """8. 429, 401 and a refused connection, through the shared error path."""
 
     def test_a_429_is_reached_retried_and_reported_with_groqs_own_words(self):
+        # The retry bound lives in the provider layer (`stream_model`): one
+        # initial send plus `MODEL_MAX_RATE_LIMIT_RETRIES` retries.  The run must
+        # NOT add a second, runner-side bound on top of it.
         runner, groq = make_failing_runner(
             [http_error(429, GROQ_RATE_LIMIT_BODY, reason="Too Many Requests", retry_after=0.0)],
-            computer_max_http_attempts=2,
         )
+        bound = MODEL_MAX_RATE_LIMIT_RETRIES + 1
         run = run_to_end(runner)
-        self.assertEqual(groq.calls, 2, "the 429 was not retried")
+        self.assertEqual(groq.calls, bound, "the 429 was not retried to the provider-layer bound")
         failure = failure_of(run)
         self.assertIsNotNone(failure, "a run that died on a 429 must report one")
         self.assertTrue(failure["provider_reached"], "a 429 means the provider WAS reached")
@@ -356,7 +394,7 @@ class TestGroqErrorsAreHandledLikeTheOthers(unittest.TestCase):
         self.assertEqual(failure["provider"], "groq")
         self.assertEqual(failure["model"], DEFAULT_GROQ_MODEL)
         self.assertIn("Rate Limit Reached", failure["provider_error"])
-        self.assertEqual(failure["retry_attempts"], 2)
+        self.assertEqual(failure["retry_attempts"], bound)
         self.assertEqual(failure["final_result"], "stopped")
         self.assertIn("HTTP 429", failure["message"])
 
