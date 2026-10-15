@@ -6,3 +6,12 @@ pydantic>=2.7.0
 # /websockify relays the WebSocket to the local websockify, so this is imported
 # directly rather than relied on as a transitive dependency of uvicorn[standard].
 websockets>=12.0
+
+# Required by the application's own import graph, not by an optional feature:
+# auth/crypto.py does AES-GCM over Gmail refresh tokens and auth/tokens.py
+# verifies Google's RS256 ID token.  app.main imports auth.deps, which imports
+# auth.crypto, so an environment without this cannot import the app at all --
+# while `import uvicorn, fastapi` still succeeds, which is the only probe
+# install.sh and boot.sh used to run.  Declared here and asserted by
+# tests/test_python_environment.py.
+cryptography>=41.0.0

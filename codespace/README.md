@@ -244,8 +244,9 @@ usually faster than reading logs by hand.
 | Screen stuck on "connecting" | The tunnel is up but the origin is not. Check `listening 6080`. |
 | 502 from Cloudflare | The backend on 8000 is not running. Check `backend.log`. |
 | `cloudflared: command not found` | Run `codespace/install.sh`, or use the Codespaces port forward — the screen still works over `/ws/screen`. |
-| The app is not up, and `backend.log` shows `ModuleNotFoundError` | `install.sh` never completed. It now exits non-zero and says so; re-run `sudo bash codespace/install.sh`. `boot.sh` also picks `backend/.venv` if the deps are there. |
-| `boot.sh` prints `FATAL: no python with uvicorn+fastapi` | Neither the venv nor system python3 has the requirements. `sudo bash codespace/install.sh`. |
+| The app is not up, and `backend.log` shows `ModuleNotFoundError` | `backend/.venv` is missing or incomplete. `boot.sh` starts the app from nothing else and stops with a `FATAL` instead of falling back, so re-run `sudo bash codespace/install.sh` — it creates the venv as the runtime user, installs `backend/requirements.txt` into it and verifies every direct import there. |
+| `boot.sh` prints `FATAL: .../backend/.venv/bin/python does not exist` | The venv was never created (install.sh did not finish, or ran from another checkout). `sudo bash codespace/install.sh`, then `bash codespace/boot.sh`. |
+| `boot.sh` prints `FATAL: ... is missing the backend's dependencies` | The venv exists but a package is absent — `requirements.txt` and the scripts' import probe disagree. Install with `backend/.venv/bin/python -m pip install -r backend/requirements.txt`; `tests/test_python_environment.py` reports exactly which declaration drifted. |
 | RFB is up but the Computer view cannot connect | websockify on 6080 is not running. It is supervised by both the daemon and `supervise.sh`; check `/display/status`, which reports `websockify` and its pid, and `/tmp/websockify.log`. |
 | `/display/status` says `vnc: true` but nothing is viewable | `vnc` being true only means RFB is listening. Check `websockify` in the same payload — that was the exact shape of the 6080 failure. |
 | Chrome logs out every rebuild | `CHROME_PROFILE` is pointing off the persistent volume. |

@@ -104,62 +104,69 @@ if [ -f "$RUN_DIR/backend.pid" ] && kill -0 "$(cat "$RUN_DIR/backend.pid" 2>/dev
   rm -f "$RUN_DIR/backend.pid"
 fi
 
-# Prefer the project venv.  A previous version of this script ran a bare
-# `python3 -m uvicorn`, which died with ModuleNotFoundError on a Codespace
-# where install.sh had installed into the venv, and the symptom was simply
-# "the app is not up" with the reason buried in a log nobody was reading.
-BACKEND_PY=""
-for cand in "$REPO_ROOT/backend/.venv/bin/python" "$(command -v python3 || true)"; do
-  if [ -n "$cand" ] && [ -x "$cand" ]; then
-    if "$cand" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
-      BACKEND_PY="$cand"
-      break
-    fi
-  fi
+# backend/.venv is the ONLY interpreter the backend may run from: install.sh
+# creates it, installs requirements.txt into it and verifies the application's
+# imports there.  The previous version of this block looped over that path and
+# a bare `command -v python3`, taking whichever could import `uvicorn,
+# fastapi` -- so a venv nobody had populated never failed here, the system
+# interpreter was used instead, and the app then died on an import that probe
+# had never checked (`cryptography`, absent from requirements.txt until now).
+# One candidate, checked against every direct dependency, and a failure that
+# names the command to run rather than a later "not listening" symptom.
+VENV_PY="$REPO_ROOT/backend/.venv/bin/python"
+
+if [ ! -x "$VENV_PY" ]; then
+  log "FATAL: $VENV_PY does not exist."
+  log "       The backend runs from exactly one environment; create it with:"
+  log "         bash codespace/install.sh"
+  exit 1
+fi
+
+if ! "$VENV_PY" -c "import fastapi, uvicorn, httpx, pydantic, websockets, cryptography" >/dev/null 2>&1; then
+  log "FATAL: $VENV_PY is missing the backend's dependencies."
+  log "       Reinstall them into that same environment:"
+  log "         $VENV_PY -m pip install -r $REPO_ROOT/backend/requirements.txt"
+  exit 1
+fi
+
+BACKEND_PY="$VENV_PY"
+log "using $BACKEND_PY"
+# 127.0.0.1, never 0.0.0.0.  The Quick Tunnel reaches this port from an
+# outbound connection, so a public bind is never needed -- and binding
+# 0.0.0.0 would put the app, and therefore /websockify, on every interface
+# the Codespace has.  cloudflared, the app, and this process are all on the
+# same machine; loopback is the whole route.
+(
+  cd "$REPO_ROOT/backend" || exit 1
+  # backend/.env is deliberately NOT sourced here.
+  #
+  # It used to be: `set -a; . ./.env; set +a`, which made *bash* a second
+  # parser of the same file.  Bash and config.py disagreed about quotes,
+  # unquoted spaces, `$` expansion, and which of several duplicate lines won,
+  # because bash takes the last and Python takes the first -- so the running
+  # server could use a value that appeared nowhere in the file the operator was
+  # reading.
+  #
+  # The backend loads the file itself, once, in config._load_dotenv.
+  # Codespaces secrets still reach the process the normal way: `exec` inherits
+  # this shell's environment, and the real environment still wins over the
+  # file.  Only the second, competing parser is gone.
+  exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
+) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
+write_pid "$RUN_DIR/backend.pid" "$!"
+log "backend started (pid $!) on 127.0.0.1:$BACKEND_PORT"
+
+# Wait for it and, if it never arrives, say why instead of leaving the
+# operator to infer it from a later "not listening" check.
+for _ in $(seq 1 30); do
+  listening "$BACKEND_PORT" && break
+  kill -0 "$(cat "$RUN_DIR/backend.pid")" 2>/dev/null || break
+  sleep 1
 done
-
-if [ -z "$BACKEND_PY" ]; then
-  log "FATAL: no python with uvicorn+fastapi.  Run codespace/install.sh first."
-  log "       tried: backend/.venv/bin/python, $(command -v python3 || echo 'python3')"
-else
-  log "using $BACKEND_PY"
-  # 127.0.0.1, never 0.0.0.0.  The Quick Tunnel reaches this port from an
-  # outbound connection, so a public bind is never needed -- and binding
-  # 0.0.0.0 would put the app, and therefore /websockify, on every interface
-  # the Codespace has.  cloudflared, the app, and this process are all on the
-  # same machine; loopback is the whole route.
-  (
-    cd "$REPO_ROOT/backend" || exit 1
-    # backend/.env is deliberately NOT sourced here.
-    #
-    # It used to be: `set -a; . ./.env; set +a`, which made *bash* a second
-    # parser of the same file.  Bash and config.py disagreed about quotes,
-    # unquoted spaces, `$` expansion, and which of several duplicate lines won,
-    # because bash takes the last and Python takes the first -- so the running
-    # server could use a value that appeared nowhere in the file the operator was
-    # reading.
-    #
-    # The backend loads the file itself, once, in config._load_dotenv.
-    # Codespaces secrets still reach the process the normal way: `exec` inherits
-    # this shell's environment, and the real environment still wins over the
-    # file.  Only the second, competing parser is gone.
-    exec "$BACKEND_PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
-  ) >>"$DESKTOP_LOG_DIR/backend.log" 2>&1 &
-  write_pid "$RUN_DIR/backend.pid" "$!"
-  log "backend started (pid $!) on 127.0.0.1:$BACKEND_PORT"
-
-  # Wait for it and, if it never arrives, say why instead of leaving the
-  # operator to infer it from a later "not listening" check.
-  for _ in $(seq 1 30); do
-    listening "$BACKEND_PORT" && break
-    kill -0 "$(cat "$RUN_DIR/backend.pid")" 2>/dev/null || break
-    sleep 1
-  done
-  if ! listening "$BACKEND_PORT"; then
-    log "WARNING: the app never came up on 127.0.0.1:$BACKEND_PORT."
-    log "         last lines of $DESKTOP_LOG_DIR/backend.log:"
-    tail -n 15 "$DESKTOP_LOG_DIR/backend.log" 2>/dev/null | while read -r l; do log "         $l"; done
-  fi
+if ! listening "$BACKEND_PORT"; then
+  log "WARNING: the app never came up on 127.0.0.1:$BACKEND_PORT."
+  log "         last lines of $DESKTOP_LOG_DIR/backend.log:"
+  tail -n 15 "$DESKTOP_LOG_DIR/backend.log" 2>/dev/null | while read -r l; do log "         $l"; done
 fi
 
 # --- 4) status -------------------------------------------------------------

@@ -69,36 +69,78 @@ else
   rm -f /tmp/cloudflared.deb
 fi
 
-# --- Python deps for the agent --------------------------------------------
+# --- Python: one canonical environment for the backend ---------------------
+#
+# The backend used to be installed into the *system* interpreter with
+# `pip3 --break-system-packages`, while boot.sh started whichever python3
+# happened to have uvicorn.  On a fresh Codespace those were two different
+# interpreters, so the install check could pass, the boot check could pass, and
+# the app still failed to import -- requirements.txt never declared
+# `cryptography`, which app.main needs through auth.deps -> auth.crypto, and
+# both probes only asked for `uvicorn, fastapi`, which are importable without it.
+#
+# Everything the backend needs now lives in backend/.venv, installed and
+# verified below, and boot.sh is not allowed to start the app from anywhere else.
 log "installing backend + agent Python dependencies"
 $SUDO apt-get install -y --no-install-recommends python3-pip python3-venv
-# The old form of this line was `... 2>/dev/null || log "WARN"`, which threw away
-# pip's error *and* its exit status.  A failed install of uvicorn therefore
-# presented as nothing at all until boot.sh reported "the app is not up", with
-# the real reason sitting in a log nobody was reading.  Requirements and extras
-# are installed separately so one optional failure cannot take uvicorn with it,
-# and a failure is now loud.
-if $SUDO pip3 install --quiet --break-system-packages -r "$REPO_ROOT/backend/requirements.txt"; then
-  log "  ok  backend requirements"
+
+VENV_DIR="$REPO_ROOT/backend/.venv"
+VENV_PY="$VENV_DIR/bin/python"
+RUN_USER="$(codespace_user)"
+
+# postCreateCommand runs this script through sudo.  Creating the venv as root
+# would leave it owned by root while boot.sh runs unprivileged -- the same
+# root-owned-path failure this file records for the run dir below -- so the
+# environment is created as the user who will actually run the backend.
+as_user() {
+  if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ] && command -v sudo >/dev/null 2>&1; then
+    sudo -u "$RUN_USER" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+if [ ! -x "$VENV_PY" ]; then
+  log "creating $VENV_DIR"
+  if ! as_user python3 -m venv "$VENV_DIR"; then
+    log "FATAL: could not create the backend virtual environment at $VENV_DIR"
+    log "       the backend runs from exactly one environment and it does not exist"
+    exit 1
+  fi
+fi
+
+# Installed separately from the optional extras below so one broken package
+# cannot take the rest of them with it, and loud instead of swallowed: this is
+# the line whose failure used to disappear into `|| log "WARN"`.
+if as_user "$VENV_PY" -m pip install --quiet -r "$REPO_ROOT/backend/requirements.txt"; then
+  log "  ok  backend requirements installed into $VENV_PY"
 else
-  log "FATAL: backend requirements failed to install; the app will not start."
+  log "FATAL: backend requirements failed to install into $VENV_DIR; the app will not start."
   log "       run this without --quiet to see which package broke."
   exit 1
 fi
 
-# Optional extras: nice to have, genuinely not required to serve the screen.
-if $SUDO pip3 install --quiet --break-system-packages websocket-client selenium pillow; then
-  log "  ok  agent extras (websocket-client, selenium, pillow)"
+# Prove every direct dependency of the application imports *in that
+# interpreter*, so boot.sh does not discover the problem and so a partial
+# environment can never be mistaken for a working one.  cryptography is listed
+# for the reason it is in requirements.txt: it is in the app's import graph.
+if as_user "$VENV_PY" -c "import fastapi, uvicorn, httpx, pydantic, websockets, cryptography" 2>/dev/null; then
+  log "  ok  backend venv imports: fastapi uvicorn httpx pydantic websockets cryptography"
 else
-  log "WARN: some agent extras failed; the agent falls back without them"
+  log "FATAL: $VENV_PY is missing the backend's dependencies"
+  log "       reinstall them with: $VENV_PY -m pip install -r $REPO_ROOT/backend/requirements.txt"
+  exit 1
 fi
 
-# Prove the app's own imports work, so boot.sh does not discover the problem.
-if python3 -c "import uvicorn, fastapi, websockets" 2>/dev/null; then
-  log "  ok  uvicorn + fastapi + websockets import cleanly"
+# Extras for the *agent*, not the backend: codespace/supervise.sh starts
+# backend/vm_agent with the system python3, and the computer-control tests
+# import selenium, websocket-client and PIL.  Deliberately not part of
+# requirements.txt, which the backend itself never imports, and separate from
+# backend/requirements-restricted.txt, which the sandbox image owns.
+if $SUDO pip3 install --quiet --break-system-packages websocket-client selenium pillow; then
+  log "  ok  agent extras (websocket-client, selenium, pillow) for system python3"
 else
-  log "FATAL: uvicorn/fastapi/websockets are not importable by python3"
-  exit 1
+  log "WARN: some agent extras failed; the agent falls back without them"
 fi
 
 # --- frontend dependencies ---------------------------------------------------

@@ -129,6 +129,11 @@ TESTS = (
     # as root, so every pid write from the unprivileged stack failed with EACCES
     # and the tunnel was never asked for a hostname.
     "test_run_dir_ownership",
+    # The Python environment itself.  requirements.txt omitted cryptography and
+    # boot.sh fell back to whichever python3 could import uvicorn+fastapi, so
+    # every install and boot check passed while the app failed to import.  Reads
+    # the scripts and requirements, so it runs before test_bind_mutations.
+    "test_python_environment",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",
