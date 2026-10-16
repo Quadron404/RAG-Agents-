@@ -972,19 +972,43 @@ def _published_url() -> tuple[str, str]:
     return origin, age
 
 
+def _authenticated_screen_origin() -> str:
+    """The authenticated origin the screen's WebSocket must go through.
+
+    The Quick Tunnel points straight at this process, so a viewer aimed at it
+    reaches the screen endpoint with no internal token and is refused -- a 403
+    on the upgrade, over and over.  The Cloudflare Worker is the door every
+    other call already uses: it owns the session, verifies the browser's
+    identity, and injects the internal token the screen endpoint checks.
+    `worker_origin` names it; `public_base_url` is the same origin when the app
+    is deployed behind it.  This mirrors the routines client, so "the Worker's
+    origin" means one thing everywhere.  Empty means no such gateway is
+    configured, and the caller falls back to the same-origin bridge.
+    """
+    return (settings.worker_origin or settings.public_base_url or "").strip().rstrip("/")
+
+
 @app.get("/screen/config")
 async def screen_config(request: Request):
     """Where the Computer view should open its WebSocket.
 
+    The socket is routed through the authenticated Worker origin, never the raw
+    Quick Tunnel.  The tunnel bypasses the Worker that injects the internal
+    token, so a browser pointed at it has its upgrade refused with a 403; the
+    Worker is the same authenticated, cookie-bearing door the rest of the app
+    uses, and it forwards the WebSocket upgrade.  With no Worker configured the
+    viewer uses the same-origin bridge, which is authenticated the same way.
+
     The public route is the same origin this app is served from, which is what
     makes the session cookie first-party for the WebSocket upgrade: the browser
     has already proved who it is to load the page, and carries the same cookie
-    when it opens the screen.  Nothing about the screen can be reached without
-    that     cookie, which is what makes an unguessable-but-not-secret tunnel URL
-    acceptable here.
+    when it opens the screen.
     """
     _principal(request)
-    origin, age = _published_url()
+    # Reported for the UI's "the tunnel moved / went stale" note, but it is
+    # deliberately not where the socket connects.
+    tunnel_origin, age = _published_url()
+    origin = _authenticated_screen_origin()
     # Only advertise a public route we can actually vouch for.
     public = f"{origin}/websockify" if origin else ""
     # The WebSocket() constructor would normalise https->wss for us, but handing
@@ -994,7 +1018,8 @@ async def screen_config(request: Request):
     return {
         "ok": True,
         "mode": "tunnel" if public else "bridge",
-        # Same-origin, authenticated by the session cookie.
+        # Authenticated by the session cookie at the Worker, which also injects
+        # the internal token the backend screen endpoint requires.
         "wsUrl": ws_public,
         # Used only in bridge mode; the client appends nothing to it.
         "bridgePath": "/ws/screen",
@@ -1002,7 +1027,7 @@ async def screen_config(request: Request):
         "wsProtocols": ["binary"],
         "websockifyPort": computer.websockify_port,
         # Lets the UI say the tunnel moved, or that it has been gone a while.
-        "publicOrigin": origin,
+        "publicOrigin": tunnel_origin,
         "publicUrlAgeSeconds": round(age, 1),
     }
 
@@ -1233,6 +1258,36 @@ async def ws_endpoint(websocket: WebSocket, user_id: str):
         pass
 
 
+def _run_error_text(exc: Exception) -> str:
+    """The sentence shown in the transcript when a model call fails.
+
+    `ProviderHTTPError` and `ModelCallGateTimeout` both expose a one-line
+    `.message` phrased for a person; anything else falls back to `str(exc)` and
+    finally to the exception's class name, so a failure is never reported as an
+    empty line.
+    """
+    detail = getattr(exc, "message", "") or str(exc) or exc.__class__.__name__
+    return f"The AI request failed: {detail}"
+
+
+async def _emit_run_error(emit, exc: Exception) -> None:
+    """Publish a failed turn as a terminal run event, not a dead socket.
+
+    `emit` is whatever the channel supplied -- the WebSocket bridge (async) or a
+    plain list's ``append`` (sync) -- so both are handled, and an emit that
+    itself fails is swallowed: the transcript line is the fallback record and
+    losing it to a broken socket would be worse than the broken socket.
+    """
+    if emit is None:
+        return
+    try:
+        result = emit({"type": "error", "error": _run_error_text(exc), "fatal": True})
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:
+        pass
+
+
 async def run_commander_on_thread(
     thread_id: str, user_id: str, text: str, emit, user_message_id: int = 0
 ) -> None:
@@ -1286,6 +1341,19 @@ async def run_commander_on_thread(
     )
     try:
         result = await commander.run(text, context, emit, record=record)
+    except Exception as exc:
+        # A model call that fails must end the turn on purpose.  Letting the
+        # exception escape would tear down whichever channel started the run:
+        # over the WebSocket the handler would die with no terminal event and
+        # the UI would sit on "processing" forever, and over HTTP the route
+        # would return a 500 with nothing to show.  The failure is reported as
+        # an ordinary run event and the turn ends here.
+        await _emit_run_error(emit, exc)
+        db.add_message(thread_id, "assistant", _run_error_text(exc), agent="commander")
+        db.touch_conversation_activity(
+            thread_id, user_id, db.last_message_id(thread_id), settings.summary_idle_seconds
+        )
+        return
     finally:
         reset_routine_context(context_token)
     db.add_message(thread_id, "assistant", result["text"], agent="commander")

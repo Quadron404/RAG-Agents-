@@ -7,6 +7,7 @@ from typing import AsyncIterator, Callable, List, Optional
 from ..providers.base import (
     LLMMessage,
     Provider,
+    RequestOptions,
     TextDelta,
     ToolCall,
     ToolCallEvent,
@@ -55,6 +56,7 @@ async def run_agent_loop(
     agent_name: str,
     max_iters: int,
     record: Optional[Callable[[dict], object]] = None,
+    request_options: Optional[RequestOptions] = None,
 ) -> dict:
     messages: List[LLMMessage] = [LLMMessage("system", system)]
     messages.extend(context)
@@ -71,7 +73,8 @@ async def run_agent_loop(
         tool_calls: List[ToolCall] = []
         turn_text = ""
         async for ev in stream_model(provider,
-            [m for m in messages], [t.schema() for t in stream_tools], model
+            [m for m in messages], [t.schema() for t in stream_tools], model,
+            options=request_options,
         ):
             if isinstance(ev, TextDelta):
                 turn_text += ev.content

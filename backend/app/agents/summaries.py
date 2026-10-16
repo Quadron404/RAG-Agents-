@@ -69,7 +69,9 @@ async def _summarize(router: Router, previous: str, transcript: str) -> str:
         LLMMessage("user", _summary_prompt(previous, transcript)),
     ]
     text = ""
-    async for event in stream_model(provider, messages, [], model, caller="summary"):
+    async for event in stream_model(
+        provider, messages, [], model, caller="summary", options=router.request_options("summary")
+    ):
         if isinstance(event, TextDelta):
             text += event.content
     return text.strip()

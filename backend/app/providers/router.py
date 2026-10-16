@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from ..config import Settings
+from .base import RequestOptions
 
 
 class ProviderUnavailable(RuntimeError):
@@ -93,6 +94,28 @@ class Router:
 
     def is_agent_role(self, role: str) -> bool:
         return role in AGENT_ROLES
+
+    def request_options(self, role: str) -> Optional[RequestOptions]:
+        """The request shape a text role needs from whichever provider answers.
+
+        The ordinary roles do not always get a provider of their own: with the
+        default configuration they resolve to the same ``groq`` object that
+        drives computer control, and that object was built for the opposite
+        request -- ``reasoning_effort`` "none" and a tiny completion ceiling,
+        because a control loop only ever asks for one small tool call.  The
+        GPT-OSS text models reject "none" outright (the parameter must be one of
+        low/medium/high), so a text role that inherits it fails its very first
+        call with a 400 and, worse, fails silently in planning.  Stating the
+        shape per call lets one provider serve both uses without either
+        overwriting the other, and returns ``None`` for every non-text role so
+        computer control keeps the provider exactly as it was configured.
+        """
+        if role in AGENT_ROLES:
+            return RequestOptions(
+                reasoning_effort=self.settings.agent_reasoning_effort,
+                max_completion_tokens=self.settings.agent_max_completion_tokens,
+            )
+        return None
 
     def fallback_model(self, role: str) -> str:
         """The smaller model a text role may retry with.

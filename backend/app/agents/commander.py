@@ -119,6 +119,7 @@ class Commander:
                 agent_name=agent_name,
                 max_iters=max_iters,
                 record=record,
+                request_options=self.router.request_options(role),
             )
             reports.append({"title": title, "role": role, "report": result["text"] or "(no output)"})
 
@@ -132,6 +133,7 @@ class Commander:
             [LLMMessage("system", SYNTH_PROMPT)] + synth_messages,
             [t.schema() for t in commander_tools()],
             model_c,
+            options=self.router.request_options("commander"),
         ):
             if isinstance(ev, TextDelta):
                 final_text += ev.content
@@ -147,6 +149,7 @@ class Commander:
                 [LLMMessage("system", PLAN_PROMPT), LLMMessage("user", user_text)],
                 [],
                 model,
+                options=self.router.request_options("commander"),
             ):
                 if isinstance(ev, TextDelta):
                     raw += ev.content

@@ -142,6 +142,11 @@ TESTS = (
     # said agent_up=false for a whole session after a restart raced the agent up.
     # Reads app/main.py and drives the real route with a stubbed probe.
     "test_health_probe",
+    # The Commander's first call died with HTTP 400: the text roles reuse the
+    # Groq provider built for computer control (reasoning_effort "none"), and the
+    # GPT-OSS text models accept only low/medium/high.  Reads the request that
+    # actually goes on the wire, and proves computer control is unchanged.
+    "test_agent_request_shape",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",

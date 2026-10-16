@@ -69,7 +69,15 @@ let reqSeq = 0;
    ========================================================================== */
 
 interface RunEvents {
-  type: "plan" | "worker_start" | "delta" | "tool_start" | "tool_output" | "tool_result" | "synthesize";
+  type:
+    | "plan"
+    | "worker_start"
+    | "delta"
+    | "tool_start"
+    | "tool_output"
+    | "tool_result"
+    | "synthesize"
+    | "error";
   [k: string]: unknown;
 }
 
@@ -388,6 +396,17 @@ function handleRunEvent(ev: RunEvents) {
       patchRun({ phase: "synthesizing" });
       scheduleFinalize();
       break;
+    case "error": {
+      // A turn that died on a model call still has to end here.  The old
+      // behaviour surfaced this only as a transient toast, so the run stayed in
+      // "planning"/"working" and the composer refused every further message
+      // forever.  Finalising marks the run done and reloads the transcript,
+      // where the backend has already recorded the failure as an assistant turn.
+      const message = String(ev.error || "The AI request failed.");
+      useUi.getState().toast(message, "err");
+      finalize();
+      break;
+    }
   }
 }
 

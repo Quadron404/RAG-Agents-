@@ -1,5 +1,6 @@
 import { SELF, env, fetchMock } from "cloudflare:test";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { buildUpstreamRequest } from "../src/proxy";
 import { createSession, upsertUser } from "../src/store";
 import { BASE } from "./helpers";
 
@@ -198,5 +199,65 @@ describe("routine proxy routing", () => {
     expect(captured.headers["x-rag-internal-token"]).toBe("test-internal-token");
     expect(captured.headers["x-rag-user-sub"]).toBe("proxy-sub");
     expect(captured.headers["x-rag-user-email"]).toBe("proxy@example.com");
+  });
+});
+
+// The Computer screen opens a WebSocket to /websockify.  It has to ride the
+// same authenticated proxy as the REST API: /screen/config used to advertise the
+// raw Quick Tunnel, which bypasses the Worker, so the backend saw no internal
+// token and closed the handshake with a 403.  Forwarding the WebSocket means
+// rebuilding the upstream request without dropping the upgrade handshake
+// headers -- a WebSocket whose Upgrade/Connection/Sec-WebSocket-* headers are
+// lost is just a plain GET to the backend, which answers a 400 -- while still
+// injecting the gateway token and stripping the browser's cookie.
+describe("websocket upgrade proxy", () => {
+  it("forwards the upgrade handshake with the gateway token and identity", async () => {
+    // A live WebSocket upgrade does not surface to `fetchMock` -- workerd dials
+    // the real backend and refuses, so the interceptor never fires.  The unit
+    // under test is the request the proxy builds for the backend, which is where
+    // the handshake headers are either kept or lost, and it is driven directly.
+    const user = await upsertUser(env, {
+      sub: "proxy-sub",
+      email: "proxy@example.com",
+      email_verified: true,
+      name: "Proxy",
+      picture: "https://img.example/p.png",
+    });
+    const session = await createSession(env, user.id);
+    const url = new URL(`${BASE}/websockify`);
+    const incoming = new Request(url.toString(), {
+      headers: {
+        cookie: `rag_session=${session.token}`,
+        Upgrade: "websocket",
+        Connection: "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": "binary",
+      },
+    });
+
+    const upstream = buildUpstreamRequest(incoming, env, url, { user, session });
+
+    expect(upstream.url).toBe("https://backend.test/websockify");
+    const headers = upstream.headers;
+    expect(String(headers.get("upgrade")).toLowerCase()).toBe("websocket");
+    expect(String(headers.get("connection")).toLowerCase()).toBe("upgrade");
+    expect(headers.get("sec-websocket-key")).toBe("dGhlIHNhbXBsZSBub25jZQ==");
+    expect(headers.get("sec-websocket-version")).toBe("13");
+    expect(headers.get("sec-websocket-protocol")).toBe("binary");
+    expect(headers.get("x-rag-internal-token")).toBe("test-internal-token");
+    expect(headers.get("x-rag-user-sub")).toBe("proxy-sub");
+    expect(headers.get("x-rag-user-email")).toBe("proxy@example.com");
+    // The browser cookie is not forwarded: the edge asserts identity instead, so
+    // the backend never has to trust a same-site cookie it did not issue.
+    expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("refuses an unauthenticated websocket upgrade before it reaches the backend", async () => {
+    const response = await SELF.fetch(`${BASE}/websockify`, {
+      headers: { Upgrade: "websocket", Connection: "Upgrade" },
+    });
+    expect(response.status).toBe(401);
+    expect(captured.calls).toBe(0);
   });
 });

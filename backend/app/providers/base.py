@@ -44,6 +44,27 @@ LLMEvent = Union[TextDelta, ToolCallEvent, Done]
 ToolSchema = Dict[str, object]
 
 
+@dataclass(frozen=True)
+class RequestOptions:
+    """Per-call overrides for the shape of one model request.
+
+    One provider object serves more than one role: the Groq provider that drives
+    computer control also answers the ordinary text roles.  Those callers need
+    different request shapes.  Computer control sends ``reasoning_effort:
+    "none"`` because it asks for one tiny native tool call, but the GPT-OSS text
+    models reject anything other than low/medium/high, so a text role that
+    inherited that value is refused with a 400 before it can answer at all.  The
+    caller states the shape it wants here rather than cloning the provider or
+    mutating it for the duration of a call, and the adapter applies it.
+
+    Passing ``None`` (no options) means the provider's own configured values are
+    used unchanged, which is exactly what computer control relies on.
+    """
+
+    reasoning_effort: str = ""
+    max_completion_tokens: int = 0
+
+
 @dataclass
 class Provider:
     name: str = "provider"
@@ -90,7 +111,12 @@ class Provider:
     last_gate_wait: float = 0.0
 
     async def stream(
-        self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
+        self,
+        messages: List[LLMMessage],
+        tools: List[ToolSchema],
+        model: str,
+        *,
+        options: Optional[RequestOptions] = None,
     ) -> AsyncIterator[LLMEvent]:
         raise NotImplementedError
 
@@ -319,6 +345,7 @@ async def stream_model(
     on_rate_limit: Optional[Callable[[Exception], object]] = None,
     caller: str = "",
     long_cooldown_limit: Optional[float] = None,
+    options: Optional[RequestOptions] = None,
 ) -> AsyncIterator[LLMEvent]:
     """Run one logical model request with normal pacing and bounded 429 recovery.
 
@@ -354,6 +381,12 @@ async def stream_model(
     request that happened to resolve to the same provider and model would be
     indistinguishable, and a panel asked "are you the one running or the one
     waiting?" could only guess.
+
+    `options` states the request shape for a role that shares its provider with
+    another role -- the ordinary text roles reuse the computer-control provider,
+    and their ``reasoning_effort`` is not the one computer control needs.  When
+    it is ``None`` the provider's own configured values are used, so a caller
+    with nothing to override is unaffected.
     """
     from inspect import isawaitable
     import asyncio
@@ -386,7 +419,16 @@ async def stream_model(
     try:
         while True:
             try:
-                async for event in provider.stream(messages, tools, model):
+                # Only forward `options` when the caller supplied them.  Forwarding
+                # unconditionally would widen the ``stream`` contract for every
+                # provider, including the lightweight doubles the tests use, and a
+                # computer-control call has no role-specific shape to state -- it
+                # wants the provider exactly as it was configured.
+                if options is None:
+                    events = provider.stream(messages, tools, model)
+                else:
+                    events = provider.stream(messages, tools, model, options=options)
+                async for event in events:
                     if isinstance(event, Done):
                         # Recorded on the provider, next to `last_wire` and
                         # `last_usage`, because it is the same kind of fact: only

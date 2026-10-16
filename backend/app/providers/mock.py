@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator, List
+from typing import AsyncIterator, List, Optional
 
 from .base import (
     LLMEvent,
     LLMMessage,
     Provider,
+    RequestOptions,
     TextDelta,
     ToolCall,
     ToolCallEvent,
@@ -19,7 +20,12 @@ class MockProvider(Provider):
     name = "mock"
 
     async def stream(
-        self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
+        self,
+        messages: List[LLMMessage],
+        tools: List[ToolSchema],
+        model: str,
+        *,
+        options: Optional[RequestOptions] = None,
     ) -> AsyncIterator[LLMEvent]:
         last = messages[-1].content if messages else ""
         lowered = last.lower()

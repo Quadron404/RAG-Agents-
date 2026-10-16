@@ -94,6 +94,7 @@ async def run_routine_task(
         emit=None,
         agent_name="routine",
         max_iters=settings.max_iters,
+        request_options=router.request_options("worker"),
     )
     text = str(result.get("text") or "").strip()
     if not text:

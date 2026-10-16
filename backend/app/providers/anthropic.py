@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator, List
+from typing import AsyncIterator, List, Optional
 
 import httpx
 
@@ -10,6 +10,7 @@ from .base import (
     LLMEvent,
     LLMMessage,
     Provider,
+    RequestOptions,
     TextDelta,
     ToolCall,
     ToolCallEvent,
@@ -65,8 +66,16 @@ class AnthropicProvider(Provider):
         return system, out
 
     async def stream(
-        self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
+        self,
+        messages: List[LLMMessage],
+        tools: List[ToolSchema],
+        model: str,
+        *,
+        options: Optional[RequestOptions] = None,
     ) -> AsyncIterator[LLMEvent]:
+        # `options` shapes an OpenAI-compatible request body; this adapter builds
+        # its own body and has no equivalent field, so the override is accepted
+        # for interface parity and deliberately ignored.
         system, wire = self._wire_messages(messages)
         if not wire:
             wire = [{"role": "user", "content": [{"type": "text", "text": ""}]}]

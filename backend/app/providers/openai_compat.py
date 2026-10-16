@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import AsyncIterator, List
+from typing import AsyncIterator, List, Optional
 
 import httpx
 
@@ -11,6 +11,7 @@ from .base import (
     LLMEvent,
     LLMMessage,
     Provider,
+    RequestOptions,
     TextDelta,
     ToolCall,
     ToolCallEvent,
@@ -311,7 +312,12 @@ class OpenAICompatProvider(Provider):
         return out
 
     async def stream(
-        self, messages: List[LLMMessage], tools: List[ToolSchema], model: str
+        self,
+        messages: List[LLMMessage],
+        tools: List[ToolSchema],
+        model: str,
+        *,
+        options: Optional[RequestOptions] = None,
     ) -> AsyncIterator[LLMEvent]:
         url = f"{self.base_url}/chat/completions"
         # Groq computer-control calls use a complete response. The tool call
@@ -323,6 +329,17 @@ class OpenAICompatProvider(Provider):
             "stream": use_stream,
             "temperature": 0.0,
         }
+        # A caller that shares this provider with another role states the request
+        # shape it needs; otherwise the provider's own configured values stand.
+        # This is how the ordinary text roles, which reuse the computer-control
+        # provider, ask for a valid `reasoning_effort` instead of the "none" that
+        # only computer control wants and the GPT-OSS text models reject.
+        if options is not None:
+            reasoning_effort = options.reasoning_effort
+            max_completion_tokens = int(options.max_completion_tokens)
+        else:
+            reasoning_effort = self.reasoning_effort
+            max_completion_tokens = self.max_completion_tokens
         if tools:
             # Converted here rather than by the caller, because the loop hands
             # every provider the same provider-neutral schema and each endpoint
@@ -339,20 +356,21 @@ class OpenAICompatProvider(Provider):
             if str(self.name).strip().lower() in {"openrouter", "groq"}:
                 body["tool_choice"] = "required"
                 body["parallel_tool_calls"] = False
-        if self.max_completion_tokens > 0:
+        if max_completion_tokens > 0:
             # A control loop emits one short tool call per turn.  A generous
             # ceiling here does not make the model verbose -- it makes a verbose
             # turn *affordable*, and on a per-token provider that is the
             # difference between a run that fits in a budget and one that does
             # not.
-            body[self.token_limit_field] = self.max_completion_tokens
-        if self.reasoning_effort:
+            body[self.token_limit_field] = max_completion_tokens
+        if reasoning_effort:
             # Reasoning tokens are billed but never visible to the caller, so a
             # thinking model asked to emit one small JSON object can spend more
             # on deliberation than on the answer.  Forcing the cheapest mode is
             # what makes "tiny output" a property of the request rather than a
-            # hope about the model's mood.
-            body["reasoning_effort"] = self.reasoning_effort
+            # hope about the model's mood.  A text role overrides it per call:
+            # "none" is the one value the GPT-OSS text models refuse outright.
+            body["reasoning_effort"] = reasoning_effort
         # Ask for the token counts to come back on the stream.  Without this the
         # final chunk is a `[DONE]` and nothing ever learns what a request cost,
         # which is the one number that decides whether the screenshot belongs in
