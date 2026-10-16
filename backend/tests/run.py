@@ -138,6 +138,10 @@ TESTS = (
     # the message through, so a dropped connection left a dead button, a silent
     # Enter key and a thrown-away draft.  Reads the frontend files.
     "test_composer_send",
+    # /health reported a cached agent flag rather than asking the agent, so it
+    # said agent_up=false for a whole session after a restart raced the agent up.
+    # Reads app/main.py and drives the real route with a stubbed probe.
+    "test_health_probe",
     # Runs last: it edits files to prove the isolation checks actually fail when
     # a listener is opened to a wildcard, and restores them afterwards.
     "test_bind_mutations",

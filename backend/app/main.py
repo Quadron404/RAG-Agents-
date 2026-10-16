@@ -387,6 +387,12 @@ class ComputerBody(BaseModel):
 
 @app.get("/health")
 async def health():
+    # `_agent_up` is only ever written by a probe, and `describe()` just reads
+    # it back.  Reporting that stale bit is how /health said agent_up=false for
+    # a whole session after a restart raced the agent coming up -- and would say
+    # true forever after the agent died.  Probing here makes the field answer
+    # "is the agent reachable now", which is what every caller reads it as.
+    await computer.is_up()
     return {
         "ok": True,
         "computer": computer.describe(),
