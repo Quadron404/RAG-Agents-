@@ -701,14 +701,18 @@ function Composer() {
 
   const commit = () => {
     const base = text.trim();
-    if (busy || status !== "online") return;
+    if (busy) return;
     if (!base && !attaches.length) return;
     const attachLine = attaches.length
       ? `\n\n[attached: ${attaches.map((a) => a.name).join(", ")}]`
       : "";
     const finalText = base + attachLine;
     haptic("heavy");
-    send(finalText);
+    // send() reports the reason and returns false when it could not dispatch --
+    // the socket is down, or a run is already in flight.  Clearing the draft
+    // regardless is what made clicking Send while offline look like it worked
+    // and throw the message away.
+    if (!send(finalText)) return;
     setText("");
     setAttaches([]);
     autoGrow();
@@ -837,7 +841,7 @@ function Composer() {
             <button
               className="composer__send"
               onClick={commit}
-              disabled={!text.trim() || status !== "online"}
+              disabled={!text.trim() && !attaches.length}
               aria-label="Send"
             >
               <SendArrow />
@@ -845,10 +849,16 @@ function Composer() {
           )}
         </div>
         <div className="composer__hint">
-          <span className="dot dot--online" />
-          <span>Commander plans · workers run on</span>
-          <b>your computer</b>
-          <span>· Enter to send, Shift+Enter for a new line</span>
+          <span className={`dot ${status === "online" ? "dot--online" : "dot--offline"}`} />
+          {status === "online" ? (
+            <>
+              <span>Commander plans · workers run on</span>
+              <b>your computer</b>
+              <span>· Enter to send, Shift+Enter for a new line</span>
+            </>
+          ) : (
+            <span>Reconnecting to the workforce…</span>
+          )}
         </div>
       </div>
     </div>

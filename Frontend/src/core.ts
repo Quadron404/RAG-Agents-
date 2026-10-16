@@ -95,7 +95,9 @@ interface CoreState {
   newChat: () => Promise<void>;
   openThread: (id: string) => Promise<void>;
   loadMessages: (id: string) => Promise<void>;
-  send: (text: string) => void;
+  //: Returns false when the message was not dispatched (not connected, or a run
+  //: is already in flight) so the caller can keep the draft and say why.
+  send: (text: string) => boolean;
   stopRun: () => void;
   requestScreen: () => void;
   computerStart: () => Promise<void>;
@@ -498,13 +500,17 @@ export const useCore = create<CoreState>((set, get) => ({
 
   send(text) {
     const { status, activeThreadId, run } = get();
-    if (status !== "online") {
-      useUi.getState().toast("Reconnecting to the workforce…", "err");
-      return;
+    // A draft is only ever lost if we say so.  Both refusals below return false
+    // and leave the caller's input in place, so a click on Send while the
+    // socket is down produces an explanation instead of a cleared textarea and
+    // silence.
+    if (status !== "online" || !ws || ws.readyState !== WebSocket.OPEN) {
+      useUi.getState().toast("Not connected to the workforce — reconnecting now.", "err");
+      return false;
     }
     if (run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle") {
       useUi.getState().toast("The workforce is already working on your request.", "info");
-      return;
+      return false;
     }
     const tid = activeThreadId || null;
     if (finalizeTimer) clearTimeout(finalizeTimer);
@@ -519,7 +525,8 @@ export const useCore = create<CoreState>((set, get) => ({
       pending: true,
     });
     setRun(tid || "__new__");
-    ws?.send(JSON.stringify({ type: "message", text, thread_id: tid }));
+    ws.send(JSON.stringify({ type: "message", text, thread_id: tid }));
+    return true;
   },
 
   stopRun() {
