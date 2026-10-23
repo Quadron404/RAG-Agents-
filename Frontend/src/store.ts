@@ -17,7 +17,7 @@ export interface Thread {
 }
 
 export interface Message {
-  id: number;
+  id: string;
   thread_id: string;
   role: "user" | "assistant";
   agent: string;
@@ -162,7 +162,7 @@ export function applyAppearance(appearance: Appearance) {
     appearance === "system" ? (mq?.matches ? "dark" : "light") : appearance;
   document.documentElement.dataset.theme = theme;
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  meta?.setAttribute("content", theme === "dark" ? "#0b0b0d" : "#f6f6f7");
+  meta?.setAttribute("content", theme === "dark" ? "#0a0a0b" : "#f5f5f6");
 }
 
 export function initAppearance() {
@@ -185,7 +185,7 @@ interface MenuItem {
 
 export interface ReplyTo {
   threadId: string;
-  msgId: number;
+  msgId: string;
   text: string;
 }
 
@@ -299,7 +299,7 @@ export interface BotDef {
 export const BOTS: BotDef[] = [
   {
     id: "commander",
-    name: "Commander",
+    name: "Chief",
     role: "Coordinator",
     blurb:
       "Plans each objective, assigns specialists, and synthesizes their work into a single clear answer. The center of your workforce.",
@@ -348,6 +348,7 @@ export const BOTS: BotDef[] = [
 ];
 
 export function botForRole(role: string): BotDef {
+  if (role === "commander" || role === "chief") return BOTS[0];
   if (role === "browser") return BOTS[3];
   return BOTS[2];
 }

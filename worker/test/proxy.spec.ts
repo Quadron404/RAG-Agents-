@@ -53,14 +53,14 @@ async function authenticatedSession(): Promise<{ cookie: string; csrf: string }>
 
 describe("reverse proxy", () => {
   it("refuses an API request with no session", async () => {
-    const response = await SELF.fetch(`${BASE}/threads`);
+    const response = await SELF.fetch(`${BASE}/ai`);
     expect(response.status).toBe(401);
   });
 
   it("forwards an authenticated request with the gateway token and identity", async () => {
-    stubBackend("/threads");
+    stubBackend("/ai");
     const cookie = await authenticatedCookie();
-    const response = await SELF.fetch(`${BASE}/threads`, { headers: { cookie } });
+    const response = await SELF.fetch(`${BASE}/ai`, { headers: { cookie } });
     expect(response.status).toBe(200);
     expect(captured.calls).toBe(1);
     expect(captured.headers["x-rag-internal-token"]).toBe("test-internal-token");
@@ -90,22 +90,22 @@ describe("reverse proxy", () => {
 
   it("refuses a state-changing proxy call without a CSRF token", async () => {
     const cookie = await authenticatedCookie();
-    const response = await SELF.fetch(`${BASE}/threads`, {
+    const response = await SELF.fetch(`${BASE}/ai`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ title: "x" }),
+      body: JSON.stringify({ prompt: "x" }),
     });
     expect(response.status).toBe(403);
     expect(captured.calls).toBe(0);
   });
 
   it("forwards a state-changing proxy call that carries the CSRF token", async () => {
-    stubBackend("/threads", "POST");
+    stubBackend("/ai", "POST");
     const { cookie, csrf } = await authenticatedSession();
-    const response = await SELF.fetch(`${BASE}/threads`, {
+    const response = await SELF.fetch(`${BASE}/ai`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json", "x-rag-csrf": csrf },
-      body: JSON.stringify({ title: "x" }),
+      body: JSON.stringify({ prompt: "x" }),
     });
     expect(response.status).toBe(200);
     expect(captured.calls).toBe(1);
@@ -124,7 +124,7 @@ describe("reverse proxy", () => {
 // its own entry the Worker fell through to the asset handler, so the browser
 // got index.html where it expected JSON.  These checks are the routing
 // regression, plus proof that the session, the CSRF token and the identity
-// the backend derives the owner from are handled exactly as /threads is.
+// the backend derives the owner from are handled exactly as other API paths are.
 describe("routine proxy routing", () => {
   it("treats /routines as an API path instead of a static asset", async () => {
     const response = await SELF.fetch(`${BASE}/routines`);
@@ -236,7 +236,18 @@ describe("websocket upgrade proxy", () => {
       },
     });
 
-    const upstream = buildUpstreamRequest(incoming, env, url, { user, session });
+    const upstream = buildUpstreamRequest(incoming, env, url, {
+      user,
+      session: {
+        session_hash: session.sessionHash,
+        user_id: user.id,
+        csrf: session.csrf,
+        created_at: Date.now(),
+        expires_at: session.expiresAt,
+        revoked: 0,
+        rotated_from: "",
+      },
+    });
 
     expect(upstream.url).toBe("https://backend.test/websockify");
     const headers = upstream.headers;

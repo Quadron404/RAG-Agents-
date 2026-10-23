@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "rag-agents",
   "main": "src/index.ts",
-  "compatibility_date": "2025-10-01",
+  "compatibility_date": "2026-03-27",
   "compatibility_flags": ["nodejs_compat"],
   // The Worker serves the built Vite frontend and is the stable workers.dev origin.
   // Everything under /auth is handled at the edge; the API and WebSocket paths are
@@ -19,6 +19,14 @@
       "database_name": "rag-agents-auth",
       "database_id": "55e7322a-4dba-4a41-acc4-273c902d97d2",
       "migrations_dir": "migrations"
+    }
+  ],
+  // The namespace is created on deploy if it does not exist.  The instance name
+  // is a plain var so a different index can be selected without a rebuild.
+  "ai_search_namespaces": [
+    {
+      "binding": "AI_SEARCH",
+      "namespace": "default"
     }
   ],
   // The single durable scheduler.  Every minute the Worker materialises due
@@ -47,7 +55,19 @@
     "CODESPACE_POLL_INTERVAL_MS": "5000",
     "ROUTINE_MAX_ATTEMPTS": "5",
     "ROUTINE_DISPATCH_BATCH": "20",
-    "ROUTINE_RETRY_BASE_MS": "60000"
+    "ROUTINE_RETRY_BASE_MS": "60000",
+    // Worker-native chat.  Provider secrets are set with `wrangler secret put`;
+    // an empty/absent provider key is skipped rather than invented.
+    "AI_SEARCH_INSTANCE": "rag-conversations",
+    "AGENT_PROVIDER": "",
+    "AGENT_MODEL": "",
+    "AGENT_FALLBACK_MODEL": "",
+    "AGENT_MAX_COMPLETION_TOKENS": "2048",
+    "AGENT_REASONING_EFFORT": "",
+    "SUMMARY_PROVIDER": "",
+    "SUMMARY_MODEL": "",
+    "CHAT_SUMMARY_IDLE_SECONDS": "60",
+    "CHAT_MAX_TOOL_CALLS": "3"
   },
   "observability": {
     "enabled": true

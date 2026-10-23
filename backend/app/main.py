@@ -1288,6 +1288,25 @@ async def _emit_run_error(emit, exc: Exception) -> None:
         pass
 
 
+async def _emit_run_done(emit) -> None:
+    """Publish the terminal `done` event once the assistant turn is on disk.
+
+    The UI must not tear down its streamed view until the persisted transcript
+    actually contains the answer, so `done` is emitted *after* the writes below
+    and never before.  Without it the frontend has to guess when the turn ended
+    (it used a fixed timer off the `synthesize` event), which raced the write
+    and made a finished answer vanish.
+    """
+    if emit is None:
+        return
+    try:
+        result = emit({"type": "done"})
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:
+        pass
+
+
 async def run_commander_on_thread(
     thread_id: str, user_id: str, text: str, emit, user_message_id: int = 0
 ) -> None:
@@ -1353,6 +1372,7 @@ async def run_commander_on_thread(
         db.touch_conversation_activity(
             thread_id, user_id, db.last_message_id(thread_id), settings.summary_idle_seconds
         )
+        await _emit_run_done(emit)
         return
     finally:
         reset_routine_context(context_token)
@@ -1368,6 +1388,8 @@ async def run_commander_on_thread(
     db.touch_conversation_activity(
         thread_id, user_id, db.last_message_id(thread_id), settings.summary_idle_seconds
     )
+    # Only now -- transcript written -- is the turn safe to close on the client.
+    await _emit_run_done(emit)
 
 
 def _ws_emit(websocket: WebSocket):

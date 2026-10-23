@@ -60,7 +60,9 @@ export function parseAgentField(agent: string): {
   title: string;
 } {
   if (agent === "user" || agent === "") return { kind: "user", role: "", title: "" };
-  if (agent === "commander") return { kind: "commander", role: "commander", title: "Commander" };
+  if (agent === "commander" || agent === "chief") {
+    return { kind: "commander", role: "commander", title: "Chief" };
+  }
   const parts = agent.split(":");
   const role = parts[1] || "worker";
   const title = parts.slice(2).join(":") || "Worker";

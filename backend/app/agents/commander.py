@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Callable, List, Optional
@@ -96,32 +97,47 @@ class Commander:
         plan = await self._make_plan(user_text, emit)
         await _emit_safe(emit, {"type": "plan", "plan": plan})
 
-        reports = []
+        # Workers run concurrently.  The plan is 1-4 independent subtasks and the
+        # plan prompt already tells the model to split "in parallel where
+        # possible", but this loop used to `await` each step in turn, so a
+        # 3-step task paid for three full model round-trips back to back.  Each
+        # step still emits its own events keyed by `agent` (worker-N), so the
+        # interleaved stream routes to the right card on the client.
         steps = plan.get("steps") or []
-        for i, step in enumerate(steps):
+
+        async def _run_step(i: int, step: dict) -> dict:
             title = step.get("title") or f"Step {i + 1}"
             task = step.get("task") or user_text
             compute = str(step.get("compute", "research")).lower()
             role = "browser" if compute == "browser" else "worker"
             agent_name = f"worker-{i + 1}"
             await _emit_safe(emit, {"type": "worker_start", "agent": agent_name, "title": title, "role": role})
-
             provider, model = self.router.resolve(role)
-            result = await run_agent_loop(
-                provider=provider,
-                model=model,
-                system=WORKER_PROMPT,
-                context=context,
-                user_text=task,
-                tools=worker_tools(),
-                executor=self.executor,
-                emit=emit,
-                agent_name=agent_name,
-                max_iters=max_iters,
-                record=record,
-                request_options=self.router.request_options(role),
-            )
-            reports.append({"title": title, "role": role, "report": result["text"] or "(no output)"})
+            try:
+                result = await run_agent_loop(
+                    provider=provider,
+                    model=model,
+                    system=WORKER_PROMPT,
+                    context=context,
+                    user_text=task,
+                    tools=worker_tools(),
+                    executor=self.executor,
+                    emit=emit,
+                    agent_name=agent_name,
+                    max_iters=max_iters,
+                    record=record,
+                    request_options=self.router.request_options(role),
+                )
+                return {"title": title, "role": role, "report": result["text"] or "(no output)"}
+            except Exception as exc:
+                # One failing step must not sink the turn; the synthesis still
+                # runs and is told what broke.
+                return {"title": title, "role": role, "report": f"(this step failed: {exc})"}
+
+        if steps:
+            reports = list(await asyncio.gather(*(_run_step(i, s) for i, s in enumerate(steps))))
+        else:
+            reports = []
 
         await _emit_safe(emit, {"type": "synthesize"})
         provider_c, model_c = self.router.resolve("commander")
@@ -129,9 +145,13 @@ class Commander:
             LLMMessage("user", self._render_reports(user_text, reports)),
         ]
         final_text = ""
+        # No tools on the synthesis call: it integrates worker reports into a
+        # final text answer and never executes a tool call, and handing tools to
+        # a provider that forces one (Groq/OpenRouter set tool_choice "required"
+        # whenever tools are present) makes the model's plain-text answer a 400.
         async for ev in stream_model(provider_c,
             [LLMMessage("system", SYNTH_PROMPT)] + synth_messages,
-            [t.schema() for t in commander_tools()],
+            [],
             model_c,
             options=self.router.request_options("commander"),
         ):

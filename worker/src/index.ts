@@ -27,6 +27,7 @@ import {
 } from "./http";
 import { OAuthError, buildAuthorizationUrl, exchangeCode, fetchJwks, newCodeVerifier, newNonce, newState } from "./google";
 import { handleInternal } from "./internal";
+import { handleChatRoutes, isChatPath } from "./chat/routes";
 import { resolvePrincipal, type Principal } from "./principal";
 import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
@@ -234,6 +235,14 @@ export default {
     }
 
     if (path === "/health") return proxyApi(request, env, url, { requireAuth: false });
+
+    // Chat transcripts and generation are Worker-owned.  Only the computer-use
+    // and routine surfaces still cross the tunnel to the Codespace.
+    if (isChatPath(path)) {
+      const handled = await handleChatRoutes(request, env, url);
+      if (handled) return handled;
+    }
+
     if (isProxyPath(path)) return proxyApi(request, env, url);
 
     if (env.ASSETS) {

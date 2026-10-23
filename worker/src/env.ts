@@ -6,10 +6,48 @@
  * id are plain vars so a different Google client or a local stub can be pointed
  * at without a rebuild.
  */
+/**
+ * The subset of the AI Search Workers binding this Worker uses.
+ *
+ * The generated Cloudflare types for this binding change more often than the
+ * four methods below, so the contract is stated locally.  It keeps the chat
+ * code compiling against the same shape the deploy uses while leaving the
+ * actual binding supplied by Wrangler.
+ */
+export interface AiSearchChunk {
+  id?: string;
+  text?: string;
+  score?: number;
+  item?: { key?: string; metadata?: Record<string, unknown> };
+}
+
+export interface AiSearchInstance {
+  search(options: Record<string, unknown>): Promise<{ chunks?: AiSearchChunk[] }>;
+  info(): Promise<Record<string, unknown>>;
+  update(options: Record<string, unknown>): Promise<unknown>;
+  items: {
+    upload(
+      name: string,
+      content: string | Blob | ReadableStream,
+      options?: { metadata?: Record<string, string> },
+    ): Promise<{ id?: string; key?: string }>;
+    delete?(name: string): Promise<unknown>;
+  };
+}
+
+export interface AiSearchNamespace {
+  get(name: string): AiSearchInstance;
+  create(options: Record<string, unknown>): Promise<AiSearchInstance>;
+}
+
 export interface Env {
   DB: D1Database;
   /** Static asset binding for the built frontend. Absent when only APIs run. */
   ASSETS?: Fetcher;
+  /** AI Search namespace binding used for conversation summaries. */
+  AI_SEARCH?: AiSearchNamespace;
+  /** Instance inside AI_SEARCH that stores conversation summaries. */
+  AI_SEARCH_INSTANCE?: string;
 
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -58,6 +96,34 @@ export interface Env {
   ROUTINE_DISPATCH_BATCH?: string;
   /** Base for exponential backoff after a retryable failure, in ms. */
   ROUTINE_RETRY_BASE_MS?: string;
+
+  // --- Worker-native chat ---------------------------------------------------
+  /** groq | openai | anthropic | gemini | mistral | openrouter. */
+  AGENT_PROVIDER?: string;
+  AGENT_MODEL?: string;
+  AGENT_FALLBACK_MODEL?: string;
+  AGENT_MAX_COMPLETION_TOKENS?: string;
+  AGENT_REASONING_EFFORT?: string;
+  /** Optional summary override.  Defaults to the agent's fallback model. */
+  SUMMARY_PROVIDER?: string;
+  SUMMARY_MODEL?: string;
+  /** Seconds of conversation inactivity before a summary is requested. */
+  CHAT_SUMMARY_IDLE_SECONDS?: string;
+  /** Maximum history-tool calls in one user turn. */
+  CHAT_MAX_TOOL_CALLS?: string;
+
+  GROQ_API_KEY?: string;
+  GROQ_BASE_URL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_BASE_URL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_BASE_URL?: string;
+  MISTRAL_API_KEY?: string;
+  MISTRAL_BASE_URL?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_BASE_URL?: string;
 }
 
 export const COOKIE_NAME = "rag_session";

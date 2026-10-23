@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable, Dict, List, Optional, Union
@@ -121,7 +122,19 @@ class Provider:
         raise NotImplementedError
 
 
-MODEL_CALL_GAP_SECONDS = 10.0
+#: Minimum gap between two successful model calls.
+#:
+#: This used to be a hard 10 seconds, which made the ordinary chat path pay a
+#: ten-second tax between every model call: a three-call turn (plan, worker,
+#: synthesis) spent twenty of its ~thirty seconds doing nothing but waiting for
+#: this timer, so a one-line question took over half a minute.  The gap exists to
+#: stay under the provider's rate limit, but it is not the only defence -- a 429
+#: is caught below, the gate is parked until the provider's own reset time and
+#: the same request is retried, so a too-small gap costs a retry rather than a
+#: failed turn.  Two seconds covers a 30 RPM tier while keeping a normal turn
+#: responsive, and the value is overridable for a stricter provider without a
+#: code change.
+MODEL_CALL_GAP_SECONDS = float(os.environ.get("RAG_MODEL_CALL_GAP_SECONDS", "2.0"))
 
 #: Consecutive 429s one logical request absorbs before it gives up.  One rate
 #: limit still recovers exactly as it always did -- same request, retried at the
@@ -583,6 +596,15 @@ def _rate_limit_gave_up(
 
 
 def tool_schema_openai(tool: ToolSchema) -> ToolSchema:
+    """Wrap a provider-neutral tool schema in the OpenAI envelope.
+
+    Idempotent: a schema already in the OpenAI shape (``Tool.schema()`` returns
+    that shape directly, and the agents hand it straight to the provider) is
+    returned unchanged, so the same list works whether it came from a flat
+    ``{"name", "description", "parameters"}`` dictionary or an enveloped one.
+    """
+    if isinstance(tool.get("function"), dict) and "name" in tool["function"]:
+        return tool
     return {
         "type": "function",
         "function": {

@@ -1836,6 +1836,8 @@ class ComputerRunner:
                     outcome = await self._capture_on_request(run, turn)
                     if outcome is None:
                         return  # capture failed; the terminal state is already set
+                    if turn is not None:
+                        self._record_execution(turn, command, run, started, False)
                     run.step -= 1  # reading the screen is not a step of the task
                     continue
 
@@ -2113,6 +2115,7 @@ class ComputerRunner:
                 step=run.step + 1,
                 timestamp=time.time(),
                 task=run.task,
+                first_turn=not run.trace,
                 attempt=attempt,
                 allowed_types=list(ALLOWED_TYPES),
                 screenshot_types=list(SCREENSHOT_ACTIONS),

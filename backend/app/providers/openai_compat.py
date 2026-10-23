@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 import httpx
 
@@ -308,7 +308,24 @@ class OpenAICompatProvider(Provider):
                         str(part.get("text", "")) for part in content
                         if isinstance(part, dict) and part.get("type") == "text"
                     ).strip() or "ok"
-                out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": content})
+                tool_message = {
+                    "role": "tool",
+                    "tool_call_id": m.tool_call_id,
+                    "content": content,
+                }
+                # `name` is not decoration on this message.  The aligned agent
+                # protocol renders tool calls as `[TOOL name {...}]` text rather
+                # than native `tool_calls`, so a tool result arrives with no
+                # assistant `tool_calls` entry to match it.  A harmony-templated
+                # endpoint (Groq's GPT-OSS) then has nothing to take the tool
+                # name from and refuses the whole request with
+                # `HarmonyError: EncodingError: Tools should have a name!` --
+                # every step that used a tool failed while text-only steps
+                # passed.  Sending the name on the message gives those endpoints
+                # what they need; endpoints that do not read it ignore it.
+                if m.name:
+                    tool_message["name"] = m.name
+                out.append(tool_message)
         return out
 
     async def stream(
@@ -408,8 +425,10 @@ class OpenAICompatProvider(Provider):
                     )
                 try:
                     payload = resp.json()
-                except Exception as exc:
-                    raise RuntimeError(f"provider returned invalid JSON: {exc}")
+                except Exception:
+                    raise RuntimeError(
+                        f"provider returned invalid JSON: {sys.exc_info()[1]}"
+                    )
                 reported = payload.get("usage") if isinstance(payload, dict) else None
                 if isinstance(reported, dict):
                     usage = {

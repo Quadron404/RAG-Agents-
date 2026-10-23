@@ -8,25 +8,25 @@
   color-scheme: light;
 
   /* surfaces — crisp neutral, not warm */
-  --bg0: #f6f6f7;
-  --bg1: #fbfbfc;
+  --bg0: #f5f5f6;
+  --bg1: #fafafa;
   --bg2: #ffffff;
-  --bg3: #f0f0f3;
-  --bg4: #e9e9ee;
-  --material: rgba(251, 251, 252, 0.75);
+  --bg3: #eeeef0;
+  --bg4: #e5e5e9;
+  --material: rgba(250, 250, 251, 0.74);
 
-  --line: rgba(23, 23, 26, 0.08);
-  --line-strong: rgba(23, 23, 26, 0.16);
+  --line: rgba(17, 17, 20, 0.09);
+  --line-strong: rgba(17, 17, 20, 0.18);
 
-  --text: #19191d;
-  --text-2: #5c5c66;
-  --text-3: #9c9ca7;
+  --text: #18181b;
+  --text-2: #56565e;
+  --text-3: #94949e;
 
-  /* accent — precise indigo */
-  --accent: #4350e0;
-  --accent-strong: #3340d2;
-  --accent-soft: rgba(67, 80, 224, 0.12);
-  --accent-ink: #eef0ff;
+  /* accent — Grok violet */
+  --accent: #7d4bc6;
+  --accent-strong: #6a37b4;
+  --accent-soft: rgba(125, 75, 198, 0.12);
+  --accent-ink: #ffffff;
   --on-accent: #ffffff;
 
   /* state */
@@ -44,7 +44,7 @@
   --pink-soft: rgba(196, 74, 125, 0.12);
 
   /* bot identities */
-  --bot-commander: linear-gradient(150deg, #5b65e8, #8b5cf6 70%);
+  --bot-commander: linear-gradient(150deg, #7c3aed, #a855f7 72%);
   --bot-researcher: linear-gradient(150deg, #2e9ec7, #41c2d0 75%);
   --bot-engineer: linear-gradient(150deg, #e8863a, #efb455 75%);
   --bot-navigator: linear-gradient(150deg, #45b56d, #5fd0a1 75%);
@@ -65,26 +65,26 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  /* surfaces — deep neutral charcoal, ChatGPT/Claude-grade */
-  --bg0: #0b0b0d;
-  --bg1: #121214;
-  --bg2: #17171a;
-  --bg3: #1f1f24;
-  --bg4: #28282e;
-  --material: rgba(18, 18, 20, 0.72);
+  /* surfaces — near-black, Grok-night grade */
+  --bg0: #0a0a0b;
+  --bg1: #0f0f10;
+  --bg2: #161618;
+  --bg3: #1d1d20;
+  --bg4: #26262b;
+  --material: rgba(10, 10, 11, 0.72);
 
-  --line: rgba(255, 255, 255, 0.065);
-  --line-strong: rgba(255, 255, 255, 0.13);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
 
-  --text: #ececf1;
-  --text-2: #a3a3ad;
-  --text-3: #71727b;
+  --text: #f4f4f5;
+  --text-2: #a1a1aa;
+  --text-3: #6d6d77;
 
-  --accent: #8b93ff;
-  --accent-strong: #a5acff;
-  --accent-soft: rgba(139, 147, 255, 0.14);
-  --accent-ink: #101122;
-  --on-accent: #f7f7ff;
+  --accent: #a78bfa;
+  --accent-strong: #bda5ff;
+  --accent-soft: rgba(167, 139, 250, 0.15);
+  --accent-ink: #14101f;
+  --on-accent: #f8f7ff;
 
   --green: #3bd68c;
   --green-soft: rgba(59, 214, 140, 0.14);
@@ -99,7 +99,7 @@
   --pink: #f472b6;
   --pink-soft: rgba(244, 114, 182, 0.15);
 
-  --bot-commander: linear-gradient(150deg, #6974ff, #a08bff 70%);
+  --bot-commander: linear-gradient(150deg, #8b5cf6, #c084fc 72%);
   --bot-researcher: linear-gradient(150deg, #35a7d4, #4fd8e8 75%);
   --bot-engineer: linear-gradient(150deg, #f29a48, #ffcd74 75%);
   --bot-navigator: linear-gradient(150deg, #4cc281, #6fe0ac 75%);
@@ -132,10 +132,13 @@ html {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   font-size: 15px;
   line-height: 1.5;
+  letter-spacing: -0.011em;
+  font-feature-settings: "cv11" 1, "ss01" 1, "calt" 1;
   color: var(--text);
   background: var(--bg0);
   -webkit-font-smoothing: antialiased;
@@ -1070,9 +1073,9 @@ textarea {
 }
 
 .thread__inner {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 20px 22px 8px;
+  padding: 24px 22px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1113,8 +1116,8 @@ textarea {
 }
 
 .msg__ava {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   flex: 0 0 auto;
   display: grid;
@@ -1122,14 +1125,15 @@ textarea {
   color: #fff;
   font-size: 13px;
   font-weight: 800;
-  box-shadow: var(--shadow-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
   position: relative;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .msg--user .msg__ava {
-  background: var(--bg4);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.08));
   color: var(--text-2);
+  border: 1px solid var(--line);
   font-weight: 700;
 }
 
@@ -1173,37 +1177,40 @@ textarea {
 }
 
 .bubble {
-  padding: 10px 14px;
-  border-radius: 16px;
+  padding: 11px 15px;
+  border-radius: 19px;
   font-size: 14.5px;
-  line-height: 1.58;
+  line-height: 1.55;
   position: relative;
   min-width: 44px;
+  overflow-wrap: anywhere;
 }
 
 .msg--user .bubble {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
   color: var(--accent-ink);
-  border-bottom-right-radius: 5px;
-  box-shadow: var(--shadow-1);
+  border-bottom-right-radius: 6px;
+  box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 [data-theme="light"] .msg--user .bubble {
   background: #ecedf9;
   color: #23213d;
   border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
 }
 
 .msg--agent .bubble {
-  background: var(--bg3);
+  background: var(--bg2);
   border: 1px solid var(--line);
-  border-bottom-left-radius: 5px;
+  border-bottom-left-radius: 6px;
+  box-shadow: var(--shadow-1);
 }
 
 .msg--commander .bubble {
   background: var(--bg2);
   border: 1px solid var(--line);
-  border-bottom-left-radius: 5px;
+  border-bottom-left-radius: 6px;
   box-shadow: var(--shadow-1);
 }
 
@@ -1888,18 +1895,18 @@ textarea {
 }
 
 .composer {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
   background: var(--bg2);
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 26px;
   box-shadow: var(--shadow-2);
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .composer--focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-3);
 }
 
 .composer__attach-row {
@@ -2013,33 +2020,31 @@ textarea {
 }
 
 .composer__send {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: var(--accent);
   color: var(--accent-ink);
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  box-shadow: 0 2px 10px var(--accent-soft);
-  transition: transform 0.16s cubic-bezier(0.3, 1.4, 0.5, 1), opacity 0.16s ease,
-    background 0.2s ease;
+  box-shadow: 0 6px 24px -10px var(--accent);
+  transition: transform 0.12s ease, background 0.15s ease, opacity 0.15s ease;
   position: relative;
-  overflow: hidden;
 }
 
 .composer__send:active {
-  transform: scale(0.84);
-}
-
-.composer__send--sent svg {
-  animation: sendPop 0.3s ease;
+  transform: scale(0.92);
 }
 
 .composer__send svg {
-  width: 17px;
-  height: 17px;
-  transform: rotate(-12deg);
+  width: 18px;
+  height: 18px;
+  transform: rotate(-10deg);
+}
+
+.composer__send:hover {
+  background: var(--accent-strong);
 }
 
 @keyframes sendPop {
@@ -5611,6 +5616,271 @@ color: #eef0f6;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
+}
+
+/* ============================================================================
+   GROK REFINEMENT
+   A final, cohesive pass layered over the design system: near-black surfaces,
+   one violet accent, squarer corners, tighter type, and a calmer, flatter
+   message canvas.  Nothing here targets the Computer desktop, which keeps its
+   own (protected) treatment.
+   ========================================================================== */
+
+/* ---- quiet the aurora so "near-black" actually reads near-black ---- */
+
+[data-theme="dark"] .aurora {
+  opacity: 0.8;
+  filter: blur(92px);
+  background:
+    radial-gradient(42% 38% at 15% 10%, rgba(124, 92, 255, 0.22), transparent 60%),
+    radial-gradient(40% 36% at 88% 18%, rgba(168, 85, 247, 0.15), transparent 62%),
+    radial-gradient(48% 44% at 74% 94%, rgba(56, 189, 248, 0.11), transparent 64%);
+}
+
+[data-theme="light"] .aurora {
+  opacity: 0.5;
+  background:
+    radial-gradient(42% 38% at 15% 10%, rgba(139, 92, 246, 0.2), transparent 60%),
+    radial-gradient(40% 36% at 88% 18%, rgba(168, 85, 247, 0.14), transparent 62%),
+    radial-gradient(48% 44% at 74% 94%, rgba(96, 165, 250, 0.13), transparent 64%);
+}
+
+[data-theme="dark"] {
+  --scrollbar: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- type: heavier headings, tighter tracking ---- */
+
+.topbar__title,
+.chatlist__title,
+.bots__title,
+.empty__title,
+.sheet__title,
+.thread__hname,
+.brand-name,
+.bot-card__name,
+.step-card__title {
+  letter-spacing: -0.028em;
+}
+
+.bots__title {
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.empty__title {
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.md {
+  line-height: 1.6;
+}
+
+/* ---- corners: squarer, more architectural ---- */
+
+.icon-btn {
+  border-radius: 10px;
+}
+
+.icon-btn--mini {
+  border-radius: 8px;
+}
+
+.btn {
+  border-radius: 11px;
+}
+
+.btn--lg {
+  border-radius: 13px;
+}
+
+.pill {
+  border-radius: 8px;
+  letter-spacing: 0.005em;
+}
+
+.search input {
+  border-radius: 10px;
+}
+
+.suggest {
+  border-radius: 12px;
+}
+
+.convrow,
+.cl-msg {
+  border-radius: 11px;
+}
+
+.convrow__mark {
+  border-radius: 11px;
+}
+
+.menu {
+  border-radius: 14px;
+}
+
+.toast {
+  border-radius: 12px;
+}
+
+.sheet__card--side {
+  border-radius: 18px 0 0 18px;
+}
+
+.sheet__card--center {
+  border-radius: 18px;
+}
+
+.step-card,
+.tool-row {
+  border-radius: 14px;
+}
+
+.bot-card {
+  border-radius: 16px;
+}
+
+.bot-card__art {
+  border-radius: 14px;
+}
+
+/* ---- framing: crisp 58px bars ---- */
+
+.topbar,
+.thread__header {
+  height: 58px;
+}
+
+/* ---- rail: quieter chrome, filled active state ---- */
+
+.rail__brand {
+  border-radius: 12px;
+}
+
+.rail__item {
+  border-radius: 11px;
+}
+
+.rail__item--on::before {
+  display: none;
+}
+
+/* ---- messages: the Grok canvas — assistant flat, user a soft violet note ---- */
+
+.thread__inner {
+  max-width: 760px;
+  gap: 4px;
+}
+
+.msg {
+  gap: 13px;
+  padding: 6px 0;
+}
+
+.msg__ava {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.msg__body {
+  max-width: min(78%, 640px);
+}
+
+.msg--agent .bubble,
+.msg--commander .bubble {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 1px 2px;
+}
+
+.msg--commander .bubble {
+  font-size: 15px;
+}
+
+.msg--user .bubble {
+  background: var(--accent-soft);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-bottom-right-radius: 6px;
+  box-shadow: none;
+}
+
+[data-theme="light"] .msg--user .bubble {
+  background: #efeaf9;
+  color: #241a33;
+  border-color: rgba(125, 75, 198, 0.16);
+}
+
+.msg--user .md code {
+  background: rgba(125, 75, 198, 0.14);
+  border-color: transparent;
+}
+
+.msg__meta {
+  margin: 0 2px 2px;
+}
+
+.msg--user .msg__hover {
+  right: 10px;
+}
+
+/* ---- composer: a single calm dock ---- */
+
+.composer {
+  border-radius: 18px;
+}
+
+.composer--focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.composer__btn {
+  border-radius: 10px;
+}
+
+.composer__send {
+  border-radius: 12px;
+  width: 36px;
+  height: 36px;
+}
+
+.composer__hint {
+  font-size: 11px;
+}
+
+/* ---- empty state: smaller, centered mark ---- */
+
+.empty__orb {
+  width: 84px;
+  height: 84px;
+  border-radius: 24px;
+}
+
+.empty__orb svg {
+  width: 38px;
+  height: 38px;
+}
+
+/* ---- bot cards: crisper, more product-like ---- */
+
+.bot-card:hover {
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 40px -24px rgba(0, 0, 0, 0.6);
+}
+
+.bot-card__art {
+  box-shadow: 0 6px 18px -8px rgba(124, 58, 237, 0.5);
+}
+
+.col,
+.setgroup {
+  border-radius: 16px;
 }
 
 

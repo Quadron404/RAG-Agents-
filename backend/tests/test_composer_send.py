@@ -78,17 +78,17 @@ check(
     "the store's send() is declared to return whether it dispatched",
 )
 check(
-    'status !== "online" || !ws || ws.readyState !== WebSocket.OPEN' in core_code,
-    "send() checks the socket is really open, not just the status flag",
+    'status !== "online" || !ws' not in core_code,
+    "send() no longer depends on the computer-control socket",
 )
+send_start = core_code.index("  send(text) {")
+send_body = core_code[send_start : core_code.index("\n  stopRun()", send_start)]
 check(
-    "Not connected to the workforce" in core_code,
-    "send() surfaces a clear, actionable message when it cannot dispatch",
+    "Chief is already working on your request." in send_body,
+    "send() explains when a request is already in flight",
 )
-offline_branch = core_code[
-    core_code.index('status !== "online" || !ws') : core_code.index('status !== "online" || !ws') + 400
-]
-check("return false;" in offline_branch, "the offline branch of send() returns false")
+check("return false;" in send_body, "the busy branch of send() returns false")
+check("return true;" in send_body, "a dispatched message returns true")
 
 # --- the composer's status line tells the truth -----------------------------
 check(

@@ -1597,7 +1597,16 @@ class TestProviderSurfaceIsReal(unittest.TestCase):
             from app.computer.runner import ComputerRun
 
             run = ComputerRun(task_id="t", task="go")
-            text, provider_name, model, wire = asyncio.run(
+            (
+                text,
+                provider_name,
+                model,
+                wire,
+                calls,
+                usage,
+                stop_reason,
+                gate_wait,
+            ) = asyncio.run(
                 runner._ask([LLMMessage(role="user", content="go")], run)
             )
         finally:
@@ -1654,12 +1663,36 @@ class TestProviderSurfaceIsReal(unittest.TestCase):
             async def aiter_lines(self):
                 reply = replies[min(turn["i"], len(replies) - 1)]
                 turn["i"] += 1
-                mid = len(reply) // 2
-                # Split mid-token, the way a real stream arrives, so the loop
-                # has to join the halves back together.
-                for piece in (reply[:mid], reply[mid:]):
+                call = _to_tool_call(reply)
+                assert call is not None, reply
+                mid = len(call.arguments) // 2
+                # A native call arrives as deltas, and the arguments may be
+                # split anywhere.  Emit the name once and the arguments in two
+                # halves, so the loop has to join them before parsing.
+                for piece, finish in (
+                    (
+                        {
+                            "index": 0,
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": call.arguments[:mid],
+                            },
+                        },
+                        None,
+                    ),
+                    (
+                        {
+                            "index": 0,
+                            "function": {"arguments": call.arguments[mid:]},
+                        },
+                        "tool_calls",
+                    ),
+                ):
+                    delta = {"tool_calls": [piece]}
                     yield "data: " + _json.dumps(
-                        {"choices": [{"delta": {"content": piece}}]}
+                        {"choices": [{"delta": delta, "finish_reason": finish}]}
                     )
                 yield "data: [DONE]"
 
@@ -1743,11 +1776,13 @@ class TestProviderSurfaceIsReal(unittest.TestCase):
         # Every step recorded, in order, so the run is auditable afterwards.
         self.assertEqual(
             [e.command.get("type") for e in run.events],
-            ["navigate", "click", "type", "key", "done"],
+            ["navigate", "screenshot", "click", "type", "key", "done"],
         )
         for event in run.events[:-1]:
             self.assertEqual(event.result, "ok")
-            self.assertTrue(event.screenshot, event.command)
+        shot = [e for e in run.events if e.command.get("type") == "screenshot"]
+        self.assertEqual(len(shot), 1)
+        self.assertTrue(shot[0].screenshot)
         # And the failure mode that started all this -- an empty event log --
         # cannot come back.
         self.assertTrue(run.events)
@@ -2436,10 +2471,8 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
         return run.trace_report(include_images=True), run
 
     def _first(self, report):
-        # The first turn is the first request of the run.  It is selected by its
-        # turn number rather than by `first_turn`, which the committed runner
-        # never sets: `ComputerTurnTrace.first_turn` defaults to False and is not
-        # assigned anywhere, so trusting it would select every turn or none.
+        # The first turn is the first request of the run.  Selected by its turn
+        # number so the assertion is independent of the flag it also verifies.
         first = [t for t in report["turns"] if t["turn"] == 1]
         self.assertEqual(len(first), 1, "expected exactly one first turn")
         return first[0]
@@ -3018,16 +3051,20 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
                 self.assertEqual(turn["parse_error"], "")
 
     def test_the_conversation_history_is_never_trimmed(self):
+        # The compact protocol intentionally sends a fixed two-message request
+        # (prompt + task/state), not a growing transcript.  What must not be
+        # trimmed is the task itself, which is asserted on every request.
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
-            '{"type":"click","x":700,"y":350}',
-            '{"type":"move","x":10,"y":10}',
+            '{"type":"type","text":"jane@example.com"}',
+            '{"type":"key","key":"TAB"}',
+            '{"type":"scroll","delta_y":200}',
             '{"type":"done","message":"ok"}',
         ])
         counts = [t["message_count"] for t in report["turns"]]
-        self.assertEqual(counts, sorted(counts), "the conversation shrank mid-run")
-        self.assertGreater(counts[-1], counts[0])
+        self.assertEqual(counts, [2] * len(counts), "a text-only request changed shape")
         for turn in report["turns"]:
+            self.assertIn(self.CLICK_TASK, turn["user_text"])
             self.assertEqual(
                 turn["message_count"],
                 turn["wire"]["messages_count"],
@@ -3037,12 +3074,13 @@ class TestTheTraceAnswersTheFourQuestions(unittest.TestCase):
     def test_the_history_keeps_reporting_the_real_browser_state(self):
         report, _ = self._report([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"done","message":"ok"}',
         ])
         click = [t for t in report["turns"] if t["command"].get("type") == "click"][0]
         preview = " ".join(m["content_preview"] for m in click["messages_meta"])
-        self.assertIn("Computer control state", preview)
+        self.assertIn("Current UI state", preview)
 
     def test_the_system_message_is_the_prompt(self):
         report, _ = self._report(['{"type":"navigate","url":"https://example.com/computer-test.html"}'])
@@ -3092,20 +3130,30 @@ class TestTheTraceStaysBounded(unittest.TestCase):
     def test_only_the_recent_turns_keep_their_image_bytes(self):
         runner, _ = make_runner([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":10,"y":10}',
-            '{"type":"move","x":20,"y":20}',
-        ], max_steps=3, max_retries=0)
-        run = asyncio.run(_finish(runner, "click things"))
-        self.assertGreaterEqual(len(run.trace), 3)
+            '{"type":"screenshot"}',
+            '{"type":"click","x":20,"y":20}',
+            '{"type":"screenshot"}',
+            '{"type":"done","message":"ok"}',
+        ], max_steps=4, max_retries=0)
+        run = asyncio.run(_finish(runner, "open the test page and click things"))
+        self.assertGreaterEqual(len(run.trace), 5)
         kept = [t for t in run.trace if t.image]
         self.assertLessEqual(len(kept), max(2, runner.settings.computer_max_steps))
+        framed = [
+            t for t in run.trace
+            if t.image or t.next_image or t.image_meta or t.next_image_meta
+        ]
+        self.assertTrue(framed, "the run captured no frames")
+        trimmed = [t for t in framed if not t.image and not t.next_image]
+        self.assertTrue(trimmed, "no image bytes were trimmed, so the bound was not exercised")
         # The metadata survives, so the trace still shows an image existed.
-        for turn in run.trace:
-            if not turn.image:
-                self.assertTrue(
-                    turn.image_meta or turn.next_image_meta,
-                    f"turn {turn.turn} lost both its image and its metadata",
-                )
+        for turn in framed:
+            self.assertTrue(
+                turn.image_meta or turn.next_image_meta,
+                f"turn {turn.turn} lost both its image and its metadata",
+            )
 
 
 class TestTheTraceEndpoint(unittest.TestCase):
@@ -3130,7 +3178,9 @@ class TestTheTraceEndpoint(unittest.TestCase):
 
     def _register(self, replies, **kwargs):
         runner, _ = make_runner(replies, **kwargs)
-        run = asyncio.run(_finish(runner, "click the visible button"))
+        run = asyncio.run(
+            _finish(runner, "Open the computer-control test page and click the visible button.")
+        )
         self.main.ai_computer._runs[run.task_id] = run
         self.addCleanup(self.main.ai_computer._runs.pop, run.task_id, None)
         return run
@@ -3149,6 +3199,7 @@ class TestTheTraceEndpoint(unittest.TestCase):
         # panel exists to prevent.  So the field list is pinned here.
         run = self._register([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
             '{"type":"type","text":"jane@example.com"}',
             '{"type":"done","message":"ok"}',
@@ -3228,7 +3279,9 @@ class TestTheTraceEndpoint(unittest.TestCase):
         run = self._register(
             [
                 '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+                '{"type":"screenshot"}',
                 '{"type":"click","x":700,"y":350}',
+                '{"type":"screenshot"}',
             ],
             real_frames=True,
         )
@@ -3282,11 +3335,12 @@ class TestTheTraceEndpoint(unittest.TestCase):
         body = self._get(f"/ai/computer/{run.task_id}/trace?images=false")
         self.assertEqual(body["task_id"], run.task_id)
         self.assertTrue(body["turns"])
-        self.assertTrue(body["protocol"]["json_only"])
+        self.assertFalse(body["protocol"]["json_only"])
 
     def test_images_are_included_by_default(self):
         run = self._register([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
         ])
         body = self._get(f"/ai/computer/{run.task_id}/trace")
@@ -3294,10 +3348,8 @@ class TestTheTraceEndpoint(unittest.TestCase):
         self.assertTrue(later)
         for turn in later:
             self.assertTrue(turn["image"], "the screenshot preview was not sent")
-            if not turn["execution"].get("terminal"):
-                # Every non-terminal action is followed by a fresh frame, or the
-                # next turn would be reasoning from a stale page.
-                self.assertTrue(turn["next_image"], "the after-shot was not sent")
+        shot = [t for t in body["turns"] if t["command"].get("type") == "screenshot"]
+        self.assertTrue(shot and shot[0]["next_image"], "the requested capture was not recorded")
 
     def test_images_false_says_when_it_withheld_one(self):
         # Silent absence would be read as "no screenshot was sent", so the
@@ -3305,6 +3357,7 @@ class TestTheTraceEndpoint(unittest.TestCase):
         # conditional: a flag that is never true is the same as no flag.
         run = self._register([
             '{"type":"navigate","url":"https://example.com/computer-test.html"}',
+            '{"type":"screenshot"}',
             '{"type":"click","x":700,"y":350}',
         ])
         full = self._get(f"/ai/computer/{run.task_id}/trace")
@@ -3557,7 +3610,7 @@ class TestOneScreenshotCostsOneImage(unittest.TestCase):
         self.assertEqual(len(images), 1)
         # The cost controls the redesign depends on are still on the body.
         body = groq
-        self.assertEqual(body.max_completion_tokens, 256)
+        self.assertEqual(body.max_completion_tokens, 512)
         self.assertEqual(body.reasoning_effort, "none")
 
 
@@ -3717,17 +3770,18 @@ class TestTheModelDecidesAndTheExecutorReports(unittest.TestCase):
         )
 
     def test_model_written_history_is_never_recorded_as_fact(self):
-        # The model may still call `history()`, but a line it writes is its own
-        # note.  Treating it as fact is how a run ends up believing it navigated
-        # when the machine refused.
+        # The note the model writes is its own sentence about what it issued.
+        # Treating it as fact is how a run ends up believing it navigated when
+        # the machine refused.
         runner, _ = make_runner([
-            '{"type":"history","note":"navigate https://example.com → SUCCESS"}',
+            '{"type":"navigate","url":"https://example.com","history":"I opened the example page."}',
             '{"type":"done","message":"ok"}',
         ])
         run = asyncio.run(_finish(runner, "go"))
 
-        self.assertEqual(run.facts, [], "a model-authored line became an executor fact")
-        self.assertIn("navigate https://example.com → SUCCESS", run.notes)
+        self.assertEqual(run.facts, ["navigate https://example.com → SUCCESS"])
+        self.assertEqual(run.ai_history, ["I opened the example page."])
+        self.assertNotIn("I opened the example page.", run.facts)
 
     def test_the_compact_memory_is_executor_written_and_text_only(self):
         runner, _ = make_runner([
@@ -3766,8 +3820,7 @@ class TestTheModelDecidesAndTheExecutorReports(unittest.TestCase):
         run = asyncio.run(_finish(runner, "go"))
 
         text = self._user_text(provider.calls[1])
-        self.assertIn("Last action: navigate → FAILED: navigation failed", text)
-        self.assertIn("What actually happened so far:", text)
+        self.assertIn("Last action: navigate → FAILED [not executed]: navigation failed", text)
 
     def test_a_success_is_reported_to_the_model_too(self):
         # Reporting only failures would leave the model unable to tell a
@@ -3869,7 +3922,7 @@ class TestTheModelDecidesAndTheExecutorReports(unittest.TestCase):
         self.assertEqual(run.status, STATUS_DONE)
 
         groq = GroqProvider("gsk-test", "llama-3.3-70b-versatile")
-        self.assertEqual(groq.max_completion_tokens, 256)
+        self.assertEqual(groq.max_completion_tokens, 512)
         for messages in provider.calls:
             body = {"model": groq.default_model,
                     "messages": OpenAICompatProvider._wire_messages(provider, messages)}

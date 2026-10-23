@@ -292,8 +292,9 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
 
     def test_a_mistral_run_of_the_whole_script_executes_every_step(self):
         # The full navigate -> screenshot -> click -> type -> key -> done chain,
-        # driven by Mistral.  The screenshot is a look, not an action: it carries
-        # no execution record, and it is the only request that carries a frame.
+        # driven by Mistral.  The screenshot is a look, not a task action, but it
+        # still carries an executor record, and it is the only request that
+        # carries a frame.
         runner, run, _ = make_two_provider_runner(provider="mistral")
         report = asyncio.run(_finish_with(runner, run.task, provider="mistral")).trace_report()
         self.assertEqual([t["command"].get("type") for t in report["turns"]],
@@ -311,7 +312,7 @@ class TestMistralRawRepliesGoThroughTheSameParser(unittest.TestCase):
         # -- a model may answer with either and the machine gets the same key.
         self.assertEqual(
             [t["execution"]["outcome"] for t in report["turns"] if t.get("execution")],
-            ["executed", "executed", "executed", "executed", "done"],
+            ["executed", "executed", "executed", "executed", "executed", "done"],
         )
         self.assertEqual(runner.computer.actions, [
             ("navigate", "https://example.com/computer-test.html"),

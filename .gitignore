@@ -12,7 +12,9 @@
 # produced.  The dumps were 30 MB each and contained actual screen content.
 *.log
 *.ppm
-*.png
+run_*.txt
+.playwright-mcp/
+.png
 !Frontend/**/*.png
 !docs/**/*.png
 *.jpg
@@ -54,6 +56,9 @@ backend/data-test/
 # 4 GB of QEMU binaries, a disk image and a private key. See the README there.
 # Ignored a second time on purpose, in case this file is ever replaced.
 backend/_vm-archive/
+
+# --- local tooling --------------------------------------------------------
+.opencode/
 
 # --- editors and OS -------------------------------------------------------
 .vscode/

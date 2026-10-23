@@ -133,7 +133,7 @@ describe("runScheduler", () => {
     expect(runs[0].error_code).toBe("bad request");
   });
 
-  it("runs passive summaries when the backend is up but no routine is due", async () => {
+  it("keeps summaries on the Worker and skips when nothing is due", async () => {
     let summaryCalls = 0;
     const result = await runScheduler(env, BASE, {
       fetchImpl: stubFetch({
@@ -146,7 +146,7 @@ describe("runScheduler", () => {
     });
     expect(result.dispatched).toBe(0);
     expect(result.backendReady).toBe(true);
-    expect(result.summaries).toBe("ran");
-    expect(summaryCalls).toBe(1);
+    expect(result.summaries).toBe("skipped");
+    expect(summaryCalls).toBe(0);
   });
 });

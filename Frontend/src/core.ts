@@ -63,6 +63,7 @@ export interface ToolResult {
 
 const pendingTools = new Map<string, PendingTool>();
 let reqSeq = 0;
+let chatAbort: AbortController | null = null;
 
 /* ============================================================================
    Core store
@@ -77,6 +78,7 @@ interface RunEvents {
     | "tool_output"
     | "tool_result"
     | "synthesize"
+    | "done"
     | "error";
   [k: string]: unknown;
 }
@@ -138,21 +140,44 @@ function patchRun(patch: Partial<Run>) {
   useCore.setState({ run: { ...run, ...patch } });
 }
 
-function finalize() {
+async function finalize() {
   if (finalizeTimer) clearTimeout(finalizeTimer);
   finalizeTimer = null;
   const core = useCore.getState();
   const run = core.run;
   if (!run || run.cancel || run.phase === "done") return;
-  const steps = run.steps.map((s) => ({ ...s, status: "done" as const }));
-  useCore.setState({ run: { ...run, phase: "done", steps } });
-  core.refreshThreads();
-  if (core.activeThreadId) core.loadMessages(core.activeThreadId);
+
+  // Load the transcript FIRST, while the streamed view is still visible.  The
+  // backend only emits `done` after it has written the assistant turn to disk,
+  // so by the time we get here the real message is already in the server
+  // transcript.  Loading before hiding the streamed bubble is what stops a
+  // finished answer from vanishing: the old code flipped the run to "done"
+  // (which unmounts the streamed view) on a fixed timer off `synthesize`, so a
+  // synthesis that took longer than the timer raced the write and the answer
+  // disappeared until the next manual reload.
+  if (core.activeThreadId) {
+    try {
+      await core.loadMessages(core.activeThreadId);
+    } catch {
+      /* keep whatever we had */
+    }
+  }
+
+  const latest = useCore.getState().run;
+  if (!latest || latest.cancel || latest.phase === "done") return;
+  const steps = latest.steps.map((s) => ({ ...s, status: "done" as const }));
+  useCore.setState({ run: { ...latest, phase: "done", steps } });
+  useCore.getState().refreshThreads();
 }
 
-function scheduleFinalize() {
+function scheduleFinalize(delayMs = 120000) {
+  // A safety net only.  The real, authoritative close is the backend's `done`
+  // event; this just guarantees a run can never hang the composer forever if a
+  // socket drops mid-turn and `done` never arrives.
   if (finalizeTimer) clearTimeout(finalizeTimer);
-  finalizeTimer = setTimeout(finalize, 1600);
+  finalizeTimer = setTimeout(() => {
+    void finalize();
+  }, delayMs);
 }
 
 function setRun(threadId: string) {
@@ -394,7 +419,15 @@ function handleRunEvent(ev: RunEvents) {
     }
     case "synthesize":
       patchRun({ phase: "synthesizing" });
-      scheduleFinalize();
+      // The backend sends a terminal `done` once the turn is persisted on disk;
+      // this 120s timer is only a long-stop safety net in case that event
+      // never arrives (e.g. the socket dropped mid-turn).
+      scheduleFinalize(120000);
+      break;
+    case "done":
+      // Authoritative end-of-turn: the assistant message is already written, so
+      // close the run and swap the streamed view for the real transcript.
+      void finalize();
       break;
     case "error": {
       // A turn that died on a model call still has to end here.  The old
@@ -404,9 +437,246 @@ function handleRunEvent(ev: RunEvents) {
       // where the backend has already recorded the failure as an assistant turn.
       const message = String(ev.error || "The AI request failed.");
       useUi.getState().toast(message, "err");
-      finalize();
+      void finalize();
       break;
     }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Worker-native chat over SSE
+   ----------------------------------------------------------------------- */
+
+async function createThreadAndStream(text: string, localId: string): Promise<void> {
+  try {
+    const response = await apiFetch("/threads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "New chat" }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.thread_id) {
+      throw new Error(String(data.error || "Could not create a conversation."));
+    }
+    const threadId = String(data.thread_id);
+    useCore.setState((s) => {
+      const pending = s.messages["__new__"] || [];
+      const messages = { ...s.messages, [threadId]: pending.map((m) => ({ ...m, thread_id: threadId })) };
+      delete messages["__new__"];
+      return {
+        activeThreadId: threadId,
+        messages,
+        run: s.run
+          ? { ...s.run, threadId }
+          : {
+              threadId,
+              phase: "working" as const,
+              plan: null,
+              steps: [],
+              commanderDelta: "",
+              startedAt: Date.now(),
+              cancel: false,
+            },
+      };
+    });
+    useCore.getState().refreshThreads();
+    await streamChat(threadId, text, localId);
+  } catch (error) {
+    removePending("__new__", localId);
+    patchRun({ phase: "done", cancel: true });
+    useUi.getState().toast(String((error as Error).message || "Could not start the conversation."), "err");
+  }
+}
+
+function removePending(threadId: string, localId: string): void {
+  useCore.setState((s) => ({
+    messages: {
+      ...s.messages,
+      [threadId]: (s.messages[threadId] || []).filter((m) => m.id !== localId),
+    },
+  }));
+}
+
+function upsertMessage(threadId: string, message: Message): void {
+  useCore.setState((s) => {
+    const list = [...(s.messages[threadId] || [])];
+    const index = list.findIndex((m) => m.id === message.id);
+    if (index >= 0) list[index] = { ...list[index], ...message, pending: false };
+    else list.push(message);
+    return { messages: { ...s.messages, [threadId]: list } };
+  });
+}
+
+function handleChatEvent(type: string, payload: Record<string, unknown>, threadId: string, localId: string): void {
+  switch (type) {
+    case "meta": {
+      const user = payload.user_message as Message | null | undefined;
+      if (user && user.id) {
+        useCore.setState((s) => {
+          const list = [...(s.messages[threadId] || [])];
+          const index = list.findIndex((m) => m.id === localId);
+          if (index >= 0) list[index] = { ...user, pending: false };
+          else if (!list.some((m) => m.id === user.id)) list.push(user);
+          return { messages: { ...s.messages, [threadId]: list } };
+        });
+      } else {
+        useCore.setState((s) => ({
+          messages: {
+            ...s.messages,
+            [threadId]: (s.messages[threadId] || []).map((m) =>
+              m.id === localId ? { ...m, pending: false } : m,
+            ),
+          },
+        }));
+      }
+      const current = useCore.getState().run;
+      useCore.setState({
+        run: current
+          ? { ...current, threadId, phase: "working" }
+          : { ...setRun(threadId), phase: "working" },
+      });
+      break;
+    }
+    case "delta": {
+      const text = String(payload.text || "");
+      if (!text) break;
+      const current = useCore.getState().run || setRun(threadId);
+      useCore.setState({
+        run: { ...current, threadId, phase: "working", commanderDelta: current.commanderDelta + text },
+      });
+      break;
+    }
+    case "reset": {
+      const current = useCore.getState().run;
+      if (current) useCore.setState({ run: { ...current, commanderDelta: "" } });
+      break;
+    }
+    case "tool": {
+      const current = useCore.getState().run || setRun(threadId);
+      const toolId = String(payload.id || "");
+      const name = String(payload.name || "tool");
+      const status = String(payload.status || "start");
+      const count = Number(payload.result_count || 0);
+      const query = String(payload.query || "");
+      const existing = current.steps.find((s) => s.id === "chief");
+      const done = status !== "start";
+      const tool: ToolCallState = {
+        id: toolId,
+        tool: name,
+        args: query ? { query } : {},
+        status: done ? (payload.error ? "error" : "ok") : "running",
+        output: done && count ? `${count} matching ${count === 1 ? "summary" : "summaries"}` : "",
+        error: String(payload.error || ""),
+        open: false,
+      };
+      const steps = existing
+        ? current.steps.map((s) =>
+            s.id === "chief"
+              ? {
+                  ...s,
+                  status: "working" as const,
+                  tools: s.tools.some((t) => t.id === toolId)
+                    ? s.tools.map((t) => (t.id === toolId ? { ...t, ...tool } : t))
+                    : [...s.tools, tool],
+                }
+              : s,
+          )
+        : [
+            {
+              id: "chief",
+              agent: "chief",
+              title: "Chief",
+              role: "commander",
+              status: "working" as const,
+              tools: [tool],
+              delta: "",
+              report: "",
+            },
+          ];
+      useCore.setState({ run: { ...current, threadId, phase: "working", steps } });
+      break;
+    }
+    case "done": {
+      const message = payload.message as Message | null | undefined;
+      if (message && message.id) upsertMessage(threadId, message);
+      const current = useCore.getState().run;
+      if (current) useCore.setState({ run: { ...current, phase: "done", commanderDelta: "" } });
+      void useCore.getState().loadMessages(threadId);
+      void useCore.getState().refreshThreads();
+      break;
+    }
+    case "error": {
+      const message = payload.message as Message | null | undefined;
+      if (message && message.id) upsertMessage(threadId, message);
+      const current = useCore.getState().run;
+      if (current) useCore.setState({ run: { ...current, phase: "done" } });
+      useUi.getState().toast(String(payload.error || "The AI request failed."), "err");
+      void useCore.getState().loadMessages(threadId);
+      break;
+    }
+  }
+}
+
+async function streamChat(threadId: string, text: string, localId: string): Promise<void> {
+  const requestId = `req-${crypto.randomUUID()}`;
+  const controller = new AbortController();
+  chatAbort?.abort(new Error("superseded"));
+  chatAbort = controller;
+  try {
+    const response = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text, request_id: requestId }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(String((data as { error?: string }).error || `HTTP ${response.status}`));
+    }
+    if (!response.body) throw new Error("The response stream was empty.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let settled = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+      let split = buffer.indexOf("\n\n");
+      while (split >= 0) {
+        const block = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        let event = "message";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (data) {
+          try {
+            handleChatEvent(event, JSON.parse(data) as Record<string, unknown>, threadId, localId);
+            if (event === "done" || event === "error") settled = true;
+          } catch {
+            /* ignore a malformed event */
+          }
+        }
+        split = buffer.indexOf("\n\n");
+      }
+    }
+    if (!settled && !controller.signal.aborted) {
+      removePending(threadId, localId);
+      patchRun({ phase: "done", cancel: true });
+      useUi.getState().toast("The response ended before Chief finished.", "err");
+      await useCore.getState().loadMessages(threadId);
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    removePending(threadId, localId);
+    patchRun({ phase: "done", cancel: true });
+    useUi.getState().toast(String((error as Error).message || "The AI request failed."), "err");
+    void useCore.getState().loadMessages(threadId);
+  } finally {
+    if (chatAbort === controller) chatAbort = null;
   }
 }
 
@@ -431,7 +701,9 @@ export const useCore = create<CoreState>((set, get) => ({
 
   connect() {
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
-    set({ status: "connecting" });
+    // Chat is served by the Worker and stays available even when the Codespace
+    // socket is down.  The socket is only for computer controls and live screen.
+    set({ status: "online" });
     try {
       ws = new WebSocket(wsUrl(`/ws/${currentUserId()}`));
     } catch {
@@ -439,11 +711,9 @@ export const useCore = create<CoreState>((set, get) => ({
       return;
     }
     ws.onopen = () => {
-      set({ status: "online" });
       get().computerStatus();
     };
     ws.onclose = () => {
-      set({ status: "offline" });
       pendingTools.forEach((p) => {
         clearTimeout(p.timer);
         p.resolve({ output: "", error: "connection lost", title: "", url: "", image: "", format: "" });
@@ -518,24 +788,22 @@ export const useCore = create<CoreState>((set, get) => ({
   },
 
   send(text) {
-    const { status, activeThreadId, run } = get();
-    // A draft is only ever lost if we say so.  Both refusals below return false
-    // and leave the caller's input in place, so a click on Send while the
-    // socket is down produces an explanation instead of a cleared textarea and
-    // silence.
-    if (status !== "online" || !ws || ws.readyState !== WebSocket.OPEN) {
-      useUi.getState().toast("Not connected to the workforce — reconnecting now.", "err");
+    const { activeThreadId, run } = get();
+    if (!text.trim()) return false;
+    const busy =
+      run &&
+      run.phase !== "done" &&
+      run.phase !== "idle" &&
+      (!activeThreadId || run.threadId === activeThreadId);
+    if (busy) {
+      useUi.getState().toast("Chief is already working on your request.", "info");
       return false;
     }
-    if (run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle") {
-      useUi.getState().toast("The workforce is already working on your request.", "info");
-      return false;
-    }
-    const tid = activeThreadId || null;
-    if (finalizeTimer) clearTimeout(finalizeTimer);
-    pushMsg(tid || "__new__", {
-      id: -Date.now(),
-      thread_id: tid || "__new__",
+    const localId = `local-${crypto.randomUUID()}`;
+    const target = activeThreadId || "__new__";
+    pushMsg(target, {
+      id: localId,
+      thread_id: target,
       role: "user",
       agent: "user",
       content: text,
@@ -543,15 +811,20 @@ export const useCore = create<CoreState>((set, get) => ({
       created_at: Date.now() / 1000,
       pending: true,
     });
-    setRun(tid || "__new__");
-    ws.send(JSON.stringify({ type: "message", text, thread_id: tid }));
+    setRun(target);
+    if (activeThreadId) {
+      void streamChat(activeThreadId, text, localId);
+    } else {
+      void createThreadAndStream(text, localId);
+    }
     return true;
   },
 
   stopRun() {
     const { run } = get();
-    if (!run) return;
-    patchRun({ cancel: true, phase: "done" });
+    if (run) patchRun({ cancel: true, phase: "done" });
+    chatAbort?.abort(new Error("stopped by user"));
+    chatAbort = null;
     if (finalizeTimer) clearTimeout(finalizeTimer);
   },
 

@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const BASE = "https://example.com";
 const TOKEN = "test-internal-token";
 
-// The scheduler route probes the backend and pings summaries; stub those so the
-// test neither depends on nor leaks a real outbound request.
+// The scheduler route probes the backend; stub that so the test neither
+// depends on nor leaks a real outbound request.
 beforeAll(() => {
   fetchMock.activate();
   fetchMock.disableNetConnect();
@@ -106,7 +106,6 @@ describe("internal routines API", () => {
 
   it("runs a scheduler tick on demand", async () => {
     stubBackend("/health", "GET");
-    stubBackend("/internal/summaries/run", "POST");
     const { status, body } = await call("/internal/scheduler/run", authed({}, "POST"));
     expect(status).toBe(200);
     expect(body.ok).toBe(true);

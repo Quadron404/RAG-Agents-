@@ -22,9 +22,9 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { BOTS, BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
+import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
 import { useCore } from "../core";
-import { useAgentStates, activityLabel, stepActivity } from "../lib/agents";
+import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
 import { speechSupported, startDictation } from "../lib/voice";
@@ -129,15 +129,15 @@ async function shareMessage(text: string) {
 
 /* pins (conversation + message) ---------------------------------------------- */
 
-function loadThreadPins(): Record<string, number[]> {
+function loadThreadPins(): Record<string, string[]> {
   try {
-    return JSON.parse(localStorage.getItem("rag.pins") || "{}");
+    return JSON.parse(localStorage.getItem("rag.pins") || "{}") as Record<string, string[]>;
   } catch {
     return {};
   }
 }
 
-function togglePin(threadId: string, msgId: number) {
+function togglePin(threadId: string, msgId: string) {
   const pins = loadThreadPins();
   const list = pins[threadId] || [];
   const next = list.includes(msgId) ? list.filter((x) => x !== msgId) : [...list, msgId];
@@ -207,14 +207,8 @@ function ChatListPane() {
   const newChat = useCore((s) => s.newChat);
   const archived = useUi((s) => s.archived);
   const pinnedConv = useUi((s) => s.pinnedConv);
-  const activeThreadId = useCore((s) => s.activeThreadId);
-  const run = useCore((s) => s.run);
   const status = useCore((s) => s.status);
-  const bot = useUi((s) => s.bot);
-  const setBot = useUi((s) => s.setBot);
   const [q, setQ] = useState("");
-
-  const agentStates = useAgentStates(run && run.threadId === activeThreadId ? run : null);
 
   const threads = useMemo(() => {
     let list = threadsAll.filter((t) => !archived.includes(t.thread_id));
@@ -226,10 +220,6 @@ function ChatListPane() {
     const rest = list.filter((t) => t.thread_id !== pinnedConv);
     return pinned ? [pinned, ...rest] : rest;
   }, [threadsAll, archived, pinnedConv, q]);
-
-  const filteredAgents = q.trim()
-    ? BOTS.filter((b) => b.name.toLowerCase().includes(q.trim().toLowerCase()))
-    : BOTS;
 
   return (
     <div className="chatlist">
@@ -255,35 +245,12 @@ function ChatListPane() {
         />
       </div>
       <div className="chatlist__scroll">
-        {filteredAgents.map((b) => {
-          const st = agentStates[b.id];
-          return (
-            <button
-              key={b.id}
-              className={`cl-msg${bot === b.id ? " cl-msg--on" : ""}`}
-              onClick={() => {
-                haptic("medium");
-                setBot(b.id);
-              }}
-            >
-              <span className="msg__ava" style={{ background: b.gradient }} aria-hidden>
-                {b.glyph}
-                <span className={`dot dot--${st.status} msg-ava-dot`} />
-              </span>
-              <span className="cl-msg__meta">
-                <span className="cl-msg__name">{b.name}</span>
-                <span className="cl-msg__state">{st.label}</span>
-              </span>
-            </button>
-          );
-        })}
-
-        {filteredAgents.length === BOTS.length && threads.length ? null : filteredAgents.length === BOTS.length ? (
+        {threads.map((t) => <Row key={t.thread_id} t={t} />)}
+        {threads.length ? null : (
           <div className="chatlist__empty">
             {status === "online" ? "No conversations yet." : "Connecting…"}
           </div>
-        ) : null}
-        {threads.map((t) => <Row key={t.thread_id} t={t} />)}
+        )}
       </div>
       <span role="button" aria-label="Close chat list" className="convlist__mobile-close" onClick={() => setConvOpen(false)}>
         <ArrowLeft size={20} />
@@ -569,13 +536,17 @@ function EmptyChat() {
   const looks = useMemo(() => ["Compare the top 3 Linux distros", "Summarize any PDF I attach", "Search my files for a project", "Open a page and read it back"], []);
   return (
     <div className="empty">
-      <div className="empty__orb">
-        <Quote size={40} />
+      <div className="empty__orb" aria-hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="7" cy="17" r="2.4" />
+          <circle cx="17" cy="7" r="2.4" />
+          <path d="M9.4 15.6L14.6 8.4" />
+        </svg>
       </div>
-      <div className="empty__title">Talk to your workforce</div>
+      <div className="empty__title">Talk to Chief</div>
       <div className="empty__sub">
-        Ask the Commander anything, or direct a specialist directly. Agents coordinate,
-        use the computer, and report back in one calm conversation.
+        Ask Chief anything. One conversation, one answer, with your computer-use
+        tools available whenever the task needs them.
       </div>
       <div className="suggests">
         {looks.map((s) => (
@@ -682,13 +653,17 @@ function Composer() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const replyTo = useUi((s) => s.replyTo);
   const clearReplyTo = useUi((s) => s.clearReplyTo);
-  const bot = useUi((s) => s.bot);
   const toast = useUi((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
 
-  const busy = run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
+  const busy = Boolean(
+    run &&
+      run.phase !== "done" &&
+      run.phase !== "idle" &&
+      (!activeThreadId || run.threadId === activeThreadId),
+  );
 
   const autoGrow = useCallback(() => {
     const ta = taRef.current;
@@ -796,12 +771,20 @@ function Composer() {
         ) : null}
 
         <div className="composer__row">
+          <button
+            className="composer__btn"
+            onClick={() => fileRef.current?.click()}
+            title="Attach"
+            aria-label="Attach"
+          >
+            <Paperclip size={18} />
+          </button>
           <textarea
             ref={taRef}
             className="composer__ta"
             rows={1}
             value={text}
-            placeholder={`Message ${BOT_BY_ID[bot].name}…`}
+            placeholder="Message Chief…"
             onChange={(e) => setText(e.target.value)}
             onFocus={() => setFocus(true)}
             onBlur={() => setFocus(false)}
@@ -825,14 +808,6 @@ function Composer() {
               )}
             </button>
           ) : null}
-          <button
-            className="composer__btn"
-            onClick={() => fileRef.current?.click()}
-            title="Attach"
-            aria-label="Attach"
-          >
-            <Paperclip size={18} />
-          </button>
           {busy ? (
             <button className="composer__send composer__stop" onClick={stopRun} title="Stop" aria-label="Stop">
               <span className="stop-ic" />
@@ -852,12 +827,11 @@ function Composer() {
           <span className={`dot ${status === "online" ? "dot--online" : "dot--offline"}`} />
           {status === "online" ? (
             <>
-              <span>Commander plans · workers run on</span>
-              <b>your computer</b>
+              <span>Chief is ready</span>
               <span>· Enter to send, Shift+Enter for a new line</span>
             </>
           ) : (
-            <span>Reconnecting to the workforce…</span>
+            <span>Connecting to Chief…</span>
           )}
         </div>
       </div>
@@ -889,20 +863,8 @@ export function ChatView() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const run = useCore((s) => s.run);
   const setConvOpen = useUi((s) => s.setConvOpen);
-  const bot = useUi((s) => s.bot);
-  const setBot = useUi((s) => s.setBot);
 
-  const agentStates = useAgentStates(run && run.threadId === activeThreadId ? run : null);
-  const st = agentStates[bot];
   const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
-
-  const cycleBot = () => {
-    const order = ["commander", "researcher", "engineer", "navigator"] as const;
-    const i = order.indexOf(bot);
-    const next = order[(i + 1) % order.length];
-    setBot(next);
-    haptic("light");
-  };
 
   return (
     <div className="thread">
@@ -910,17 +872,17 @@ export function ChatView() {
         <button className="thread__back" onClick={() => setConvOpen(true)} aria-label="Open conversations">
           <ArrowLeft size={19} />
         </button>
-        <button className="thread__ava" onClick={cycleBot} title="Switch agent" aria-label="Switch agent">
-          <span className="msg__ava" style={{ background: BOT_BY_ID[bot].gradient }} aria-hidden>
-            {BOT_BY_ID[bot].glyph}
+        <span className="thread__ava" aria-hidden>
+          <span className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient }}>
+            {BOT_BY_ID.commander.glyph}
           </span>
-        </button>
-        <button className="thread__hmeta" onClick={cycleBot} title="Switch agent">
-          <div className="thread__hname">{BOT_BY_ID[bot].name}</div>
+        </span>
+        <div className="thread__hmeta">
+          <div className="thread__hname">Chief</div>
           <div className="thread__hstate">
-            {running ? (run && run.phase !== "planning" ? "working on it…" : "planning…") : st.label}
+            {running ? (run?.phase === "planning" ? "thinking…" : "working on it…") : "ready"}
           </div>
-        </button>
+        </div>
       </div>
       <MessageList />
       <Composer />

@@ -10,21 +10,20 @@
  *      dispatch -- a crash between here and step 3 leaves a run that a later
  *      tick picks up, never a lost one.
  *   2. **Decide whether the backend is needed.**  If there is routine work, the
- *      backend is woken and awaited.  If there is only quiet-conversation
- *      summary work, the backend is *not* woken: a CO2-cheap minute of idle is
- *      not worth a Codespace boot, so summaries ride on the next tick that has
- *      real work, or on a tick where the backend happens to already be up.
+ *      backend is woken and awaited.  Quiet-conversation summaries never wake
+ *      the Codespace: they are Worker-native and run on every tick.
  *   3. **Dispatch.**  Each due run is leased (atomically), sent to the backend's
  *      ``/internal/routines/execute``, and recorded from the *real* answer: a
  *      run is only ``completed`` when the backend returned a result.
- *   4. **Summaries.**  Whenever the backend is up, one summaries tick runs,
- *      reusing the Phase-3 inactivity/high-watermark machinery.
+ *   4. **Summaries.**  One Worker-native summaries tick runs every minute,
+ *      independent of whether the Codespace is awake.
  *
  * Failure handling is deliberately conservative: an unreachable backend leaves
  * runs queued; a provider rate limit delays them with backoff; a spent attempt
  * budget or a non-retryable error fails them, with the reason recorded.
  */
 import type { Env } from "./env";
+import { runSummaryTick } from "./chat/summaries";
 import { ensureBackendReady, probeBackend, type LifecycleDeps } from "./codespace";
 import {
   advanceRoutine,
@@ -99,10 +98,9 @@ export async function runScheduler(
     // Only passive work could be pending.  Never wake the Codespace for it.
     const probe = await probeBackend(env, deps);
     result.backendReady = probe.up;
-    if (probe.up) {
-      result.summaries = await pingSummaries(env, deps);
-    } else {
-      result.note = `no routine work; summaries deferred (${probe.detail})`;
+    result.summaries = await runSummaries(env, nowMs);
+    if (!probe.up) {
+      result.note = `no routine work; ${result.summaries} summaries ran without the backend (${probe.detail})`;
     }
     return result;
   }
@@ -144,8 +142,8 @@ export async function runScheduler(
     }
   }
 
-  // 5. Reuse the Phase-3 summary machinery now that the backend is awake.
-  result.summaries = await pingSummaries(env, deps);
+  // 5. Summaries are Worker-native and do not depend on the Codespace.
+  result.summaries = await runSummaries(env, nowMs);
   return result;
 }
 
@@ -291,16 +289,11 @@ async function dispatchToBackend(
   }
 }
 
-async function pingSummaries(env: Env, deps: SchedulerDeps): Promise<"ran" | "skipped" | "failed"> {
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const origin = (env.BACKEND_ORIGIN || "").replace(/\/+$/, "");
-  if (!origin) return "skipped";
+async function runSummaries(env: Env, now: number): Promise<"ran" | "skipped" | "failed"> {
   try {
-    const response = await fetchImpl(`${origin}/internal/summaries/run`, {
-      method: "POST",
-      headers: { "x-rag-internal-token": env.RAG_INTERNAL_TOKEN },
-    });
-    return response.ok ? "ran" : "failed";
+    const result = await runSummaryTick(env, now);
+    if (result.summarized || result.indexed || result.eligible) return "ran";
+    return "skipped";
   } catch {
     return "failed";
   }
