@@ -26,48 +26,90 @@ export interface ToolExecution {
   output: string;
   resultCount: number;
   error?: string;
+  /** Whether the search ran successfully (true) even when it returned no matches. */
+  searched: boolean;
 }
 
-function queryFrom(call: ToolCall): string {
-  try {
-    const parsed = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-    const query = parsed.query;
-    return typeof query === "string" ? query.slice(0, 500) : "";
-  } catch {
-    return "";
+/** Validation error codes surfaced to Chief without exposing internals. */
+export const ToolError = {
+  UNKNOWN_TOOL: "unknown_tool",
+  EMPTY_QUERY: "empty_query",
+  INVALID_ARGUMENTS: "invalid_arguments",
+  SEARCH_FAILED: "search_failed",
+} as const;
+
+function queryFrom(call: ToolCall): { query: string; error?: string } {
+  // Never execute a tool merely because plain assistant text claims to call it.
+  // Tool calls arrive through the provider's native tool-call event type only.
+  if (!call.name) {
+    return { query: "", error: ToolError.INVALID_ARGUMENTS };
   }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(call.arguments || "{}");
+  } catch {
+    return { query: "", error: ToolError.INVALID_ARGUMENTS };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { query: "", error: ToolError.INVALID_ARGUMENTS };
+  }
+  const query = parsed.query;
+  if (typeof query !== "string" || !query.trim()) {
+    return { query: "", error: ToolError.EMPTY_QUERY };
+  }
+  return { query: query.trim().slice(0, 500) };
 }
 
 export async function executeHistoryTool(
   env: Env,
   ownerSub: string,
+  conversationId: string,
   call: ToolCall,
 ): Promise<ToolExecution> {
+  // Validate the tool name strictly -- only the Worker-owned history tool runs.
   if (call.name !== HISTORY_TOOL.name) {
     return {
       ok: false,
       output: "The requested tool is not available.",
       resultCount: 0,
-      error: "unknown_tool",
+      error: ToolError.UNKNOWN_TOOL,
+      searched: false,
     };
   }
-  const query = queryFrom(call);
-  if (!query.trim()) {
+
+  const parsed = queryFrom(call);
+  if (parsed.error) {
     return {
       ok: false,
-      output: "The historical conversation search needs a non-empty query.",
+      output:
+        parsed.error === ToolError.EMPTY_QUERY
+          ? "The historical conversation search needs a non-empty query."
+          : "The tool arguments were malformed.",
       resultCount: 0,
-      error: "empty_query",
+      error: parsed.error,
+      searched: false,
     };
   }
-  const result = await searchConversationHistory(env, ownerSub, query);
+
+  // Owner identity comes exclusively from the authenticated server-side session.
+  // Model arguments never choose the owner or channel.
+  const result = await searchConversationHistory(env, ownerSub, conversationId, parsed.query);
   if (!result.ok) {
+    // A technical failure is never converted into a successful empty search.
     return {
       ok: false,
       output: result.error ?? "Historical conversation search failed.",
       resultCount: 0,
-      error: "search_failed",
+      error: ToolError.SEARCH_FAILED,
+      searched: true,
     };
   }
-  return { ok: true, output: result.text, resultCount: result.resultCount };
+
+  // Successful search with zero matches is distinct from a failed search.
+  return {
+    ok: true,
+    output: result.text,
+    resultCount: result.resultCount,
+    searched: true,
+  };
 }

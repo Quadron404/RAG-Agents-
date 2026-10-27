@@ -59,6 +59,28 @@ export interface SummaryRow {
   indexed_at: number | null;
 }
 
+export interface ChannelDailySummaryRow {
+  id: string;
+  owner_sub: string;
+  conversation_id: string;
+  summary_type: string;
+  period_start: string;
+  period_end: string;
+  local_date: string;
+  content: string;
+  version: number;
+  covered_from_seq: number;
+  covered_to_seq: number;
+  source_summary_ids: string;
+  generation_status: string;
+  index_status: string;
+  index_error: string;
+  retry_count: number;
+  source_revision: string;
+  created_at: number;
+  updated_at: number;
+  indexed_at: number | null;
+}
 export interface SummaryJobRow {
   job_id: string;
   conversation_id: string;
@@ -165,10 +187,30 @@ export async function listMessages(
   const visible = options.visibleOnly ? " AND hidden = 0 AND role IN ('user','assistant')" : "";
   const result = await env.DB.prepare(
     `SELECT ${MESSAGE_COLUMNS} FROM messages
-     WHERE conversation_id = ?1 AND owner_sub = ?2${visible}
-     ORDER BY seq ASC`,
+      WHERE conversation_id = ?1 AND owner_sub = ?2${visible}
+      ORDER BY seq ASC`,
   )
     .bind(conversationId, ownerSub)
+    .all<MessageRow>();
+  return result.results ?? [];
+}
+
+/** Messages whose ``created_at`` falls within ``[startMs, endMs)``, ordered by seq. */
+export async function listMessagesInRange(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  startMs: number,
+  endMs: number,
+): Promise<MessageRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${MESSAGE_COLUMNS} FROM messages
+      WHERE conversation_id = ?1 AND owner_sub = ?2
+        AND created_at >= ?3 AND created_at < ?4
+        AND hidden = 0 AND role IN ('user','assistant')
+      ORDER BY seq ASC`,
+  )
+    .bind(conversationId, ownerSub, startMs, endMs)
     .all<MessageRow>();
   return result.results ?? [];
 }
@@ -512,6 +554,22 @@ export async function lastVisibleSeq(env: Env, conversationId: string): Promise<
   return row?.seq ?? 0;
 }
 
+export async function advanceCheckpoint(
+  env: Env,
+  conversationId: string,
+  coveredTo: number,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE conversations
+     SET summarized_through = CASE WHEN summarized_through < ?2 THEN ?2 ELSE summarized_through END,
+         updated_at = ?3
+     WHERE id = ?1`,
+  )
+    .bind(conversationId, coveredTo, now)
+    .run();
+}
+
 export async function enqueueSummaryJob(
   env: Env,
   conversation: ConversationRow,
@@ -713,14 +771,470 @@ export async function pendingSummaryIndexes(env: Env, now: number, limit = 5): P
   const result = await env.DB.prepare(
     `SELECT conversation_id, owner_sub, content, version, covered_from, covered_to,
             doc_key, index_status, index_error, created_at, updated_at, indexed_at
-     FROM conversation_summaries
-     WHERE index_status IN ('pending', 'failed') AND updated_at <= ?1
-     ORDER BY updated_at ASC
-     LIMIT ?2`,
+      FROM conversation_summaries
+      WHERE index_status IN ('pending', 'failed') AND updated_at <= ?1
+      ORDER BY updated_at ASC
+      LIMIT ?2`,
   )
     .bind(now - 30_000, limit)
     .all<SummaryRow>();
   return result.results ?? [];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Channel daily summaries                                                    */
+/* -------------------------------------------------------------------------- */
+
+const CHANNEL_DAILY_COLUMNS =
+  "id, owner_sub, conversation_id, summary_type, period_start, period_end, local_date, " +
+  "content, version, covered_from_seq, covered_to_seq, source_summary_ids, " +
+  "index_status, index_error, retry_count, source_revision, created_at, updated_at, indexed_at";
+
+export interface ChannelDailySummaryRow {
+  id: string;
+  owner_sub: string;
+  conversation_id: string;
+  summary_type: string;
+  period_start: string;
+  period_end: string;
+  local_date: string;
+  content: string;
+  version: number;
+  covered_from_seq: number;
+  covered_to_seq: number;
+  source_summary_ids: string;
+  index_status: string;
+  index_error: string;
+  retry_count: number;
+  source_revision: string;
+  created_at: number;
+  updated_at: number;
+  indexed_at: number | null;
+}
+
+export async function getChannelDailySummary(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  localDate: string,
+): Promise<ChannelDailySummaryRow | null> {
+  return env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE owner_sub = ?1 AND conversation_id = ?2 AND local_date = ?3
+        AND summary_type = 'daily'
+      LIMIT 1`,
+  )
+    .bind(ownerSub, conversationId, localDate)
+    .first<ChannelDailySummaryRow>();
+}
+
+export async function saveChannelDailySummary(
+  env: Env,
+  value: {
+    id: string;
+    ownerSub: string;
+    conversationId: string;
+    localDate: string;
+    periodStart: string;
+    periodEnd: string;
+    content: string;
+    coveredFromSeq: number;
+    coveredToSeq: number;
+    sourceSummaryIds: string[];
+    sourceRevision: string;
+    generationStatus?: string;
+    now: number;
+  },
+): Promise<{ applied: boolean; version: number; skipped: boolean }> {
+  const now = value.now;
+  const existing = await getChannelDailySummary(
+    env,
+    value.ownerSub,
+    value.conversationId,
+    value.localDate,
+  );
+
+  // Avoid regenerating unchanged summaries: same content + same coverage → skip.
+  if (
+    existing &&
+    existing.content === value.content &&
+    existing.covered_to_seq === value.coveredToSeq
+  ) {
+    return { applied: false, version: existing.version, skipped: true };
+  }
+
+  const generationStatus = value.generationStatus ?? "pending";
+  const row = await env.DB.prepare(
+    `INSERT INTO channel_daily_summaries
+       (id, owner_sub, conversation_id, summary_type, period_start, period_end,
+        local_date, content, version, covered_from_seq, covered_to_seq,
+        source_summary_ids, index_status, index_error, retry_count,
+        source_revision, created_at, updated_at)
+      VALUES (?1, ?2, ?3, 'daily', ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, 'pending', '', 0,
+        ?11, ?12, ?13)
+      ON CONFLICT(owner_sub, conversation_id, summary_type, period_start) DO UPDATE SET
+        content = excluded.content,
+        version = channel_daily_summaries.version + 1,
+        period_end = excluded.period_end,
+        local_date = excluded.local_date,
+        covered_from_seq = excluded.covered_from_seq,
+        covered_to_seq = excluded.covered_to_seq,
+        source_summary_ids = excluded.source_summary_ids,
+        source_revision = excluded.source_revision,
+        index_status = 'pending',
+        index_error = '',
+        retry_count = 0,
+        updated_at = excluded.updated_at,
+        indexed_at = NULL
+      WHERE excluded.covered_to_seq > channel_daily_summaries.covered_to_seq
+      RETURNING version`,
+  )
+    .bind(
+      value.id,
+      value.ownerSub,
+      value.conversationId,
+      value.periodStart,
+      value.periodEnd,
+      value.localDate,
+      value.content,
+      value.coveredFromSeq,
+      value.coveredToSeq,
+      JSON.stringify(value.sourceSummaryIds),
+      value.sourceRevision,
+      now,
+      now,
+    )
+    .first<{ version: number }>();
+
+  if (row) {
+    if (generationStatus !== "pending") {
+      await env.DB.prepare(
+        `UPDATE channel_daily_summaries SET generation_status = ?2, updated_at = ?3
+          WHERE id = ?1`,
+      )
+        .bind(value.id, generationStatus, now)
+        .run();
+    }
+    return { applied: true, version: row.version, skipped: false };
+  }
+  // The conflict clause's WHERE blocked the update (coverage didn't extend).
+  return { applied: false, version: existing?.version ?? 0, skipped: false };
+}
+
+export async function setChannelDailySummaryIndexStatus(
+  env: Env,
+  conversationId: string,
+  localDate: string,
+  status: "indexed" | "failed" | "unconfigured",
+  error = "",
+): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET index_status = ?3, index_error = ?4,
+          indexed_at = CASE WHEN ?3 = 'indexed' THEN ?5 ELSE indexed_at END,
+          updated_at = ?5
+      WHERE conversation_id = ?1 AND local_date = ?2 AND summary_type = 'daily'`,
+  )
+    .bind(conversationId, localDate, status, error.slice(0, 500), now)
+    .run();
+}
+
+export async function incrementChannelDailySummaryRetry(
+  env: Env,
+  conversationId: string,
+  localDate: string,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET retry_count = retry_count + 1, updated_at = ?3
+      WHERE conversation_id = ?1 AND local_date = ?2 AND summary_type = 'daily'
+      RETURNING retry_count`,
+  )
+    .bind(conversationId, localDate, Date.now())
+    .first<{ retry_count: number }>();
+  return row?.retry_count ?? 0;
+}
+
+export async function pendingChannelDailySummaryIndexes(
+  env: Env,
+  now: number,
+  limit = 5,
+): Promise<ChannelDailySummaryRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE index_status IN ('pending', 'failed')
+        AND retry_count < 5
+        AND updated_at <= ?1
+      ORDER BY updated_at ASC
+      LIMIT ?2`,
+  )
+    .bind(now - 30_000, limit)
+    .all<ChannelDailySummaryRow>();
+  return result.results ?? [];
+}
+
+export async function listMessagesInSeqRange(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  fromSeq: number,
+  toSeq: number,
+): Promise<MessageRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${MESSAGE_COLUMNS} FROM messages
+      WHERE conversation_id = ?1 AND owner_sub = ?2
+        AND seq >= ?3 AND seq <= ?4
+        AND hidden = 0 AND role IN ('user','assistant')
+      ORDER BY seq ASC`,
+  )
+    .bind(conversationId, ownerSub, fromSeq, toSeq)
+    .all<MessageRow>();
+  return result.results ?? [];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Channel summaries (daily / monthly / yearly)                               */
+/* -------------------------------------------------------------------------- */
+
+export async function getChannelSummary(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  summaryType: string,
+  periodStart: string,
+): Promise<ChannelDailySummaryRow | null> {
+  return env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE owner_sub = ?1 AND conversation_id = ?2 AND summary_type = ?3 AND period_start = ?4
+      LIMIT 1`,
+  )
+    .bind(ownerSub, conversationId, summaryType, periodStart)
+    .first<ChannelDailySummaryRow>();
+}
+
+export async function saveChannelSummary(
+  env: Env,
+  value: {
+    id: string;
+    ownerSub: string;
+    conversationId: string;
+    summaryType: string;
+    periodStart: string;
+    periodEnd: string;
+    localDate: string;
+    content: string;
+    coveredFromSeq: number;
+    coveredToSeq: number;
+    sourceSummaryIds: string[];
+    sourceRevision: string;
+    generationStatus?: string;
+    now: number;
+  },
+): Promise<{ applied: boolean; version: number; skipped: boolean }> {
+  const now = value.now;
+  const existing = await getChannelSummary(
+    env,
+    value.ownerSub,
+    value.conversationId,
+    value.summaryType,
+    value.periodStart,
+  );
+
+  if (
+    existing &&
+    existing.content === value.content &&
+    existing.covered_to_seq === value.coveredToSeq
+  ) {
+    return { applied: false, version: existing.version, skipped: true };
+  }
+
+  const generationStatus = value.generationStatus ?? "pending";
+  const row = await env.DB.prepare(
+    `INSERT INTO channel_daily_summaries
+       (id, owner_sub, conversation_id, summary_type, period_start, period_end,
+        local_date, content, version, covered_from_seq, covered_to_seq,
+        source_summary_ids, index_status, index_error, retry_count,
+        source_revision, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10, ?11, 'pending', '', 0,
+       ?12, ?13, ?14, ?14)
+     ON CONFLICT(owner_sub, conversation_id, summary_type, period_start) DO UPDATE SET
+       content = excluded.content,
+       version = channel_daily_summaries.version + 1,
+       period_end = excluded.period_end,
+       local_date = excluded.local_date,
+       covered_from_seq = excluded.covered_from_seq,
+       covered_to_seq = excluded.covered_to_seq,
+       source_summary_ids = excluded.source_summary_ids,
+       source_revision = excluded.source_revision,
+       index_status = 'pending',
+       index_error = '',
+       retry_count = 0,
+       updated_at = excluded.updated_at,
+       indexed_at = NULL
+     WHERE excluded.covered_to_seq > channel_daily_summaries.covered_to_seq
+     RETURNING version`,
+  )
+    .bind(
+      value.id,
+      value.ownerSub,
+      value.conversationId,
+      value.summaryType,
+      value.periodStart,
+      value.periodEnd,
+      value.localDate,
+      value.content,
+      value.coveredFromSeq,
+      value.coveredToSeq,
+      JSON.stringify(value.sourceSummaryIds),
+      value.sourceRevision,
+      now,
+      now,
+    )
+    .first<{ version: number }>();
+
+  if (row) {
+    if (generationStatus !== "pending") {
+      await env.DB.prepare(
+        `UPDATE channel_daily_summaries SET generation_status = ?2, updated_at = ?3
+          WHERE id = ?1`,
+      )
+        .bind(value.id, generationStatus, now)
+        .run();
+    }
+    return { applied: true, version: row.version, skipped: false };
+  }
+  return { applied: false, version: existing?.version ?? 0, skipped: false };
+}
+
+/** Mark every active summary whose id is listed as compacted (absorbed into a
+ * higher-level summary).  Compacted rows stay in D1 for audit but leave the
+ * active set and the canonical RAG document. */
+export async function markChannelSummariesCompacted(
+  env: Env,
+  ids: string[],
+  now: number,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map((_, i) => `?${i + 2}`).join(",");
+  const result = await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET compacted = 1, updated_at = ?1
+      WHERE id IN (${placeholders})`,
+  )
+    .bind(now, ...ids)
+    .run();
+  return (result.meta.changes ?? 0);
+}
+
+/** Active summaries (successful, not compacted) for a channel, oldest first. */
+export async function listActiveChannelSummaries(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+): Promise<ChannelDailySummaryRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE owner_sub = ?1 AND conversation_id = ?2
+        AND generation_status = 'success'
+        AND compacted = 0
+      ORDER BY period_start ASC,
+               CASE summary_type WHEN 'yearly' THEN 1 WHEN 'monthly' THEN 2 ELSE 3 END,
+               local_date ASC`,
+  )
+    .bind(ownerSub, conversationId)
+    .all<ChannelDailySummaryRow>();
+  return result.results ?? [];
+}
+
+/** Successful daily summaries for a calendar month that are still active. */
+export async function listDailySummariesForMonth(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  yearMonth: string, // '2026-10'
+): Promise<ChannelDailySummaryRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE owner_sub = ?1 AND conversation_id = ?2
+        AND summary_type = 'daily'
+        AND generation_status = 'success'
+        AND compacted = 0
+        AND local_date LIKE ?3 || '-%'
+      ORDER BY local_date ASC`,
+  )
+    .bind(ownerSub, conversationId, yearMonth)
+    .all<ChannelDailySummaryRow>();
+  return result.results ?? [];
+}
+
+/** Successful monthly summaries for a calendar year that are still active. */
+export async function listMonthlySummariesForYear(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  year: string, // '2026'
+): Promise<ChannelDailySummaryRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${CHANNEL_DAILY_COLUMNS} FROM channel_daily_summaries
+      WHERE owner_sub = ?1 AND conversation_id = ?2
+        AND summary_type = 'monthly'
+        AND generation_status = 'success'
+        AND compacted = 0
+        AND period_start LIKE ?3 || '-%'
+      ORDER BY period_start ASC`,
+  )
+    .bind(ownerSub, conversationId, year)
+    .all<ChannelDailySummaryRow>();
+  return result.results ?? [];
+}
+
+export async function setChannelSummaryGenerationStatus(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  summaryType: string,
+  periodStart: string,
+  status: string,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET generation_status = ?5, updated_at = ?6
+      WHERE owner_sub = ?1 AND conversation_id = ?2 AND summary_type = ?3 AND period_start = ?4`,
+  )
+    .bind(ownerSub, conversationId, summaryType, periodStart, status, now)
+    .run();
+}
+
+export async function setChannelSummaryIndexStatusById(
+  env: Env,
+  id: string,
+  status: "indexed" | "failed" | "unconfigured",
+  error = "",
+): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET index_status = ?2, index_error = ?3,
+          indexed_at = CASE WHEN ?2 = 'indexed' THEN ?4 ELSE indexed_at END,
+          updated_at = ?4
+      WHERE id = ?1`,
+  )
+    .bind(id, status, error.slice(0, 500), now)
+    .run();
+}
+
+export async function incrementChannelSummaryRetryById(env: Env, id: string): Promise<number> {
+  const row = await env.DB.prepare(
+    `UPDATE channel_daily_summaries
+      SET retry_count = retry_count + 1, updated_at = ?2
+      WHERE id = ?1
+      RETURNING retry_count`,
+  )
+    .bind(id, Date.now())
+    .first<{ retry_count: number }>();
+  return row?.retry_count ?? 0;
 }
 
 export function mapConversation(row: ConversationRow): Record<string, unknown> {
@@ -732,6 +1246,7 @@ export function mapConversation(row: ConversationRow): Record<string, unknown> {
     created_at: Math.floor(row.created_at / 1000),
     updated_at: Math.floor(row.updated_at / 1000),
     summary_status: row.summary_status,
+    summarized_through: row.summarized_through,
   };
 }
 
@@ -743,6 +1258,7 @@ export function mapMessage(row: MessageRow): Record<string, unknown> {
     agent: row.agent,
     content: row.content,
     data: row.data,
+    seq: row.seq,
     created_at: Math.floor(row.created_at / 1000),
     request_id: row.request_id,
   };

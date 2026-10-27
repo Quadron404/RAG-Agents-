@@ -28,17 +28,23 @@ import {
 import { OAuthError, buildAuthorizationUrl, exchangeCode, fetchJwks, newCodeVerifier, newNonce, newState } from "./google";
 import { handleInternal } from "./internal";
 import { handleChatRoutes, isChatPath } from "./chat/routes";
+import { removeSummaryDoc } from "./chat/search";
 import { resolvePrincipal, type Principal } from "./principal";
 import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
 import { TokenError, verifyIdToken } from "./idtoken";
+import { validateTimezone } from "./timezone";
 import {
   auditLogin,
   consumeOauthState,
   createOauthState,
   createSession,
+  getDeveloperMode,
+  getUserTimezone,
   hashSessionToken,
   revokeSession,
+  setDeveloperMode,
+  setUserTimezone,
   upsertUser,
 } from "./store";
 
@@ -162,7 +168,8 @@ async function authSession(request: Request, env: Env): Promise<Response> {
       email: principal.user.email,
       name: principal.user.name,
       picture: principal.user.picture,
-      timezone: "UTC",
+      timezone: principal.user.timezone ?? "UTC",
+      developer_mode: principal.user.developer_mode ?? 0,
     },
     // The edge does not own the mailbox connection: the backend does, and it is
     // the only thing that can say whether a Gmail grant is live.  Rather than
@@ -183,6 +190,102 @@ async function authLogout(request: Request, env: Env, url: URL): Promise<Respons
   response.headers.append(
     "Set-Cookie",
     clearSessionCookie({ secure: isSecureRequest(env, url) }),
+  );
+  return response;
+}
+
+async function requireSettingsCsrf(request: Request, principal: Principal): Promise<Response | null> {
+  const supplied = request.headers.get(CSRF_HEADER) ?? "";
+  const expected = principal.session.csrf ?? "";
+  if (!expected || !timingSafeEqual(supplied, expected)) {
+    return json({ error: "invalid CSRF token" }, 403);
+  }
+  return null;
+}
+
+async function authSetTimezone(request: Request, env: Env): Promise<Response> {
+  const principal = await resolvePrincipal(env, request);
+  if (!principal) return json({ error: "authentication required" }, 401);
+  const failure = await requireSettingsCsrf(request, principal);
+  if (failure) return failure;
+  let body: { timezone?: unknown } = {};
+  try {
+    body = (await request.json()) ?? {};
+  } catch {
+    /* ignore */
+  }
+  const tz = validateTimezone(body.timezone);
+  const ok = await setUserTimezone(env, principal.user.id, tz);
+  if (!ok) return json({ error: "user not found" }, 404);
+  return json({ ok: true, timezone: tz });
+}
+
+async function authSetDeveloperMode(request: Request, env: Env): Promise<Response> {
+  const principal = await resolvePrincipal(env, request);
+  if (!principal) return json({ error: "authentication required" }, 401);
+  const failure = await requireSettingsCsrf(request, principal);
+  if (failure) return failure;
+  let body: { developer_mode?: unknown } = {};
+  try {
+    body = (await request.json()) ?? {};
+  } catch {
+    /* ignore */
+  }
+  const enabled = body.developer_mode === true || body.developer_mode === 1 || body.developer_mode === "1";
+  const ok = await setDeveloperMode(env, principal.user.id, enabled);
+  if (!ok) return json({ error: "user not found" }, 404);
+  return json({ ok: true, developer_mode: enabled ? 1 : 0 });
+}
+
+async function authResetAccount(request: Request, env: Env): Promise<Response> {
+  const principal = await resolvePrincipal(env, request);
+  if (!principal) return json({ error: "authentication required" }, 401);
+  const failure = await requireSettingsCsrf(request, principal);
+  if (failure) return failure;
+
+  const userId = principal.user.id;
+  const ownerSub = principal.user.google_sub;
+
+  const conversations = await env.DB.prepare(
+    `SELECT id FROM conversations WHERE owner_sub = ?1`,
+  )
+    .bind(ownerSub)
+    .all<{ id: string }>();
+
+  // Delete the user's channel-owned AI Search documents first.  Failures are
+  // recorded and reported rather than swallowed, so the reset never claims
+  // success while indexed data remains reachable.
+  const indexErrors: string[] = [];
+  for (const conversation of conversations.results ?? []) {
+    const result = await removeSummaryDoc(env, ownerSub, conversation.id);
+    if (!result.ok && result.error) {
+      indexErrors.push(`${conversation.id}: ${result.error}`);
+    }
+  }
+
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?1").bind(userId),
+    env.DB.prepare("DELETE FROM login_audit WHERE user_id = ?1").bind(userId),
+    // Deleting conversations cascades to messages, chat requests, daily/monthly/
+    // yearly summaries, summary jobs and idle conversation summaries.
+    env.DB.prepare("DELETE FROM conversations WHERE owner_sub = ?1").bind(ownerSub),
+    env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(userId),
+  ]);
+
+  await revokeSession(env, sessionTokenFromRequest(request));
+
+  const response = json({
+    ok: true,
+    deletedConversations: (conversations.results ?? []).length,
+    indexErrors,
+    note:
+      indexErrors.length > 0
+        ? "Some channel AI Search documents could not be deleted immediately; they are orphaned and will be retried."
+        : undefined,
+  });
+  response.headers.append(
+    "Set-Cookie",
+    clearSessionCookie({ secure: isSecureRequest(env, new URL(request.url)) }),
   );
   return response;
 }
@@ -226,6 +329,21 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+
+    if (path === "/auth/settings/timezone") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return authSetTimezone(request, env);
+    }
+
+    if (path === "/auth/settings/developer-mode") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return authSetDeveloperMode(request, env);
+    }
+
+    if (path === "/auth/settings/reset") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return authResetAccount(request, env);
+    }
 
     // The backend's own routes.  Handled here, never proxied, and behind the
     // shared internal token.

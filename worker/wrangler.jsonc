@@ -42,9 +42,8 @@
     "GOOGLE_TOKEN_URL": "https://oauth2.googleapis.com/token",
     "GOOGLE_JWKS_URL": "https://www.googleapis.com/oauth2/v3/certs",
     "SESSION_TTL_SECONDS": "2592000",
-    // Replace after creating the Google OAuth client and bringing the backend up.
-    "GOOGLE_CLIENT_ID": "REPLACE_ME.apps.googleusercontent.com",
-    "BACKEND_ORIGIN": "https://backend.invalid",
+    "GOOGLE_CLIENT_ID": "330405738751-csdq7250749cpd2kg9orsm7vhnbtb736.apps.googleusercontent.com",
+    "BACKEND_ORIGIN": "https://potential-waddle-xrxgp9g96x63rg-8000.app.github.dev",
     // Durable routines / Codespace lifecycle.  GITHUB_TOKEN is a *secret*
     // (`wrangler secret put GITHUB_TOKEN`) with Codespaces read/write; it is
     // never a var.  CODESPACE_NAME names the Codespace the scheduler may start
@@ -59,13 +58,13 @@
     // Worker-native chat.  Provider secrets are set with `wrangler secret put`;
     // an empty/absent provider key is skipped rather than invented.
     "AI_SEARCH_INSTANCE": "rag-conversations",
-    "AGENT_PROVIDER": "",
-    "AGENT_MODEL": "",
+    "AGENT_PROVIDER": "groq",
+    "AGENT_MODEL": "openai/gpt-oss-20b",
     "AGENT_FALLBACK_MODEL": "",
     "AGENT_MAX_COMPLETION_TOKENS": "2048",
     "AGENT_REASONING_EFFORT": "",
-    "SUMMARY_PROVIDER": "",
-    "SUMMARY_MODEL": "",
+    "SUMMARY_PROVIDER": "groq",
+    "SUMMARY_MODEL": "openai/gpt-oss-20b",
     "CHAT_SUMMARY_IDLE_SECONDS": "60",
     "CHAT_MAX_TOOL_CALLS": "3"
   },

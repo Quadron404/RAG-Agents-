@@ -16,6 +16,7 @@ export interface AuthUser {
   name: string;
   picture: string;
   timezone: string;
+  developer_mode: number;
 }
 
 /**
@@ -53,6 +54,7 @@ interface AuthState {
   refreshGmail: () => Promise<void>;
   connectGmail: () => void;
   disconnectGmail: () => Promise<void>;
+  setDeveloperMode: (enabled: boolean) => Promise<void>;
 }
 
 function normalizeGmail(raw: unknown): GmailStatus {
@@ -73,18 +75,21 @@ export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   csrf: "",
   gmail: { ...DISCONNECTED },
-
   async bootstrap() {
     try {
       const res = await fetch("/auth/session", { credentials: "include" });
       const data = await res.json();
       if (data && data.authenticated) {
+        const user = data.user as AuthUser;
         set({
           ready: true,
           authenticated: true,
-          user: data.user as AuthUser,
+          user,
           csrf: String(data.csrf || ""),
         });
+        // Replace the server's UTC fallback with the browser's real IANA
+        // timezone on first sign-in, so daily summaries use local calendar days.
+        void persistDetectedTimezone(String(user.timezone || ""));
         // The mailbox state is owned by the backend, so it is read on its own.
         await get().refreshGmail();
         return;
@@ -150,7 +155,65 @@ export const useAuth = create<AuthState>((set, get) => ({
     set({ authenticated: false, user: null, csrf: "", gmail: { ...DISCONNECTED } });
     location.assign("/");
   },
+
+  async setDeveloperMode(enabled: boolean) {
+    try {
+      const res = await fetch("/auth/settings/developer-mode", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "x-rag-csrf": get().csrf,
+        },
+        body: JSON.stringify({ developer_mode: enabled ? 1 : 0 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        set((state) => ({
+          user: state.user ? { ...state.user, developer_mode: data.developer_mode ?? Number(enabled) } : state.user,
+        }));
+      }
+    } catch {
+      /* best effort */
+    }
+  },
 }));
+
+/** The owner's IANA timezone, detected from the browser and persisted to the
+ * backend.  ``UTC`` is the documented server-side fallback; a real browser
+ * timezone replaces it on first sign-in so daily summaries use local calendar
+ * days rather than UTC days. */
+export function detectBrowserTimezone(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof tz === "string" && tz ? tz : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Persist the detected browser timezone, but only when the server still holds
+ * the ``UTC`` fallback (i.e. the owner has not chosen one explicitly).  Best
+ * effort: a failure leaves the server default in place and does not block sign
+ * in. */
+async function persistDetectedTimezone(current: string) {
+  if (current && current !== "UTC") return;
+  const tz = detectBrowserTimezone();
+  if (!tz || tz === "UTC") return;
+  try {
+    await fetch("/auth/settings/timezone", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "x-rag-csrf": useAuth.getState().csrf,
+      },
+      body: JSON.stringify({ timezone: tz }),
+    });
+  } catch {
+    /* the server's UTC fallback remains; a later load can retry */
+  }
+}
 
 /** The CSRF token for the current session, for the shared `apiFetch` helper. */
 export function currentCsrf(): string {

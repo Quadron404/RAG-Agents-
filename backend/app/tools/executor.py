@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import AsyncIterator, Dict, Optional
 
 from ..config import Settings
+from ..email.mail_tool import MAIL_TOOL_NAMES, run_mail_tool
 from ..email.tools import NOTIFICATION_TOOL_NAMES, run_notification_tool
 from ..routines.tools import ROUTINE_TOOL_NAMES, run_routine_tool
 from .local import LocalExecutor
@@ -43,6 +44,7 @@ class Executor:
         computer: Optional[WorkspaceClient] = None,
         restricted=None,
         db=None,
+        auth_service=None,
     ):
         self.settings = settings
         self.local = LocalExecutor(settings)
@@ -51,8 +53,10 @@ class Executor:
         self.restricted = restricted
         # The owner-notification tools need the database (drafts, sends, audit).
         # It is optional so a bare executor used outside the app still works; a
-        # notification call without it fails closed.
+        # notification or mail call without it fails closed.
         self.db = db
+        # Mail sending needs the auth service to read encrypted tokens server-side.
+        self.auth_service = auth_service
 
     def use_computer(self, computer: Optional[WorkspaceClient]) -> None:
         self.computer = computer
@@ -98,6 +102,20 @@ class Executor:
                 }
             else:
                 yield await run_notification_tool(name, args, self.settings, self.db)
+            return
+
+        # mail_tool_call sends an email to the signed-in user through their own
+        # connected Gmail.  It needs both the database (to resolve the verified
+        # owner) and the auth service (to read encrypted tokens server-side).
+        if name in MAIL_TOOL_NAMES:
+            if self.db is None or self.auth_service is None:
+                yield {
+                    "type": "result",
+                    "output": "",
+                    "error": "email is unavailable: the server is not configured for sending",
+                }
+            else:
+                yield await run_mail_tool(name, args, self.settings, self.db, self.auth_service)
             return
 
         # Routine management and the clock are served entirely by this process

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Cloud, ExternalLink, Mail } from "lucide-react";
 import { usePrefs, useUi, type Appearance } from "../store";
 import { useAuth, type GmailStatus } from "../auth";
+import { useCore } from "../core";
 import { haptic, hapticSupported } from "../lib/haptics";
 import { Switch, Sheet } from "../components/ui";
 
@@ -86,6 +87,8 @@ export function SettingsView() {
   const setAppearance = usePrefs((s) => s.setAppearance);
   const setHaptics = usePrefs((s) => s.setHaptics);
   const setCompact = usePrefs((s) => s.setCompact);
+  const developerMode = useAuth((s) => s.user?.developer_mode === 1);
+  const setDeveloperMode = useAuth((s) => s.setDeveloperMode);
   const toast = useUi((s) => s.toast);
   const supportsHaptics = hapticSupported();
 
@@ -165,6 +168,23 @@ export function SettingsView() {
         </div>
 
         <div className="setgroup">
+          <div className="setgroup__head">Developer Mode</div>
+          <div className="setrow">
+            <div className="setrow__meta">
+              <div className="setrow__label">Developer Mode</div>
+              <div className="setrow__sub">
+                Manual history generation; no automatic daily or 30-day summaries.
+              </div>
+            </div>
+            <Switch
+              on={developerMode}
+              onChange={setDeveloperMode}
+              label={developerMode ? "On" : "Off"}
+            />
+          </div>
+        </div>
+
+        <div className="setgroup">
           <div className="setgroup__head">About</div>
           <div className="setrow">
             <div className="about-logo">
@@ -194,14 +214,19 @@ export function SettingsSheet() {
   const setAppearance = usePrefs((s) => s.setAppearance);
   const setHaptics = usePrefs((s) => s.setHaptics);
   const setCompact = usePrefs((s) => s.setCompact);
+  const developerMode = useAuth((s) => s.user?.developer_mode === 1);
+  const setDeveloperMode = useAuth((s) => s.setDeveloperMode);
   const [confirm, setConfirm] = useState(false);
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
 
-  const reset = () => {
+  const reset = async () => {
+    const ok = await useCore.getState().resetAccount();
+    if (!ok) return;
     localStorage.removeItem("rag.prefs.v1");
     localStorage.removeItem("rag.ignores.v1");
     localStorage.removeItem("rag.pins");
+    localStorage.removeItem("rag.active-thread.v1");
     window.dispatchEvent(new StorageEvent("storage"));
     location.reload();
   };
@@ -272,6 +297,21 @@ export function SettingsSheet() {
       <SheetDivider label="Mailbox" />
       <MailboxRow />
 
+      <SheetDivider label="Developer Mode" />
+      <div className="setrow">
+        <div className="setrow__meta">
+          <div className="setrow__label">Developer Mode</div>
+          <div className="setrow__sub">
+            Manual history generation; no automatic daily or 30-day summaries.
+          </div>
+        </div>
+        <Switch
+          on={developerMode}
+          onChange={setDeveloperMode}
+          label={developerMode ? "On" : "Off"}
+        />
+      </div>
+
       <SheetDivider label="Danger zone" />
       <ConfirmRow
         confirm={confirm}
@@ -309,7 +349,7 @@ function ConfirmRow({
         <div className="setrow__label" style={{ color: "var(--red)" }}>
           Reset everything?
         </div>
-        <div className="setrow__sub">Preferences, pins and archives are cleared.</div>
+        <div className="setrow__sub">Deletes all your chats, history and indexed documents from the server.</div>
       </div>
       <button className="btn btn--danger" onClick={onReset}>
         Reset

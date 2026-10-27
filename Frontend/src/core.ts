@@ -1,7 +1,6 @@
 import { create } from "zustand";
-import { useUi } from "./store";
+import { useUi, loadLastActiveThread, saveLastActiveThread, type ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
 import { currentCsrf, currentUserId } from "./auth";
-import type { ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
 
 /* ============================================================================
    Backend addressing — same-origin in dev (Vite proxy) and production
@@ -102,7 +101,15 @@ interface CoreState {
 
   connect: () => void;
   refreshThreads: () => Promise<void>;
+  restoreActiveThread: (threads: Thread[]) => Promise<void>;
   newChat: () => Promise<void>;
+  generateHistory: (threadId: string) => Promise<void>;
+  generateHistoryStatus: "idle" | "processing" | "success" | "error";
+  generateHistoryError: string | null;
+  generateHistorySource: { role: string; content: string; seq: number }[] | null;
+  generateHistorySummary: string | null;
+  setGenerateHistoryStatus: (s: "idle" | "processing" | "success" | "error", e?: string | null) => void;
+  resetAccount: () => Promise<boolean>;
   openThread: (id: string) => Promise<void>;
   loadMessages: (id: string) => Promise<void>;
   //: Returns false when the message was not dispatched (not connected, or a run
@@ -688,6 +695,10 @@ export const useCore = create<CoreState>((set, get) => ({
   status: "connecting",
   userId: currentUserId(),
   threads: [],
+  generateHistoryStatus: "idle",
+  generateHistoryError: null,
+  generateHistorySource: null,
+  generateHistorySummary: null,
   activeThreadId: null,
   messages: {},
   run: null,
@@ -744,34 +755,147 @@ export const useCore = create<CoreState>((set, get) => ({
       const r = await apiFetch(`/threads?user_id=${currentUserId()}`);
       const d = await r.json();
       set({ threads: d.threads || [] });
-      if (!get().activeThreadId && d.threads?.length) {
-        get().openThread(d.threads[0].thread_id);
+      if (!get().activeThreadId) {
+        await get().restoreActiveThread(d.threads || []);
       }
     } catch {
       /* retry on next connect */
     }
   },
 
-  async newChat() {
+  /** Restore the user's last active channel without creating one.
+   *
+   * The backend's /session/active-thread is the source of truth.  A localStorage
+   * hint is used only to restore the UI instantly while the server round trip is
+   * in flight, and it is always verified against the server's thread list so a
+   * stale or tampered id can never resurrect a channel the user no longer has.
+   * When nothing is set and threads exist, the most recent one is opened -- but
+   * never a brand-new channel: creation is an explicit user action (newChat).
+   */
+  async restoreActiveThread(threads: Thread[]) {
+    // 1. Server source of truth.
     try {
-      const r = await apiFetch("/threads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: currentUserId(), title: "New conversation" }),
-      });
-      const d = await r.json();
-      set({ activeThreadId: d.thread_id, run: null, screen: null });
-      await get().refreshThreads();
-      useUi.getState().setView("chat");
+      const r = await apiFetch("/session/active-thread");
+      const d = (await r.json()) as { active_thread_id?: string | null };
+      const serverThread = d.active_thread_id || null;
+      if (serverThread && threads.some((t) => t.thread_id === serverThread)) {
+        set({ activeThreadId: serverThread });
+        await get().loadMessages(serverThread);
+        return;
+      }
     } catch {
-      useUi.getState().toast("Could not create a new conversation.", "err");
+      /* fall through to the localStorage hint below */
+    }
+
+    // 2. Browser-storage hint, verified against the server's thread list.
+    const hint = loadLastActiveThread();
+    if (hint && threads.some((t) => t.thread_id === hint)) {
+      set({ activeThreadId: hint });
+      await get().loadMessages(hint);
+      return;
+    }
+
+    // 3. Nothing restored: fall back to the most recent thread, if any.
+    if (!get().activeThreadId && threads.length) {
+      get().openThread(threads[0].thread_id);
     }
   },
 
+    async newChat() {
+      try {
+        const r = await apiFetch("/threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: currentUserId(), title: "New conversation" }),
+        });
+        const d = await r.json();
+        set({ activeThreadId: d.thread_id, run: null, screen: null });
+        saveLastActiveThread(d.thread_id);
+        await get().refreshThreads();
+        useUi.getState().setView("chat");
+      } catch {
+        useUi.getState().toast("Could not create a new conversation.", "err");
+      }
+    },
+
+    async generateHistory(threadId: string) {
+      if (!threadId) return;
+      set({ generateHistoryStatus: "processing", generateHistoryError: null });
+      try {
+        const r = await apiFetch(`/threads/${threadId}/generate-history`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          set({ generateHistoryStatus: "error", generateHistoryError: d.error || "Generation failed", generateHistorySource: null });
+          useUi.getState().toast(d.error || "Could not generate history.", "err");
+          return;
+        }
+        set({ generateHistoryStatus: "success", generateHistoryError: null, generateHistorySource: d.sourceMessages ?? null, generateHistorySummary: d.summary ?? null });
+        useUi.getState().toast("History generated successfully.", "ok");
+      } catch (e) {
+        set({ generateHistoryStatus: "error", generateHistoryError: String(e) });
+        useUi.getState().toast("Could not generate history.", "err");
+      }
+    },
+
+    setGenerateHistoryStatus(s: "idle" | "processing" | "success" | "error", e?: string | null) {
+      set({ generateHistoryStatus: s, generateHistoryError: e ?? null });
+    },
+
+    async resetAccount() {
+      try {
+        const r = await apiFetch("/auth/settings/reset", { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          useUi.getState().toast(d.error || "Reset failed.", "err");
+          return false;
+        }
+        if (d.indexErrors && d.indexErrors.length) {
+          useUi.getState().toast("Reset complete. Some indexed documents could not be removed immediately and will be retried.", "ok");
+        } else {
+          useUi.getState().toast("Your account data has been reset.", "ok");
+        }
+      } catch (e) {
+        useUi.getState().toast(String(e || "Reset failed."), "err");
+        return false;
+      }
+
+      // Clear every piece of frontend-cached user data so nothing survives a
+      // reload.  The server already deleted the canonical records.
+      set({
+        threads: [],
+        messages: {},
+        activeThreadId: null,
+        run: null,
+        screen: null,
+        generateHistoryStatus: "idle",
+        generateHistoryError: null,
+        generateHistorySource: null,
+        generateHistorySummary: null,
+      });
+      localStorage.removeItem("rag.prefs.v1");
+      localStorage.removeItem("rag.ignores.v1");
+      localStorage.removeItem("rag.pins");
+      localStorage.removeItem("rag.active-thread.v1");
+      window.dispatchEvent(new StorageEvent("storage"));
+      location.reload();
+      return true;
+    },
+
   async openThread(id) {
     set({ activeThreadId: id });
+    saveLastActiveThread(id);
     useUi.getState().setView("chat");
     await get().loadMessages(id);
+    // Persist the active channel server-side so a refresh or reopen on another
+    // device restores the same conversation.  Ownership is enforced by the
+    // backend; a 404 here just means the thread doesn't belong to this user.
+    try {
+      await apiFetch(`/threads/${encodeURIComponent(id)}/activate`, {
+        method: "POST",
+      });
+    } catch {
+      /* the hint in localStorage still allows a fast local restore next time */
+    }
   },
 
   async loadMessages(id) {
@@ -808,6 +932,7 @@ export const useCore = create<CoreState>((set, get) => ({
       agent: "user",
       content: text,
       data: "{}",
+      seq: 0,
       created_at: Date.now() / 1000,
       pending: true,
     });

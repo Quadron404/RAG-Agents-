@@ -130,3 +130,70 @@ export const resumeRoutine = (id: string) =>
 
 export const deleteRoutine = (id: string) =>
   lifecycle(`/routines/${encodeURIComponent(id)}`, "DELETE");
+
+/* ============================================================================
+   Connector approvals — pending Allow/Deny cards the owner must action before
+   any connector (Gmail, Drive, ...) runs.  These are scoped to the session;
+   the backend enforces ownership.
+   ========================================================================== */
+
+export interface ConnectorApproval {
+  approval_id: string;
+  connector: string;
+  action: string;
+  arguments: Record<string, unknown>;
+  expires_at: number;
+  created_at: number;
+  routine_id: string;
+  routine_run_id: string;
+  status: string;
+}
+
+export interface ConnectorApprovalsResult {
+  ok: boolean;
+  error: string;
+  approvals: ConnectorApproval[];
+}
+
+export async function fetchConnectorApprovals(): Promise<ConnectorApprovalsResult> {
+  try {
+    const response = await apiFetch("/routines/connectors/approvals");
+    const data = await readJson(response);
+    return {
+      ok: Boolean(data.ok),
+      error: typeof data.error === "string" ? data.error : "",
+      approvals: Array.isArray(data.approvals) ? (data.approvals as ConnectorApproval[]) : [],
+    };
+  } catch {
+    return { ok: false, error: "Could not reach the backend.", approvals: [] };
+  }
+}
+
+export async function executeConnectorApproval(approvalId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const response = await apiFetch("/routines/connectors/approvals/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_id: approvalId }),
+    });
+    const data = await readJson(response);
+    return { ok: Boolean(data.ok), error: typeof data.error === "string" ? data.error : undefined };
+  } catch {
+    return { ok: false, error: "Could not reach the backend." };
+  }
+}
+
+export async function denyConnectorApproval(approvalId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const response = await apiFetch("/routines/connectors/approvals/deny", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_id: approvalId }),
+    });
+    const data = await readJson(response);
+    return { ok: Boolean(data.ok), error: typeof data.error === "string" ? data.error : undefined };
+  } catch {
+    return { ok: false, error: "Could not reach the backend." };
+  }
+}
+

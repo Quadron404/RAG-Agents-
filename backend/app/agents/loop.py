@@ -64,10 +64,11 @@ async def run_agent_loop(
 
     final_text = ""
     tool_count = 0
-    # Aligned model: tools are NOT callable directly — the model only ever emits
-    # text (plus tool calls rendered as `[TOOL name {json}]` text). The system parses
-    # that text and performs the action on the model's behalf.
-    stream_tools: List[Tool] = []
+    # mail_tool_call is a real, model-callable tool: its schema is sent to the
+    # provider so the model can invoke it through the provider's actual tool-calling
+    # mechanism (a ToolCallEvent), not by printing a fake call as ordinary text.
+    # Every other tool keeps the inline [TOOL name {json}] text convention.
+    stream_tools: List[Tool] = [t for t in tools if t.name == "mail_tool_call"]
 
     for _ in range(max_iters):
         tool_calls: List[ToolCall] = []

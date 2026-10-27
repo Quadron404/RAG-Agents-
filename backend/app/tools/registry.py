@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
+from ..email.mail_tool import mail_tools
 from ..email.tools import notification_tools
 from ..routines.tools import routine_tools
 from .base import Tool
@@ -100,7 +101,7 @@ def worker_tools() -> List[Tool]:
                 "required": ["action"],
             },
         ),
-    ] + routine_tools() + notification_tools()
+    ] + routine_tools() + notification_tools() + mail_tools()
 
 
 def commander_tools() -> List[Tool]:

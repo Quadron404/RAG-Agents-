@@ -32,6 +32,22 @@ OWNER_NOTIFICATION_POLICY = (
     "unless the send tool has confirmed it; a draft is not a delivery."
 )
 
+#: The mail_tool_call rule: the AI may send an email to itself (the signed-in
+#: user) through the user's own connected Gmail.  The recipient is fixed to the
+#: verified Google account email and is resolved server-side -- the model cannot
+#: choose, supply, modify or override it, and the tool takes only ``content``.
+#: The send is claimed only after the Gmail API confirms delivery.
+MAIL_TOOL_POLICY = (
+    "You MUST use mail_tool_call to send an email to yourself (the signed-in user) when asked to send mail. "
+    "Do not merely draft the email or describe how to send it -- call the tool so it is actually delivered. "
+    "The tool takes exactly one argument, ``content`` (the message body), and nothing else. "
+    "The recipient is fixed to your verified Google account email and is decided by the backend, never by you: "
+    "you cannot name a recipient, add a Cc or Bcc, set the From or Reply-To, or send to anyone else. "
+    "The message is sent through your own connected Gmail account, which requires the separate gmail.send consent; "
+    "if you have not connected a mailbox with sending permission the send is refused. "
+    "Send the call as a real tool call, and never claim the email was sent unless the tool result confirms it."
+)
+
 
 PLAN_PROMPT = (
     "You are Commander, the coordinating brain of a multi-agent workforce. "
@@ -65,12 +81,14 @@ WORKER_PROMPT = (
     "  [TOOL web_search {\"query\":\"latest linux kernel\"}]\n"
     "  [TOOL draft_owner_notification {\"subject\":\"Report ready\",\"body\":\"...\"}]\n"
     "  [TOOL send_owner_notification {\"draft_id\":\"...\"}]\n"
+    "  [TOOL mail_tool_call {\"content\":\"...\"}]\n"
     "The system then executes it and returns the result. The restricted browser keeps one "
     "session across calls, so state persists. A refused destination is a real refusal, not "
     "a transient error: do not retry it, and do not try to reach it another way. Do not "
     "fake results -- only claim you did something after the system confirms it. Execute "
     "the assigned task to completion, then report your results as a concise factual "
     "summary (facts, numbers, code, or file paths), with no remaining [TOOL ...] markers."
+    + MAIL_TOOL_POLICY
 )
 
 SYNTH_PROMPT = (

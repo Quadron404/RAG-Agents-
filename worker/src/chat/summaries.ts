@@ -95,6 +95,13 @@ async function summarizeWithProvider(env: Env, transcript: string): Promise<stri
   return cleaned;
 }
 
+async function isDeveloperMode(env: Env, ownerSub: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT developer_mode FROM users WHERE google_sub = ?1")
+    .bind(ownerSub)
+    .first<{ developer_mode: number }>();
+  return (row?.developer_mode ?? 0) === 1;
+}
+
 export async function runSummaryTick(
   env: Env,
   now: number,
@@ -106,6 +113,10 @@ export async function runSummaryTick(
 
   const due = await listDueConversations(env, now, idleMs, 10);
   for (const conversation of due) {
+    // Developer Mode suppresses automatic transcript summarisation entirely;
+    // only the explicit Generate History button (or the daily scheduler in
+    // normal mode) may summarise a developer-mode channel.
+    if (await isDeveloperMode(env, conversation.owner_sub)) continue;
     const coveredTo = await lastVisibleSeq(env, conversation.id);
     if (coveredTo <= conversation.summarized_through) continue;
     await enqueueSummaryJob(env, conversation, coveredTo, now);

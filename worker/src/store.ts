@@ -16,6 +16,8 @@ export interface UserRow {
   email_verified: number;
   name: string;
   picture: string;
+  timezone: string;
+  developer_mode: number;
   created_at: number | null;
   updated_at: number | null;
 }
@@ -50,7 +52,7 @@ function ttlSeconds(env: Env): number {
 // --- users ---------------------------------------------------------------
 
 const USER_COLUMNS =
-  "id, google_sub, email, email_verified, name, picture, created_at, updated_at";
+  "id, google_sub, email, email_verified, name, picture, timezone, developer_mode, created_at, updated_at";
 
 export async function getUserById(env: Env, id: string): Promise<UserRow | null> {
   return env.DB.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?1`)
@@ -77,15 +79,15 @@ export async function upsertUser(
   const now = Date.now();
   const id = crypto.randomUUID();
   const row = await env.DB.prepare(
-    `INSERT INTO users (id, google_sub, email, email_verified, name, picture, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-     ON CONFLICT(google_sub) DO UPDATE SET
-       email = excluded.email,
-       email_verified = excluded.email_verified,
-       name = excluded.name,
-       picture = excluded.picture,
-       updated_at = excluded.updated_at
-     RETURNING ${USER_COLUMNS}`,
+    `INSERT INTO users (id, google_sub, email, email_verified, name, picture, timezone, developer_mode, created_at, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'UTC', 1, ?7, ?7)
+      ON CONFLICT(google_sub) DO UPDATE SET
+        email = excluded.email,
+        email_verified = excluded.email_verified,
+        name = excluded.name,
+        picture = excluded.picture,
+        updated_at = excluded.updated_at
+      RETURNING ${USER_COLUMNS}`,
   )
     .bind(
       id,
@@ -230,4 +232,43 @@ export async function auditLogin(
   )
     .bind(googleSub, userId, outcome, reason, Date.now())
     .run();
+}
+
+/**
+ * The owner's IANA timezone, validated against the IANA database.  Anything
+ * unknown degrades to ``UTC``, the documented fallback.
+ */
+export async function getUserTimezone(env: Env, userId: string): Promise<string> {
+  const row = await env.DB.prepare("SELECT timezone FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ timezone: string }>();
+  return row?.timezone ?? "UTC";
+}
+
+export async function setUserTimezone(
+  env: Env,
+  userId: string,
+  timezone: string,
+): Promise<boolean> {
+  const result = await env.DB.prepare("UPDATE users SET timezone = ?2, updated_at = ?3 WHERE id = ?1")
+    .bind(userId, timezone, Date.now())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** 1 when Developer Mode is on (manual history, no automatic summaries). */
+export async function getDeveloperMode(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT developer_mode FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ developer_mode: number }>();
+  return (row?.developer_mode ?? 0) === 1;
+}
+
+export async function setDeveloperMode(env: Env, userId: string, enabled: boolean): Promise<boolean> {
+  const result = await env.DB.prepare(
+    "UPDATE users SET developer_mode = ?2, updated_at = ?3 WHERE id = ?1",
+  )
+    .bind(userId, enabled ? 1 : 0, Date.now())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }

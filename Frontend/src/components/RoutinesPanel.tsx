@@ -13,13 +13,16 @@ import { useUi } from "../store";
 import { relativeTime, timeStr } from "../lib/format";
 import {
   deleteRoutine,
+  fetchConnectorApprovals,
   fetchRoutineRuns,
   fetchRoutines,
   pauseRoutine,
   resumeRoutine,
+  type ConnectorApproval,
   type Routine,
   type RoutineRun,
 } from "../lib/routines";
+import { ApprovalsList } from "./ApprovalCard";
 import { IconButton, Pill, Spinner } from "./ui";
 
 /* ============================================================================
@@ -43,7 +46,7 @@ type PanelState =
   | { kind: "loading" }
   | { kind: "unavailable"; error: string }
   | { kind: "error"; error: string }
-  | { kind: "ready"; routines: Routine[] };
+  | { kind: "ready"; routines: Routine[]; approvals: ConnectorApproval[] };
 
 /** "in 4h", "in 2d", or a date once it is far enough out to read better. */
 function untilTime(ts: number | null): string {
@@ -78,13 +81,20 @@ export function RoutinesPanel() {
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });
-    const result = await fetchRoutines();
-    if (!result.available) {
-      setState({ kind: "unavailable", error: result.error });
-    } else if (!result.ok) {
-      setState({ kind: "error", error: result.error });
+    const [routinesResult, approvalsResult] = await Promise.all([
+      fetchRoutines(),
+      fetchConnectorApprovals(),
+    ]);
+    if (!routinesResult.available) {
+      setState({ kind: "unavailable", error: routinesResult.error });
+    } else if (!routinesResult.ok) {
+      setState({ kind: "error", error: routinesResult.error });
     } else {
-      setState({ kind: "ready", routines: result.routines });
+      setState({
+        kind: "ready",
+        routines: routinesResult.routines,
+        approvals: approvalsResult.ok ? approvalsResult.approvals : [],
+      });
     }
   }, []);
 
@@ -131,38 +141,41 @@ export function RoutinesPanel() {
     );
   }
 
-  if (!state.routines.length) {
+  if (state.kind === "ready") {
+    const { routines, approvals } = state;
     return (
-      <div className="routines__state routines__state--empty">
-        <CalendarClock size={22} />
-        <div>
-          <div className="routines__state-title">Nothing scheduled yet</div>
-          <div className="routines__state-sub">
-            Ask in Chat to set something recurring — for example,
-            <span className="routines__example">
-              “every weekday at 8am, check my inbox and post a summary.”
-            </span>
-          </div>
+      <div className="routines">
+        {approvals.length ? (
+          <ApprovalsList approvals={approvals} onResolved={load} />
+        ) : null}
+        <div className="routines__bar">
+          <span className="routines__count">
+            {routines.filter((r) => r.enabled).length} active · {routines.length} total
+          </span>
+          <IconButton icon={RefreshCw} onClick={load} title="Refresh" ariaLabel="Refresh routines" />
         </div>
+        <div className="routines__list">
+          {routines.map((routine) => (
+            <RoutineRow key={routine.routine_id} routine={routine} onChanged={load} />
+          ))}
+        </div>
+        {!routines.length && !approvals.length ? (
+          <div className="routines__state routines__state--empty">
+            <CalendarClock size={22} />
+            <div>
+              <div className="routines__state-title">Nothing scheduled yet</div>
+              <div className="routines__state-sub">
+                Ask in Chat to set something recurring — for example,
+                <span className="routines__example">
+                  “every weekday at 8am, check my inbox and post a summary.”
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
-
-  return (
-    <div className="routines">
-      <div className="routines__bar">
-        <span className="routines__count">
-          {state.routines.filter((r) => r.enabled).length} active · {state.routines.length} total
-        </span>
-        <IconButton icon={RefreshCw} onClick={load} title="Refresh" ariaLabel="Refresh routines" />
-      </div>
-      <div className="routines__list">
-        {state.routines.map((routine) => (
-          <RoutineRow key={routine.routine_id} routine={routine} onChanged={load} />
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function RoutineRow({ routine, onChanged }: { routine: Routine; onChanged: () => void }) {

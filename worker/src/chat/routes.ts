@@ -11,6 +11,7 @@ import { CSRF_HEADER, SAFE_METHODS } from "../env";
 import { timingSafeEqual } from "../encoding";
 import { json } from "../http";
 import { resolvePrincipal, type Principal } from "../principal";
+import { localDay } from "../timezone";
 import { selectChatProvider, providerStatus } from "./providers";
 import {
   autoTitle,
@@ -25,6 +26,7 @@ import {
   insertHiddenToolCall,
   insertHiddenToolResult,
   insertMessage,
+  lastVisibleSeq,
   listConversations,
   listMessages,
   mapConversation,
@@ -41,8 +43,24 @@ import {
   type ConversationRow,
   type MessageRow,
 } from "./store";
+import { generateIncrementalHistory } from "./history";
 import { removeSummaryDoc, searchConfigured } from "./search";
 import { executeHistoryTool, HISTORY_TOOL } from "./tools";
+import {
+  executeRoutineTool,
+  isRoutineTool,
+  ROUTINE_TOOLS,
+} from "./routine-tools";
+import {
+  executeMailToolCall,
+  isMailToolCall,
+  MAIL_TOOL_CALL_TOOL,
+} from "./mail-tool";
+import {
+  executeConnectorTool,
+  isConnectorTool,
+  CONNECTOR_TOOLS,
+} from "./connector-tools";
 import {
   ProviderError,
   type LlmMessage,
@@ -51,7 +69,30 @@ import {
 } from "./types";
 
 export const FIRST_TURN_INSTRUCTION =
-  "You are Chief, RAG Agents' central AI commander. Introduce yourself to the user and guide other AI agents in completing tasks.";
+  "You are Chief, RAG Agents' central AI commander. Introduce yourself to the user and guide other AI agents in completing tasks.\n\n" +
+  "## Routines (create_routine, list_routines, get_routine, pause_routine, resume_routine, delete_routine)\n" +
+  "When the user asks you to do something repeatedly, set up a routine:\n" +
+  "1. Identify the recurring task and intended result.\n" +
+  "2. Write detailed, self-contained instructions for each run covering: OBJECTIVE, INPUTS, WORKFLOW, VERIFICATION, OUTPUT, CONSTRAINTS, FAILURE HANDLING.\n" +
+  "3. Ask for the schedule if it is not stated: how often (daily/monthly), at what time (HH:MM), and for monthly routines which day of month (1-28).\n" +
+  "4. Call create_routine with a name, the full task_prompt, schedule_type, time, and optionally day_of_month and timezone.\n" +
+  "5. Return the actual creation result so the user sees the routine card.\n" +
+  "Do not invent missing scheduling information; ask the user when needed.\n\n" +
+  "## History retrieval (tool_call_history)\n" +
+  "When the user's answer depends on earlier preferences, decisions, configurations, errors, plans, rejected options, or other historical facts that are not already established in the current conversation, you MUST call tool_call_history with a precise query before answering.\n" +
+  "Examples:\n" +
+  "- \"What do I like?\" → retrieve historical preferences.\n" +
+  "- \"Which provider did we reject last month?\" → retrieve past decisions.\n" +
+  "- \"What error did we see with the database yesterday?\" → retrieve past errors.\n" +
+  "Do NOT call history for ordinary general-knowledge questions or when the current conversation already provides sufficient evidence.\n" +
+  "Use the actual returned evidence. Distinguish confirmed decisions from proposals. Acknowledge missing or contradictory evidence without inventing facts.\n" +
+  "Synthesize a natural, concise answer from the evidence. Do NOT dump raw search results, internal JSON, " +
+  "timestamps, or unrelated metadata into your response.\n" +
+  "Never treat a newer timestamp as proof that an earlier decision was replaced.\n\n" +
+  "## Email (mail_tool_call)\n" +
+  "When the user asks you to send an email, call mail_tool_call with the message body. " +
+  "The recipient is fixed to your verified Google account email and cannot be changed. " +
+  "Never claim the email was sent unless the tool result confirms it."
 
 const MAX_CONTENT_CHARS = 100_000;
 const MAX_TOOL_ITERATIONS = 8;
@@ -529,7 +570,13 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
     let remainingCalls = maxCalls;
     let toolsAllowed = maxCalls > 0;
     const rows = await listMessages(env, ownerSub, conversation.id);
-    const llm = llmMessagesFrom(rows, assistantMessage.id, context.firstTurn);
+    // Messages already covered by history (seq <= summarized_through) are NOT
+    // sent to Chief directly.  Chief must use the history tool to retrieve them.
+    const summarizedThrough = conversation.summarized_through;
+    const unsummarizedRows = summarizedThrough > 0
+      ? rows.filter((r) => r.seq > summarizedThrough)
+      : rows;
+    const llm = llmMessagesFrom(unsummarizedRows, assistantMessage.id, context.firstTurn);
     const usedCallIds = new Set<string>();
     let finalText = "";
 
@@ -537,9 +584,12 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       let currentText = "";
       const calls: ToolCall[] = [];
       try {
+        const chatTools = toolsAllowed
+          ? [...ROUTINE_TOOLS, HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, ...CONNECTOR_TOOLS]
+          : [];
         for await (const event of provider.provider.stream(
           llm,
-          toolsAllowed ? [HISTORY_TOOL] : [],
+          chatTools,
           signal,
         )) {
           if (event.type === "text") {
@@ -586,6 +636,8 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       });
 
       for (const call of calls) {
+        // Never execute a tool merely because plain assistant text claims to call it.
+        // Only provider-emitted tool_call events reach here.
         const parsed = parseData(call.arguments || "{}");
         const query = typeof parsed.query === "string" ? parsed.query : "";
         emit.send("tool", {
@@ -594,18 +646,48 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
           status: "start",
           query,
         });
+
+        const assistantContent = currentText;
         let output: string;
         let errorCode = "";
         let resultCount = 0;
-        if (remainingCalls <= 0) {
-          output = "No further history searches are allowed in this turn.";
-          errorCode = "tool_limit";
-        } else {
-          remainingCalls -= 1;
-          const result = await executeHistoryTool(env, ownerSub, call);
+        let searched = false;
+
+        if (isRoutineTool(call.name)) {
+          // Routine tools are Worker-native and run on D1 directly.
+          const result = await executeRoutineTool(
+            env,
+            ownerSub,
+            principal.user.id,
+            conversation.id,
+            principal.user.timezone ?? "UTC",
+            call,
+          );
           output = result.output;
           errorCode = result.error ?? "";
-          resultCount = result.resultCount;
+        } else if (isMailToolCall(call.name)) {
+          // Mail sending is backend-owned (encrypted Gmail tokens); proxy to it.
+          const result = await executeMailToolCall(env, ownerSub, principal.user.email, call);
+          output = result.output;
+          errorCode = result.error ?? "";
+        } else if (isConnectorTool(call.name)) {
+          // Connector actions create a pending approval; nothing executes yet.
+          const result = await executeConnectorTool(env, ownerSub, principal.user.id, call);
+          output = result.output;
+          errorCode = result.error ?? "";
+        } else {
+          // Worker-native history tool.
+          if (remainingCalls <= 0) {
+            output = "No further tool calls are allowed in this turn.";
+            errorCode = "tool_limit";
+          } else {
+            remainingCalls -= 1;
+            const result = await executeHistoryTool(env, ownerSub, conversation.id, call);
+            output = result.output;
+            errorCode = result.error ?? "";
+            resultCount = result.resultCount;
+            searched = result.searched;
+          }
         }
         await insertHiddenToolResult(env, {
           conversationId: conversation.id,
@@ -628,6 +710,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
           query,
           result_count: resultCount,
           error: errorCode,
+          searched,
         });
       }
 
@@ -734,6 +817,89 @@ export async function handleChatRoutes(
       return startTurn(request, env, principal, conversation);
     }
     return json({ error: "method not allowed" }, 405);
+  }
+
+  if (segments.length === 3 && segments[2] === "generate-history") {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    const conversation = await getConversation(env, principal.user.google_sub, conversationId);
+    if (!conversation) return json({ error: "conversation not found" }, 404);
+    const ownerSub = principal.user.google_sub;
+    const now = nowMs();
+    const tzRow = await env.DB.prepare("SELECT timezone FROM users WHERE id = ?1")
+      .bind(principal.user.id)
+      .first<{ timezone: string }>();
+    const timezone = tzRow?.timezone ?? "UTC";
+    const { date: localDate } = localDay(timezone, now);
+
+    // Serialize generation for this conversation so overlapping requests cannot
+    // process the same source messages at the same time.
+    const locked = await acquireConversationLock(
+      env,
+      ownerSub,
+      conversation.id,
+      `genhist:${conversation.id}`,
+      now,
+    );
+    if (!locked) {
+      return json(
+        { error: "history generation is already in progress for this channel", localDate },
+        409,
+      );
+    }
+
+    try {
+      // Capture an explicit source-message cutoff when the job begins. Messages
+      // sent after this point stay unprocessed for the next generation.
+      const cutoffSeq = await lastVisibleSeq(env, conversation.id);
+      const result = await generateIncrementalHistory(
+        env,
+        ownerSub,
+        conversation.id,
+        cutoffSeq,
+        now,
+      );
+      if (!result) {
+        return json(
+          { error: "no new messages to summarize", localDate },
+          409,
+        );
+      }
+
+      // Do not report success unless the summary was actually persisted.
+      if (!result.published) {
+        return json(
+          { error: "history coverage did not extend; nothing was persisted", localDate },
+          409,
+        );
+      }
+
+      return json({
+        ok: true,
+        localDate,
+        summary: result.summary,
+        fromSeq: result.fromSeq,
+        toSeq: result.toSeq,
+        messageCount: result.messageCount,
+        published: result.published,
+        sourceMessages: result.sourceMessages,
+        indexed: result.indexed,
+        indexSkipped: result.indexSkipped,
+        indexError: result.indexError,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/no summary model is configured/i.test(message)) {
+        return json({ error: "summarisation is not configured", localDate }, 503);
+      }
+      return json({ error: `history generation failed: ${message}`, localDate }, 500);
+    } finally {
+      await releaseConversationLock(
+        env,
+        conversation.id,
+        `genhist:${conversation.id}`,
+        nowMs(),
+      );
+    }
   }
 
   return json({ error: "not found" }, 404);

@@ -21,7 +21,11 @@ CREATE TABLE IF NOT EXISTS users (
     picture TEXT NOT NULL DEFAULT '',
     timezone TEXT NOT NULL DEFAULT 'UTC',
     created_at REAL,
-    updated_at REAL
+    updated_at REAL,
+    -- The thread this user last had open.  Restored on app open/refresh so the
+    -- conversation list and composer pick up where the user left off.  NULL
+    -- means "no active thread"; the UI must not invent one.
+    last_active_thread_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

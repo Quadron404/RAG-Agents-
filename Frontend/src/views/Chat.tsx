@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
+import { useAuth } from "../auth";
 import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
@@ -263,13 +264,15 @@ export { ChatListPane };
 
 /* ============================ message list ================================= */
 
-function MessageBubble({ m, threadId }: { m: Message; threadId: string }) {
+function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadId: string; summarizedThrough: number }) {
   const openMenu = useUi((s) => s.openMenu);
   const setReplyTo = useUi((s) => s.setReplyTo);
   const [editing, setEditing] = useState(false);
   const isUser = m.role === "user";
   const parsed = parseAgentField(m.agent);
   const bot = parsed.kind === "commander" ? BOT_BY_ID.commander : parsed.kind === "worker" ? botForRole(parsed.role) : null;
+  const developerMode = useAuth((s) => s.user?.developer_mode === 1);
+  const isSummarized = m.seq <= summarizedThrough;
 
   const isEdited = (m.data && JSON.stringify(m.data).includes("edited")) || m.editing;
 
@@ -300,6 +303,11 @@ function MessageBubble({ m, threadId }: { m: Message; threadId: string }) {
           {m.pending ? <span className="msg__role">sending…</span> : null}
           {isEdited ? <span className="msg__role">edited</span> : null}
           <span className="msg__time">{timeStr(m.created_at)}</span>
+          {developerMode && !m.pending && (
+            <span className={`msg__history-status ${isSummarized ? "history-done" : "history-pending"}`} title={isSummarized ? "Already covered by history" : "Will be included in next history generation"}>
+              {isSummarized ? "✗" : "✓"}
+            </span>
+          )}
         </div>
 
         {editing ? (
@@ -572,8 +580,11 @@ function EmptyChat() {
 function MessageList() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const messages = useCore((s) => (s.activeThreadId ? s.messages[s.activeThreadId] : EMPTY_MSGS));
+  const threads = useCore((s) => s.threads);
   const run = useCore((s) => s.run);
   const liveRun = run && run.threadId === activeThreadId && run.phase !== "done" ? run : null;
+
+  const summarizedThrough = threads.find((t) => t.thread_id === activeThreadId)?.summarized_through ?? 0;
 
   const items = useMemo(() => {
     return (messages || []).slice();
@@ -585,7 +596,11 @@ function MessageList() {
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    // Let React commit the new messages first, then scroll.
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    });
   }, []);
 
   const onScroll = () => {
@@ -604,7 +619,7 @@ function MessageList() {
     <div className="thread__scroll" ref={scrollRef} onScroll={onScroll}>
       <div className="thread__inner">
         {items.map((m) => (
-          <MessageBubble key={m.id} m={m} threadId={activeThreadId} />
+          <MessageBubble key={m.id} m={m} threadId={activeThreadId} summarizedThrough={summarizedThrough} />
         ))}
         {liveRun ? <RunBanner /> : null}
         {liveRun
@@ -860,32 +875,81 @@ function SendArrow() {
 /* ============================ chat view ===================================== */
 
 export function ChatView() {
-  const activeThreadId = useCore((s) => s.activeThreadId);
-  const run = useCore((s) => s.run);
-  const setConvOpen = useUi((s) => s.setConvOpen);
+    const activeThreadId = useCore((s) => s.activeThreadId);
+    const run = useCore((s) => s.run);
+    const setConvOpen = useUi((s) => s.setConvOpen);
+    const generateHistory = useCore((s) => s.generateHistory);
+    const generateHistoryStatus = useCore((s) => s.generateHistoryStatus);
+    const generateHistoryError = useCore((s) => s.generateHistoryError);
+    const generateHistorySource = useCore((s) => s.generateHistorySource);
+    const generateHistorySummary = useCore((s) => s.generateHistorySummary);
+    const developerMode = useAuth((s) => s.user?.developer_mode === 1);
 
-  const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
+    const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
 
-  return (
-    <div className="thread">
-      <div className="thread__header">
-        <button className="thread__back" onClick={() => setConvOpen(true)} aria-label="Open conversations">
-          <ArrowLeft size={19} />
-        </button>
-        <span className="thread__ava" aria-hidden>
-          <span className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient }}>
-            {BOT_BY_ID.commander.glyph}
+    return (
+      <div className="thread">
+        <div className="thread__header">
+          <button className="thread__back" onClick={() => setConvOpen(true)} aria-label="Open conversations">
+            <ArrowLeft size={19} />
+          </button>
+          <span className="thread__ava" aria-hidden>
+            <span className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient }}>
+              {BOT_BY_ID.commander.glyph}
+            </span>
           </span>
-        </span>
-        <div className="thread__hmeta">
-          <div className="thread__hname">Chief</div>
-          <div className="thread__hstate">
-            {running ? (run?.phase === "planning" ? "thinking…" : "working on it…") : "ready"}
+          <div className="thread__hmeta">
+            <div className="thread__hname">Chief</div>
+            <div className="thread__hstate">
+              {running ? (run?.phase === "planning" ? "thinkingâ€¦" : "working on itâ€¦") : "ready"}
+            </div>
           </div>
+          {developerMode && (
+            <button
+              className="btn btn--primary btn-s"
+              style={{ padding: "6px 12px", marginLeft: "auto" }}
+              disabled={generateHistoryStatus === "processing"}
+              onClick={() => activeThreadId && generateHistory(activeThreadId)}
+              aria-label="Generate History"
+            >
+              {generateHistoryStatus === "processing" ? "Generating..." : "Generate History"}
+            </button>
+          )}
         </div>
+        <MessageList />
+        <Composer />
+        {developerMode && (
+          <div className="dev-history-panel">
+            <div className="dev-history-panel__head">
+              <span className="dev-history-panel__title">Developer — history generation</span>
+              <span className={`dev-history-panel__state ${generateHistoryStatus}`}>{generateHistoryStatus}</span>
+            </div>
+            {generateHistoryError && (
+              <div className="dev-history-panel__error">{generateHistoryError}</div>
+            )}
+            {generateHistorySource && generateHistorySource.length > 0 ? (
+              <div className="dev-history-panel__body">
+                {generateHistorySummary && (
+                  <div className="dev-history-panel__result">
+                    <div className="dev-history-panel__label">Generated history summary</div>
+                    <div className="dev-history-panel__content">{generateHistorySummary}</div>
+                  </div>
+                )}
+                <div className="dev-history-panel__label">Source messages sent to the summarisation model</div>
+                {generateHistorySource.map((m) => (
+                  <div key={m.seq} className={`dev-history-panel__msg dev-history-panel__msg--${m.role}`}>
+                    <span className="dev-history-panel__role">{m.role === "user" ? "User" : "Chief"}:</span>
+                    <span className="dev-history-panel__content">{m.content}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dev-history-panel__body">
+                <div className="dev-history-panel__label">No history generated yet for this channel.</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      <MessageList />
-      <Composer />
-    </div>
-  );
-}
+    );
+  }

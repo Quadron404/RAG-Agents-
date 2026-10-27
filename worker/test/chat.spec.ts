@@ -245,7 +245,7 @@ describe("chat summaries", () => {
       },
     );
 
-    const result = await searchConversationHistory(testEnv, "search-owner", "provider");
+    const result = await searchConversationHistory(testEnv, "search-owner", owner.id, "provider");
     expect(result.ok).toBe(true);
     expect(result.resultCount).toBe(1);
     expect(result.text).toContain("Owner-only content");

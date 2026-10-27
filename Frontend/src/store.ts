@@ -14,6 +14,7 @@ export interface Thread {
   user_id: string;
   title: string;
   created_at: number;
+  summarized_through: number;
 }
 
 export interface Message {
@@ -23,6 +24,7 @@ export interface Message {
   agent: string;
   content: string;
   data: string;
+  seq: number;
   created_at: number;
   editing?: boolean;
   pending?: boolean;
@@ -204,6 +206,33 @@ function loadIgnores(): { archived: string[]; pinnedConv: string | null } {
 function saveIgnores(archived: string[], pinnedConv: string | null) {
   try {
     localStorage.setItem("rag.ignores.v1", JSON.stringify({ archived, pinnedConv }));
+  } catch {
+    /* ignore */
+  }
+}
+
+/* Last active thread — browser storage hint only.
+ *
+ * The backend's /session/active-thread is the source of truth.  This localStorage
+ * key lets the UI restore the active channel instantly while the server round
+ * trip is in flight, but it is always verified against the server's thread list
+ * and never used to fabricate a channel.
+ */
+const LAST_ACTIVE_KEY = "rag.active-thread.v1";
+
+export function loadLastActiveThread(): string | null {
+  try {
+    const raw = localStorage.getItem(LAST_ACTIVE_KEY);
+    return typeof raw === "string" && raw ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastActiveThread(threadId: string | null) {
+  try {
+    if (threadId) localStorage.setItem(LAST_ACTIVE_KEY, threadId);
+    else localStorage.removeItem(LAST_ACTIVE_KEY);
   } catch {
     /* ignore */
   }

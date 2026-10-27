@@ -24,7 +24,7 @@ from ..providers.errors import ModelCallGateTimeout, ProviderHTTPError
 from ..providers.router import ProviderUnavailable, Router
 from ..tools.executor import Executor
 from ..tools.registry import worker_tools
-from .commander import OWNER_NOTIFICATION_POLICY
+from .commander import MAIL_TOOL_POLICY, OWNER_NOTIFICATION_POLICY
 from .loop import run_agent_loop
 
 ROUTINE_SYSTEM_PROMPT = (
@@ -37,6 +37,7 @@ ROUTINE_SYSTEM_PROMPT = (
     "as [TOOL fetch_url {\"url\":\"https://example.com\"}]; the system runs it and "
     "returns the result. You cannot schedule new routines.\n\n"
     + OWNER_NOTIFICATION_POLICY
+    + MAIL_TOOL_POLICY
     + "\n\n"
     "When the task is done, report a concise factual result -- what you found or "
     "did, with numbers, paths or quotes as needed -- and no remaining [TOOL ...] "

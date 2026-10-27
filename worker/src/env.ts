@@ -74,6 +74,12 @@ export interface Env {
   /** Set to "1" only for local http development so the cookie is not Secure. */
   ALLOW_INSECURE_COOKIE?: string;
 
+  // --- Worker-native Gmail sender (central bot mailbox) ---------------------
+  /** The central Gmail address used to send routine and notification emails. */
+  GMAIL_SENDER_EMAIL?: string;
+  /** OAuth refresh token for the central Gmail account (sets up its own grant). */
+  GMAIL_SENDER_REFRESH_TOKEN?: string;
+
   // --- Durable routines: Codespace lifecycle ---------------------------------
   // A routine may be due while the Codespace is stopped, so the scheduler has
   // to be able to wake it.  The token is a fine-grained PAT (Codespaces: read

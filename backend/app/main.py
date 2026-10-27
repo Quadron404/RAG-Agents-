@@ -26,6 +26,9 @@ from .computer.runner import ComputerRunner
 from .config import Settings, load_settings
 from .db import Database
 from .email import gmail as gmail_connection
+from .email.mail_tool import MAIL_TOOL_NAME, run_mail_tool
+from .routines.context import RoutineContext, reset_current, set_current
+from .timezone import validate_timezone
 from .providers.router import (
     Router,
     computer_model_for,
@@ -53,11 +56,11 @@ computer = WorkspaceManager(settings)
 # behind an owner-controlled allowlist and a network gateway.  It is wired into
 # the executor below so the network tools cannot leave by any other path.
 restricted = RestrictedRuntime(settings)
-executor = Executor(settings, restricted=restricted, db=db)
+executor = Executor(settings, restricted=restricted, db=db, auth_service=auth)
 #: Routines are ordinary, non-computer tasks by definition, so they run on an
 #: executor with no computer attached.  A scheduled task can never wander onto
 #: the personal Chrome or the shared desktop.
-routine_executor = Executor(settings, restricted=restricted, db=db)
+routine_executor = Executor(settings, restricted=restricted, db=db, auth_service=auth)
 commander = Commander(router, executor)
 
 
@@ -365,6 +368,10 @@ class NewThreadBody(BaseModel):
     title: str = "New conversation"
 
 
+class TimezoneBody(BaseModel):
+    timezone: str
+
+
 class SendBody(BaseModel):
     text: str
 
@@ -492,6 +499,240 @@ async def internal_routines_execute(request: Request, body: RoutineExecuteBody):
     return {"ok": False, "retryable": False, "error_code": code}
 
 
+class InternalMailBody(BaseModel):
+    content: str
+
+
+@app.post("/internal/mail/execute")
+async def internal_mail_execute(request: Request, body: InternalMailBody):
+    """Execute mail_tool_call for the Worker's Chief chat.
+
+    Called by the Worker when Chief calls mail_tool_call.  The owner identity
+    comes from x-rag-user-sub / x-rag-user-email headers the Worker injects --
+    never from the body -- so the model cannot choose a recipient.  The backend
+    resolves the verified Google account email, sends through the user's own
+    connected Gmail, and reports success only after the Gmail API accepts the
+    message.
+    """
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+
+    user_sub = str(request.headers.get("x-rag-user-sub") or "").strip()
+    user_email = str(request.headers.get("x-rag-user-email") or "").strip()
+    if not user_sub or not user_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner identity missing")
+
+    user = db.get_user_by_sub(user_sub) or {}
+    if not user or not user.get("email_verified"):
+        return {"ok": False, "error": "your email address is not verified; cannot send email"}
+    if str(user.get("email") or "").strip().lower() != user_email.lower():
+        return {"ok": False, "error": "connected identity does not match the authenticated account"}
+
+    ctx = RoutineContext(
+        user_id=str(user.get("id") or ""),
+        google_sub=user_sub,
+        agent_id="chief",
+        conversation_id="mail-tool-call",
+        timezone=str(user.get("timezone") or "UTC"),
+    )
+    token = set_current(ctx)
+    try:
+        result = await run_mail_tool(
+            MAIL_TOOL_NAME,
+            {"content": body.content},
+            settings,
+            db,
+            auth,
+        )
+    finally:
+        reset_current(token)
+    return result
+
+
+class InternalConnectorExecuteBody(BaseModel):
+    approval_id: str
+
+
+class InternalConnectorApprovalBody(BaseModel):
+    connector: str
+    action: str
+    arguments: Dict[str, str]
+    routine_id: Optional[str] = None
+    routine_run_id: Optional[str] = None
+
+
+@app.post("/internal/connectors/approvals")
+async def internal_connectors_create_approval(request: Request, body: InternalConnectorApprovalBody):
+    """Create a pending owner-scoped one-time connector approval.
+
+    Called by the Worker when Chief requests a connector action.  Nothing is
+    executed until the owner clicks Allow on the approval card.
+    """
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+
+    user_sub = str(request.headers.get("x-rag-user-sub") or "").strip()
+    if not user_sub:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner identity missing")
+
+    user = db.get_user_by_sub(user_sub) or {}
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    user_id = str(user.get("id") or "")
+    from .connectors.registry import create_approval
+    approval = await create_approval(
+        db,
+        user_id=user_id,
+        connector=body.connector,
+        action=body.action,
+        arguments=dict(body.arguments),
+        routine_id=body.routine_id,
+        routine_run_id=body.routine_run_id,
+    )
+    return approval
+
+
+@app.post("/internal/connectors/execute")
+async def internal_connectors_execute(request: Request, body: InternalConnectorExecuteBody):
+    """Execute a connector action after the owner has approved it.
+
+    Called by the Worker when the owner clicks Allow on an approval card.
+    Revalidates the approval (owner, pending, not expired) before executing.
+    """
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+
+    user_sub = str(request.headers.get("x-rag-user-sub") or "").strip()
+    if not user_sub:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner identity missing")
+
+    user = db.get_user_by_sub(user_sub) or {}
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    from .connectors.registry import execute_approved_action
+    result = await execute_approved_action(
+        db,
+        settings,
+        auth,
+        approval_id=body.approval_id,
+        decided_by_user_id=str(user.get("id") or ""),
+    )
+    return result
+
+
+class ConnectorApprovalsQuery(BaseModel):
+    pass
+
+
+@app.get("/internal/connectors/approvals")
+async def internal_connectors_approvals(request: Request):
+    """List the signed-in owner's pending connector approvals (not expired)."""
+    if auth.internal_configured:
+        if not auth.internal_token_valid(request):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="internal authentication required")
+    else:
+        _principal(request)
+
+    user_sub = str(request.headers.get("x-rag-user-sub") or "").strip()
+    if not user_sub:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner identity missing")
+
+    user = db.get_user_by_sub(user_sub) or {}
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    approvals = db.list_pending_approvals(str(user.get("id") or ""), include_expired=False)
+    # Strip the raw arguments JSON into a friendly summary for the card.
+    out = []
+    for a in approvals:
+        arguments = json.loads(str(a.get("arguments") or "{}"))
+        out.append({
+            "approval_id": str(a.get("approval_id")),
+            "connector": str(a.get("connector")),
+            "action": str(a.get("action")),
+            "arguments": arguments,
+            "status": str(a.get("status") or "pending"),
+            "expires_at": float(a.get("expires_at") or 0),
+            "created_at": float(a.get("created_at") or 0),
+            "routine_id": str(a.get("routine_id") or ""),
+            "routine_run_id": str(a.get("routine_run_id") or ""),
+        })
+    return {"approvals": out}
+
+
+@app.get("/routines/connectors/approvals")
+async def connectors_list_approvals(request: Request):
+    """Browser-facing: list the signed-in owner's pending connector approvals."""
+    principal = _principal(request)
+    user_id = principal.user_id
+    approvals = db.list_pending_approvals(user_id, include_expired=False)
+    out = []
+    for a in approvals:
+        arguments = json.loads(str(a.get("arguments") or "{}"))
+        out.append({
+            "approval_id": str(a.get("approval_id")),
+            "connector": str(a.get("connector")),
+            "action": str(a.get("action")),
+            "arguments": arguments,
+            "expires_at": float(a.get("expires_at") or 0),
+            "created_at": float(a.get("created_at") or 0),
+            "routine_id": str(a.get("routine_id") or ""),
+            "routine_run_id": str(a.get("routine_run_id") or ""),
+        })
+    return {"approvals": out}
+
+
+class ConnectorDecisionBody(BaseModel):
+    approval_id: str
+
+
+@app.post("/routines/connectors/approvals/execute")
+async def connectors_execute_approval(request: Request, body: ConnectorDecisionBody):
+    """Browser-facing: approve and execute a connector action."""
+    principal = _principal(request)
+    user_id = principal.user_id
+
+    from .connectors.registry import execute_approved_action
+    result = await execute_approved_action(
+        db, settings, auth,
+        approval_id=body.approval_id,
+        decided_by_user_id=user_id,
+    )
+    return result
+
+
+@app.post("/routines/connectors/approvals/deny")
+async def connectors_deny_approval(request: Request, body: ConnectorDecisionBody):
+    """Browser-facing: deny a pending connector approval."""
+    principal = _principal(request)
+    user_id = principal.user_id
+
+    approval = db.get_connector_approval(body.approval_id)
+    if not approval:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such approval")
+    if str(approval["user_id"]) != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not your approval")
+    if str(approval["status"]) != "pending":
+        return {"ok": False, "error": f"approval is {approval['status']}"}
+    if time.time() > float(approval["expires_at"]):
+        db.resolve_connector_approval(body.approval_id, "expired", user_id, "expired before decision")
+        return {"ok": False, "error": "approval has expired"}
+
+    db.resolve_connector_approval(body.approval_id, "denied", user_id, "denied by owner")
+    return {"ok": True, "status": "denied"}
+
+
 @app.post("/threads")
 async def create_thread(request: Request, body: NewThreadBody):
     # The owner is the session, never the body.  Any client-supplied user_id is
@@ -505,6 +746,48 @@ async def create_thread(request: Request, body: NewThreadBody):
 async def list_threads(request: Request):
     principal = _principal(request)
     return {"threads": db.list_threads(principal.user_id)}
+
+
+@app.get("/session/active-thread")
+async def get_active_thread(request: Request):
+    """The thread this user last had open, or ``null`` when none is set.
+
+    Used by the frontend on app open/refresh to restore the active channel
+    without creating one.
+    """
+    principal = _principal(request)
+    thread_id = db.get_active_thread(principal.user_id)
+    return {"active_thread_id": thread_id}
+
+
+@app.post("/threads/{thread_id}/activate")
+async def activate_thread(request: Request, thread_id: str):
+    """Record ``thread_id`` as this user's last active thread.
+
+    Ownership is checked server-side: a caller can never activate another
+    user's conversation.
+    """
+    principal = _principal(request)
+    ok = db.set_active_thread(principal.user_id, thread_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="thread not found")
+    return {"ok": True, "thread_id": thread_id}
+
+
+@app.post("/auth/settings/timezone")
+async def set_timezone(request: Request, body: TimezoneBody):
+    """Persist the signed-in user's IANA timezone.
+
+    The value is validated against the IANA database; anything unrecognised or
+    empty degrades to ``UTC``, the documented fallback.  Ownership is enforced by
+    the session -- a caller can only set their own timezone.
+    """
+    principal = _principal(request)
+    tz = validate_timezone(body.timezone)
+    ok = db.set_user_timezone(principal.user_id, tz)
+    if not ok:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"ok": True, "timezone": tz}
 
 
 # ---------------------------------------------------------------------------

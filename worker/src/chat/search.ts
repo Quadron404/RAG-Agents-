@@ -10,7 +10,15 @@
  */
 import type { AiSearchChunk, AiSearchInstance, Env } from "../env";
 import { sha256, toHex, utf8 } from "../encoding";
-import { getConversationById, type ConversationRow, type SummaryRow } from "./store";
+import {
+  getConversationById,
+  listActiveChannelSummaries,
+  setChannelSummaryIndexStatusById,
+  type ChannelDailySummaryRow,
+  type ConversationRow,
+  type SummaryRow,
+} from "./store";
+import { selectSummaryProvider } from "./providers";
 
 const CUSTOM_METADATA = [
   { field_name: "owner_sub", data_type: "text" },
@@ -18,8 +26,6 @@ const CUSTOM_METADATA = [
   { field_name: "conversation_title", data_type: "text" },
   { field_name: "updated_at", data_type: "text" },
 ];
-
-let ensured: { key: string; promise: Promise<AiSearchInstance | null> } | null = null;
 
 function configured(env: Env): boolean {
   return !!(env.AI_SEARCH && (env.AI_SEARCH_INSTANCE ?? "").trim());
@@ -32,32 +38,27 @@ export function searchConfigured(env: Env): boolean {
 async function instanceFor(env: Env): Promise<AiSearchInstance | null> {
   if (!configured(env)) return null;
   const name = (env.AI_SEARCH_INSTANCE ?? "").trim();
-  if (ensured?.key === name) return ensured.promise;
-  const promise = (async () => {
-    const binding = env.AI_SEARCH!;
-    let handle = binding.get(name);
-    let exists = true;
-    try {
-      await handle.info();
-    } catch {
-      exists = false;
-    }
-    if (!exists) {
-      try {
-        handle = await binding.create({
-          id: name,
-          custom_metadata: CUSTOM_METADATA,
-        });
-      } catch {
-        // Another isolate may have created it between info() and create().
-        handle = binding.get(name);
-      }
-    }
-    return handle;
-  })();
-  ensured = { key: name, promise };
+  const binding = env.AI_SEARCH!;
+  let handle = binding.get(name);
+  let exists = true;
   try {
-    return await promise;
+    await handle.info();
+  } catch {
+    exists = false;
+  }
+  if (!exists) {
+    try {
+      handle = await binding.create({
+        id: name,
+        custom_metadata: CUSTOM_METADATA,
+      });
+    } catch {
+      // Another isolate may have created it between info() and create().
+      handle = binding.get(name);
+    }
+  }
+  try {
+    return handle;
   } catch {
     return null;
   }
@@ -68,19 +69,13 @@ export async function conversationDocKey(ownerSub: string, conversationId: strin
   return `chief-${digest.slice(0, 48)}.txt`;
 }
 
-function summaryDocument(summary: SummaryRow, conversation: ConversationRow | null): string {
-  const title = conversation?.title ?? `Conversation ${summary.conversation_id}`;
-  return [
-    "Chief conversation summary",
-    `Conversation: ${title}`,
-    `Conversation ID: ${summary.conversation_id}`,
-    `Summary version: ${summary.version}`,
-    `Created: ${new Date(summary.created_at).toISOString()}`,
-    `Updated: ${new Date(summary.updated_at).toISOString()}`,
-    "",
-    summary.content.trim(),
-    "",
-  ].join("\n");
+export interface IndexableSummary {
+  conversation_id: string;
+  owner_sub: string;
+  content: string;
+  version: number;
+  doc_key: string;
+  updated_at: number;
 }
 
 export interface IndexResult {
@@ -89,23 +84,36 @@ export interface IndexResult {
   error?: string;
 }
 
-export async function indexSummary(
+function summaryDocumentFor(summary: IndexableSummary, conversationTitle: string | null): string {
+  const title = conversationTitle ?? `Conversation ${summary.conversation_id}`;
+  return [
+    "Chief conversation summary",
+    `Conversation: ${title}`,
+    `Conversation ID: ${summary.conversation_id}`,
+    `Summary version: ${summary.version}`,
+    `Updated: ${new Date(summary.updated_at).toISOString()}`,
+    "",
+    summary.content.trim(),
+    "",
+  ].join("\n");
+}
+
+export async function indexSummaryRow(
   env: Env,
-  summary: SummaryRow,
-  conversation: ConversationRow | null,
+  summary: IndexableSummary,
+  conversationTitle: string | null,
 ): Promise<IndexResult> {
   if (!configured(env)) {
     return { ok: false, skipped: true, error: "AI Search is not configured" };
   }
   const instance = await instanceFor(env);
   if (!instance) return { ok: false, error: "AI Search instance is unavailable" };
-  const key = summary.doc_key || (await conversationDocKey(summary.owner_sub, summary.conversation_id));
   try {
-    await instance.items.upload(key, summaryDocument(summary, conversation), {
+    await instance.items.upload(summary.doc_key, summaryDocumentFor(summary, conversationTitle), {
       metadata: {
         owner_sub: summary.owner_sub,
         conversation_id: summary.conversation_id,
-        conversation_title: (conversation?.title ?? "").slice(0, 200),
+        conversation_title: (conversationTitle ?? "").slice(0, 200),
         updated_at: new Date(summary.updated_at).toISOString(),
       },
     });
@@ -115,18 +123,95 @@ export async function indexSummary(
   }
 }
 
+export async function indexSummary(
+  env: Env,
+  summary: SummaryRow,
+  conversation: ConversationRow | null,
+): Promise<IndexResult> {
+  const key = summary.doc_key || (await conversationDocKey(summary.owner_sub, summary.conversation_id));
+  const row: IndexableSummary = {
+    ...summary,
+    doc_key: key,
+  };
+  return indexSummaryRow(env, row, conversation?.title ?? null);
+}
+
 export async function removeSummaryDoc(
   env: Env,
   ownerSub: string,
   conversationId: string,
-): Promise<void> {
-  if (!configured(env)) return;
+): Promise<{ ok: boolean; error: string | null }> {
+  if (!configured(env)) return { ok: true, error: null };
   const instance = await instanceFor(env);
-  if (!instance?.items.delete) return;
+  if (!instance?.items.delete) return { ok: true, error: null };
   try {
     await instance.items.delete(await conversationDocKey(ownerSub, conversationId));
-  } catch {
-    /* deletion is best-effort; the deleted row is filtered out of searches */
+    return { ok: true, error: null };
+  } catch (error) {
+    return {
+      ok: false,
+      error: String((error as Error)?.message ?? error),
+    };
+  }
+}
+
+/** Build the single canonical searchable document for a channel from its active
+ * D1 summaries, in chronological order.  Each summary is self-labelled with its
+ * date/period prefix, so the document text never mixes channels or periods. */
+export function buildChannelDocumentText(
+  rows: ChannelDailySummaryRow[],
+  conversationTitle: string | null,
+): string {
+  const title = conversationTitle ?? "Conversation";
+  const sections = rows.map((row) => {
+    const label = row.summary_type === "yearly" ? `${row.period_start} (yearly)`
+      : row.summary_type === "monthly" ? `${row.period_start} (monthly)`
+      : row.period_start;
+    return `${label}\n${(row.content || "").trim()}`;
+  });
+  return [
+    `Channel history — ${title}`,
+    `Active summaries: ${rows.length}`,
+    "",
+    sections.join("\n\n"),
+    "",
+  ].join("\n");
+}
+
+export async function rebuildChannelDocument(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  conversationTitle: string | null,
+  excludeIds: string[] = [],
+): Promise<IndexResult> {
+  if (!configured(env)) {
+    return { ok: false, skipped: true, error: "AI Search is not configured" };
+  }
+  const instance = await instanceFor(env);
+  if (!instance) return { ok: false, error: "AI Search instance is unavailable" };
+  const docKey = await conversationDocKey(ownerSub, conversationId);
+  const rows = (await listActiveChannelSummaries(env, ownerSub, conversationId)).filter(
+    (row) => !excludeIds.includes(row.id),
+  );
+  const text = buildChannelDocumentText(rows, conversationTitle);
+  const conversation = await getConversationById(env, conversationId);
+  try {
+    await instance.items.upload(docKey, text, {
+      metadata: {
+        owner_sub: ownerSub,
+        conversation_id: conversationId,
+        conversation_title: (conversationTitle ?? "").slice(0, 200),
+        updated_at: new Date(Date.now()).toISOString(),
+        summary_count: String(rows.length),
+      },
+    });
+    for (const row of rows) {
+      await setChannelSummaryIndexStatusById(env, row.id, "indexed");
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String((error as Error).message ?? error) };
   }
 }
 
@@ -151,9 +236,28 @@ function chunkTitle(chunk: AiSearchChunk): string {
   return typeof value === "string" ? value : "";
 }
 
+/** Extract only the summary content from an indexed document, stripping
+ *  internal metadata (conversation ID, version, timestamps, title). */
+function extractSummaryContent(text: string): string {
+  // The indexed document format has a header block followed by a blank line
+  // then the summary content.  Strip everything up to and including the
+  // first blank line.
+  const lines = text.split("\n");
+  let contentStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === "") {
+      contentStart = i + 1;
+      break;
+    }
+  }
+  if (contentStart < 0 || contentStart >= lines.length) return text.trim();
+  return lines.slice(contentStart).join("\n").trim();
+}
+
 export async function searchConversationHistory(
   env: Env,
   ownerSub: string,
+  conversationId: string,
   query: string,
 ): Promise<HistorySearchResult> {
   const trimmed = query.trim().slice(0, 500);
@@ -183,10 +287,10 @@ export async function searchConversationHistory(
     ai_search_options: {
       retrieval: {
         retrieval_type: "hybrid",
-        max_num_results: 8,
-        match_threshold: 0.25,
+        max_num_results: 3,
+        match_threshold: 0.35,
         keyword_match_mode: "or",
-        filters: { owner_sub: { $eq: ownerSub } },
+        filters: { owner_sub: { $eq: ownerSub }, conversation_id: { $eq: conversationId } },
       },
       reranking: { enabled: false },
       query_rewrite: { enabled: false },
@@ -227,32 +331,39 @@ export async function searchConversationHistory(
   const active = new Map<string, boolean>();
   const lines: string[] = [];
   let length = 0;
-  for (const chunk of chunks) {
-    if (chunkOwner(chunk) !== ownerSub) continue;
-    const key = chunk.item?.key ?? chunk.id ?? "";
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
-    const text = (chunk.text ?? "").trim();
-    if (!text) continue;
-    const metadata = (chunk.item?.metadata ?? {}) as Record<string, unknown>;
-    const conversationId =
-      typeof metadata.conversation_id === "string" ? metadata.conversation_id : "";
-    if (!conversationId) continue;
-    if (!active.has(conversationId)) {
-      const conversation = await getConversationById(env, conversationId);
-      active.set(
-        conversationId,
-        !!conversation && !conversation.deleted_at && conversation.owner_sub === ownerSub,
-      );
+    for (const chunk of chunks) {
+      if (chunkOwner(chunk) !== ownerSub) continue;
+      const metadata = (chunk.item?.metadata ?? {}) as Record<string, unknown>;
+      const chunkConversationId =
+        typeof metadata.conversation_id === "string" ? metadata.conversation_id : "";
+      // Mandatory channel isolation: only chunks from the exact active channel.
+      if (chunkConversationId !== conversationId) continue;
+      const key = chunk.item?.key ?? chunk.id ?? "";
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      const text = (chunk.text ?? "").trim();
+      if (!text) continue;
+      if (!active.has(chunkConversationId)) {
+        const conversation = await getConversationById(env, chunkConversationId);
+        active.set(
+          chunkConversationId,
+          !!conversation && !conversation.deleted_at && conversation.owner_sub === ownerSub,
+        );
+      }
+      if (!active.get(chunkConversationId)) continue;
+      // Strip internal metadata from the document text — only return the summary content.
+      const summaryContent = extractSummaryContent(text);
+      if (!summaryContent) continue;
+      // Truncate each summary to keep results concise and prevent context overflow.
+      const truncated = summaryContent.length > 400
+        ? summaryContent.slice(0, 400) + "..."
+        : summaryContent;
+      const entry = truncated;
+      if (length + entry.length > 2000) break;
+      lines.push(entry);
+      length += entry.length;
+      if (lines.length >= 3) break;
     }
-    if (!active.get(conversationId)) continue;
-    const title = chunkTitle(chunk) || "Conversation";
-    const entry = `- ${title}\n${text}`;
-    if (length + entry.length > 6000) break;
-    lines.push(entry);
-    length += entry.length;
-    if (lines.length >= 5) break;
-  }
 
   if (!lines.length) {
     return {
@@ -261,9 +372,65 @@ export async function searchConversationHistory(
       resultCount: 0,
     };
   }
+
+  // STEP 3 — Separate Groq AI summarizes the retrieved RAG results into
+  // coherent historical context.  This inference call is independent of
+  // Chief's inference.  If it fails, return an honest error (never fall back
+  // to the raw search dump).
+  const selection = selectSummaryProvider(env);
+  if (!selection) {
+    return {
+      ok: false,
+      error: "Historical conversation summarization is not configured.",
+      text: "",
+      resultCount: lines.length,
+    };
+  }
+
+  const rawEvidence = lines.join("\n\n");
+  const HISTORY_SUMMARIZER_INSTRUCTION =
+    "You are a history summarizer. Transform the following retrieved conversation " +
+    "evidence into a coherent, useful historical account for an AI assistant. " +
+    "Preserve exact technical keywords, names, identifiers, decisions, dates, and " +
+    "configuration values. Combine related evidence into a readable narrative. " +
+    "Preserve relevant chronology and distinguish confirmed decisions from " +
+    "proposals. Remove irrelevant search noise and internal metadata. Never " +
+    "invent facts or conceal uncertainty. Return only the synthesized historical " +
+    "context, with no headings, bullets, Markdown, or commentary.";
+
+  let synthesized = "";
+  try {
+    for await (const event of selection.provider.stream(
+      [
+        { role: "system", content: HISTORY_SUMMARIZER_INSTRUCTION },
+        { role: "user", content: `Retrieved evidence:\n\n${rawEvidence}` },
+      ],
+      [],
+    )) {
+      if (event.type === "text") synthesized += event.text;
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Historical conversation summarization failed: ${String((error as Error).message ?? error)}`,
+      text: "",
+      resultCount: lines.length,
+    };
+  }
+
+  const cleaned = synthesized.trim();
+  if (!cleaned) {
+    return {
+      ok: false,
+      error: "The history summarizer returned an empty result.",
+      text: "",
+      resultCount: lines.length,
+    };
+  }
+
   return {
     ok: true,
-    text: lines.join("\n\n"),
+    text: cleaned,
     resultCount: lines.length,
   };
 }

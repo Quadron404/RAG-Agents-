@@ -98,6 +98,25 @@ class Database:
                     events TEXT,
                     created_at REAL
                 );
+                -- Pending connector approvals.  One row per one-time action the
+                -- model has requested and the owner has not yet allowed or
+                -- denied.  Owner-scoped so an approval can never be used by or
+                -- for another account; single-use so it cannot be replayed.
+                CREATE TABLE IF NOT EXISTS connector_approvals (
+                    approval_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    connector TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    arguments TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    decided_at REAL,
+                    decided_by TEXT,
+                    routine_id TEXT,
+                    routine_run_id TEXT,
+                    result TEXT
+                );
                 """
             )
             # The identity, control-plane and email schema.  Runs on every
@@ -109,6 +128,7 @@ class Database:
             self._ensure_column("email_sends", "recipient_email", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column("email_sends", "sender_email", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column("email_sends", "provider_message_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("users", "last_active_thread_id", "TEXT")
             self.conn.commit()
             self._quarantine_legacy_threads()
 
@@ -776,6 +796,33 @@ class Database:
             ).fetchone()
         return row is not None
 
+    def set_active_thread(self, user_id: str, thread_id: str) -> bool:
+        """Record ``thread_id`` as this user's last active thread.
+
+        Returns ``False`` (and writes nothing) when the thread does not exist or
+        is not owned by ``user_id`` -- so a caller can never activate another
+        user's conversation.
+        """
+        if not self.thread_owned_by(thread_id, user_id):
+            return False
+        with self.lock:
+            cur = self.conn.execute(
+                "UPDATE users SET last_active_thread_id = ?, updated_at = ? WHERE id = ?",
+                (thread_id, time.time(), user_id),
+            )
+            self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_active_thread(self, user_id: str) -> Optional[str]:
+        """Return this user's last active thread id, or ``None`` when none is set."""
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT last_active_thread_id FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return row["last_active_thread_id"]
+
     def is_quarantined(self, thread_id: str) -> bool:
         with self.lock:
             row = self.conn.execute(
@@ -877,6 +924,99 @@ class Database:
             )
             self.conn.commit()
         return cur.rowcount > 0
+
+    # --- connector approvals ------------------------------------------------
+
+    def create_connector_approval(
+        self,
+        *,
+        user_id: str,
+        connector: str,
+        action: str,
+        arguments: Dict[str, object],
+        expires_at: float,
+        routine_id: Optional[str] = None,
+        routine_run_id: Optional[str] = None,
+    ) -> str:
+        """Create a pending, owner-scoped, one-time connector approval."""
+        approval_id = uuid.uuid4().hex
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO connector_approvals "
+                "(approval_id, user_id, connector, action, arguments, status, created_at, expires_at, routine_id, routine_run_id) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+                (
+                    approval_id,
+                    user_id,
+                    connector,
+                    action,
+                    json.dumps(arguments),
+                    time.time(),
+                    expires_at,
+                    routine_id or "",
+                    routine_run_id or "",
+                ),
+            )
+            self.conn.commit()
+        return approval_id
+
+    def get_connector_approval(self, approval_id: str) -> Optional[Dict[str, object]]:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT * FROM connector_approvals WHERE approval_id = ?", (approval_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_pending_approvals(
+        self, user_id: str, include_expired: bool = False
+    ) -> List[Dict[str, object]]:
+        with self.lock:
+            if include_expired:
+                rows = self.conn.execute(
+                    "SELECT * FROM connector_approvals WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC",
+                    (user_id,),
+                ).fetchall()
+            else:
+                now = time.time()
+                rows = self.conn.execute(
+                    "SELECT * FROM connector_approvals WHERE user_id = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at DESC",
+                    (user_id, now),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_connector_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        decided_by: str,
+        result: Optional[str] = None,
+    ) -> Optional[Dict[str, object]]:
+        """Allow or deny a pending approval.  Returns the row or None if not found/not pending."""
+        now = time.time()
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT * FROM connector_approvals WHERE approval_id = ? AND status = 'pending'",
+                (approval_id,),
+            ).fetchone()
+            if not row:
+                return None
+            self.conn.execute(
+                "UPDATE connector_approvals SET status = ?, decided_at = ?, decided_by = ?, result = ?, updated_at = ? WHERE approval_id = ?",
+                (decision, now, decided_by, result or "", now, approval_id),
+            )
+            self.conn.commit()
+        return dict(row)
+
+    def expire_connector_approvals(self, user_id: str) -> int:
+        """Mark expired pending approvals as expired.  Returns count."""
+        now = time.time()
+        with self.lock:
+            cur = self.conn.execute(
+                "UPDATE connector_approvals SET status = 'expired', decided_at = ? WHERE user_id = ? AND status = 'pending' AND expires_at <= ?",
+                (now, user_id, now),
+            )
+            self.conn.commit()
+        return cur.rowcount
 
     # --- email notifications (owner-only) ---------------------------------
 
