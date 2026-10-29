@@ -667,7 +667,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
           errorCode = result.error ?? "";
         } else if (isMailToolCall(call.name)) {
           // Mail sending is backend-owned (encrypted Gmail tokens); proxy to it.
-          const result = await executeMailToolCall(env, ownerSub, principal.user.email, call);
+          const result = await executeMailToolCall(env, ownerSub, principal.user.id, call);
           output = result.output;
           errorCode = result.error ?? "";
         } else if (isConnectorTool(call.name)) {

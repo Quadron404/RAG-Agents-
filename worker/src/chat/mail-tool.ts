@@ -6,21 +6,25 @@
  * / GMAIL_SENDER_REFRESH_TOKEN as Cloudflare Worker secrets) -- users never
  * connect their personal Gmail just to receive notifications.
  *
- * The tool sends directly when called; no approval card is required.  The
- * recipient is always the authenticated user's verified Google account email --
- * the model cannot supply one.
+ * A model tool call is only a request: the Worker creates a persistent,
+ * owner-scoped, one-time pending approval in D1 and returns it without sending
+ * anything.  The frontend shows an Allow/Deny card inline in chat; only after
+ * the owner clicks Allow does the Worker send the email.
+ *
+ * The recipient is always the authenticated user's verified Google account email
+ * -- the model cannot supply one.
  */
 import type { Env } from "../env";
 import type { ToolCall, ToolDefinition } from "./types";
-import { sendGmail } from "../gmail-sender";
-import { getUserById } from "../store";
+import { createConnectorApproval } from "../connector-approvals";
 
 export const MAIL_TOOL_CALL_TOOL: ToolDefinition = {
   name: "mail_tool_call",
   description:
     "Send an email to yourself (the signed-in user) through the central bot " +
     "mailbox. Supply only the message body; the recipient is fixed to your " +
-    "verified Google account email and cannot be changed.",
+    "verified Google account email and cannot be changed. This is a request: the " +
+    "owner must approve it on an Allow/Deny card before any email is sent.",
   parameters: {
     type: "object",
     properties: {
@@ -40,6 +44,13 @@ export interface MailToolResult {
   ok: boolean;
   output: string;
   error?: string;
+  approval?: {
+    approval_id: string;
+    connector: string;
+    action: string;
+    arguments: Record<string, unknown>;
+    expires_at: number;
+  };
 }
 
 export function isMailToolCall(name: string): boolean {
@@ -51,9 +62,10 @@ function str(value: unknown, fallback = ""): string {
 }
 
 /**
- * Execute mail_tool_call by sending directly through the central Gmail sender,
- * addressed to the owner's verified email.  No approval card -- the send happens
- * immediately when the tool result returns successfully.
+ * Execute mail_tool_call by creating a pending, owner-scoped, one-time approval
+ * in Worker D1.  Nothing is sent until the owner clicks Allow on the card.
+ * The email is then sent through the central Gmail sender, addressed to the
+ * owner's verified email.
  */
 export async function executeMailToolCall(
   env: Env,
@@ -86,23 +98,28 @@ export async function executeMailToolCall(
     };
   }
 
-  // Resolve the owner's verified email address from D1.  The recipient is always
-  // the authenticated user's verified Google email -- never from the model or
-  // any tool argument.
-  const user = await getUserById(env, ownerId);
-  if (!user) {
-    return { ok: false, error: "owner not found" };
-  }
-  const recipient = user.email;
-
   try {
-    const messageId = await sendGmail(env, recipient, "RAG Agents", content);
+    const approval = await createConnectorApproval(env, {
+      user_id: ownerId,
+      owner_sub: ownerSub,
+      connector: "gmail",
+      action: "send_email",
+      arguments: { content },
+    });
     return {
       ok: true,
-      output: `email sent to ${recipient}`,
-      error: undefined,
+      output:
+        "Approval required: you will see an Allow/Deny card for sending this " +
+        "email. No email is sent until you approve it.",
+      approval: {
+        approval_id: approval.approval_id,
+        connector: "gmail",
+        action: "send_email",
+        arguments: { content },
+        expires_at: approval.expires_at,
+      },
     };
   } catch (error) {
-    return { ok: false, error: (error as Error).message };
+    return { ok: false, error: `could not request connector approval: ${(error as Error).message}` };
   }
 }

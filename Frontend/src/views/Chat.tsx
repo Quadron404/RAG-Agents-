@@ -31,6 +31,11 @@ import { Markdown } from "../lib/markdown";
 import { speechSupported, startDictation } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
+import { ApprovalsList } from "../components/ApprovalCard";
+import {
+  fetchConnectorApprovals,
+  type ConnectorApproval,
+} from "../lib/routines";
 
 /* ============================ utilities =================================== */
 
@@ -885,7 +890,36 @@ export function ChatView() {
     const generateHistorySummary = useCore((s) => s.generateHistorySummary);
     const developerMode = useAuth((s) => s.user?.developer_mode === 1);
 
+    const [pendingApprovals, setPendingApprovals] = useState<ConnectorApproval[]>([]);
+
     const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
+
+    // Poll pending connector approvals so Allow/Deny cards appear inline in chat.
+    useEffect(() => {
+      let mounted = true;
+      const load = async () => {
+        try {
+          const result = await fetchConnectorApprovals();
+          if (mounted && result.ok) {
+            setPendingApprovals(result.approvals);
+          }
+        } catch {
+          /* silent */
+        }
+      };
+      load();
+      const timer = window.setInterval(load, 10000);
+      return () => {
+        mounted = false;
+        window.clearInterval(timer);
+      };
+    }, []);
+
+    const handleApprovalResolved = useCallback(() => {
+      fetchConnectorApprovals().then((r) => {
+        if (r.ok) setPendingApprovals(r.approvals);
+      });
+    }, []);
 
     return (
       <div className="thread">
@@ -916,6 +950,23 @@ export function ChatView() {
             </button>
           )}
         </div>
+        {pendingApprovals.length > 0 && (
+          <div className="msg msg--agent msg--commander">
+            <div className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient, color: "#fff" }}>
+              ◇
+            </div>
+            <div className="msg__body">
+              <div className="msg__meta">
+                <span className="msg__name">{BOT_BY_ID.commander.name}</span>
+                <span className="msg__time">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+              <div className="bubble">
+                <Markdown text="Pending connector approvals — action required before anything is executed." />
+              </div>
+              <ApprovalsList approvals={pendingApprovals} onResolved={handleApprovalResolved} />
+            </div>
+          </div>
+        )}
         <MessageList />
         <Composer />
         {developerMode && (

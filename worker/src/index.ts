@@ -34,6 +34,8 @@ import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
 import { TokenError, verifyIdToken } from "./idtoken";
 import { validateTimezone } from "./timezone";
+import { listPendingApprovals, resolveConnectorApproval, getConnectorApproval } from "./connector-approvals";
+import { executeApprovedConnectorAction } from "./chat/connector-tools";
 import {
   auditLogin,
   consumeOauthState,
@@ -359,6 +361,76 @@ export default {
     if (isChatPath(path)) {
       const handled = await handleChatRoutes(request, env, url);
       if (handled) return handled;
+    }
+
+    // Worker-native connector approval endpoints.  These run entirely at the
+    // edge -- no backend proxy.  Authentication comes from the session cookie.
+    const approvalPath = /^\/routines\/connectors\/approvals(?:\/(execute|deny))?$/.exec(path);
+    if (approvalPath) {
+      const principal = await resolvePrincipal(env, request);
+      if (!principal) {
+        return json({ error: "authentication required" }, 401);
+      }
+      const userId = principal.user.id;
+
+      if (path === "/routines/connectors/approvals" && request.method === "GET") {
+        const approvals = await listPendingApprovals(env, userId, false);
+        return json({
+          ok: true,
+          approvals: approvals.map((a) => ({
+            approval_id: a.approval_id,
+            connector: a.connector,
+            action: a.action,
+            arguments: a.arguments,
+            status: a.status,
+            expires_at: a.expires_at,
+            created_at: a.created_at,
+            routine_id: a.routine_id,
+            routine_run_id: a.routine_run_id,
+          })),
+        });
+      }
+
+      if ((path === "/routines/connectors/approvals/execute" || path === "/routines/connectors/approvals/deny") && request.method === "POST") {
+        let body: { approval_id?: unknown } = {};
+        try {
+          body = (await request.json()) ?? {};
+        } catch {
+          /* ignore */
+        }
+        const approvalId = typeof body.approval_id === "string" ? body.approval_id : "";
+        if (!approvalId) {
+          return json({ error: "approval_id is required" }, 400);
+        }
+
+        const action = approvalPath[1];
+        if (action === "execute") {
+          const result = await executeApprovedConnectorAction(env, approvalId, userId);
+          if (!result.ok) {
+            return json({ ok: false, error: result.error }, 400);
+          }
+          return json({ ok: true, result: result.result });
+        }
+
+        if (action === "deny") {
+          const approval = await getConnectorApproval(env, approvalId);
+          if (!approval) {
+            return json({ error: "no such approval" }, 404);
+          }
+          if (approval.user_id !== userId) {
+            return json({ error: "approval does not belong to you" }, 403);
+          }
+          if (approval.status !== "pending") {
+            return json({ ok: false, error: `approval is ${approval.status}` }, 400);
+          }
+          if (Date.now() > approval.expires_at) {
+            await resolveConnectorApproval(env, approvalId, { decision: "expired", decidedBy: userId, result: "expired before decision" });
+            return json({ ok: false, error: "approval has expired" }, 400);
+          }
+          await resolveConnectorApproval(env, approvalId, { decision: "denied", decidedBy: userId, result: "denied by owner" });
+          return json({ ok: true, status: "denied" });
+        }
+      }
     }
 
     if (isProxyPath(path)) return proxyApi(request, env, url);
