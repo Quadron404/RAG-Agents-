@@ -77,6 +77,10 @@ export interface Env {
   // --- Worker-native Gmail sender (central bot mailbox) ---------------------
   /** The central Gmail address used to send routine and notification emails. */
   GMAIL_SENDER_EMAIL?: string;
+  /** Optional verified Gmail alias distinct from the primary address. When set,
+   * it is used as the From header instead of GMAIL_SENDER_EMAIL. The alias must
+   * be configured under Gmail Settings → Accounts and Import → Send mail as. */
+  GMAIL_SENDER_ALIAS?: string;
   /** OAuth refresh token for the central Gmail account (sets up its own grant). */
   GMAIL_SENDER_REFRESH_TOKEN?: string;
 

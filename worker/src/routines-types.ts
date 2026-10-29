@@ -32,7 +32,8 @@ export type RunStatus =
   | "delayed"
   | "completed"
   | "failed"
-  | "rejected";
+  | "rejected"
+  | "awaiting_approval";
 
 export interface RoutineRow {
   routine_id: string;

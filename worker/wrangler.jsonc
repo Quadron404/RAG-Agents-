@@ -55,6 +55,11 @@
     "ROUTINE_MAX_ATTEMPTS": "5",
     "ROUTINE_DISPATCH_BATCH": "20",
     "ROUTINE_RETRY_BASE_MS": "60000",
+    // Worker-native Gmail sender alias.  When set, this verified Gmail alias is
+    // used as the From header instead of GMAIL_SENDER_EMAIL.  The alias must be
+    // configured under Gmail Settings → Accounts and Import → Send mail as.
+    // Leave empty to use the central sender address.
+    "GMAIL_SENDER_ALIAS": "",
     // Worker-native chat.  Provider secrets are set with `wrangler secret put`;
     // an empty/absent provider key is skipped rather than invented.
     "AI_SEARCH_INSTANCE": "rag-conversations",

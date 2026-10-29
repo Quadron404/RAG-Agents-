@@ -9,7 +9,7 @@
  * The recipient is always the authenticated user's verified Google email,
  * resolved server-side from the session.  The model cannot supply a recipient.
  */
-import type { Env } from "../env";
+import type { Env } from "./env";
 
 export class GmailSenderError extends Error {}
 
@@ -95,7 +95,8 @@ export async function sendGmail(
   body: string,
 ): Promise<string> {
   const accessToken = await refreshAccessToken(env);
-  const sender = env.GMAIL_SENDER_EMAIL!;
+  // Prefer the configured alias if set; fall back to the central sender address.
+  const sender = env.GMAIL_SENDER_ALIAS ?? env.GMAIL_SENDER_EMAIL!;
   const raw = buildRaw(sender, recipient, subject, body);
 
   const response = await fetch(GMAIL_SEND_URL, {

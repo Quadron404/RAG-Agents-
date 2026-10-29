@@ -58,25 +58,29 @@ export const CREATE_ROUTINE_TOOL: ToolDefinition = {
       },
       schedule_type: {
         type: "string",
-        enum: ["daily", "monthly"],
-        description: "Whether the routine runs every day or once a month.",
+        enum: ["once", "daily", "monthly"],
+        description: "Whether the routine runs once at a specific time, every day, or once a month.",
       },
       time: {
-        type: "string",
-        description: "Execution time in 24-hour HH:MM format, interpreted in the owner's timezone.",
+        type: ["string", "null"],
+        description: "Execution time in 24-hour HH:MM format, interpreted in the owner's timezone. Required for daily/monthly, not for once.",
+      },
+      at: {
+        type: ["string", "null"],
+        description: "UTC ISO timestamp for a one-time routine (e.g. '2026-10-29T14:30:00Z'). Required when schedule_type is 'once'.",
       },
       day_of_month: {
         type: ["integer", "null"],
         minimum: 1,
         maximum: 28,
-        description: "Day of month for monthly routines; null for daily routines.",
+        description: "Day of month for monthly routines; null for daily/once routines.",
       },
       timezone: {
         type: "string",
         description: "IANA timezone like 'America/New_York'; defaults to the owner's timezone.",
       },
     },
-    required: ["name", "task_prompt", "schedule_type", "time"],
+    required: ["name", "task_prompt", "schedule_type"],
     additionalProperties: false,
   },
 };
@@ -175,15 +179,31 @@ function routineText(r: RoutineView): string {
 function scheduleFromArgs(args: Record<string, unknown>): { schedule_type: string; schedule_definition: unknown; ambiguous?: boolean; error?: string } {
   const schedule_type = str(args.schedule_type);
   const time = str(args.time);
+  const at = str(args.at);
   const day = args.day_of_month;
 
   let definition: Record<string, unknown>;
-  if (schedule_type === "daily") {
+  if (schedule_type === "once") {
+    if (!at) {
+      return { schedule_type, schedule_definition: {}, error: "one-time routines need an 'at' UTC timestamp" };
+    }
+    const ms = Date.parse(at);
+    if (!Number.isFinite(ms)) {
+      return { schedule_type, schedule_definition: {}, error: `could not read ${JSON.stringify(at)} as a timestamp` };
+    }
+    definition = { type: "once", at: new Date(ms).toISOString() };
+  } else if (schedule_type === "daily") {
+    if (!time) {
+      return { schedule_type, schedule_definition: {}, error: "daily routines need a time like '09:00'" };
+    }
     if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
       return { schedule_type, schedule_definition: {}, error: "daily routines need a time like '09:00'" };
     }
     definition = { type: "daily", time };
   } else if (schedule_type === "monthly") {
+    if (!time) {
+      return { schedule_type, schedule_definition: {}, error: "monthly routines need a time like '09:00'" };
+    }
     if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
       return { schedule_type, schedule_definition: {}, error: "monthly routines need a time like '09:00'" };
     }
@@ -193,7 +213,7 @@ function scheduleFromArgs(args: Record<string, unknown>): { schedule_type: strin
     }
     definition = { type: "monthly", time, day: Math.floor(d) };
   } else {
-    return { schedule_type, schedule_definition: {}, error: "schedule_type must be 'daily' or 'monthly'" };
+    return { schedule_type, schedule_definition: {}, error: "schedule_type must be 'once', 'daily' or 'monthly'" };
   }
 
   return { schedule_type, schedule_definition: definition };

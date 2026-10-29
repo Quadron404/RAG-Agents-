@@ -26,7 +26,7 @@ import { runRollupScheduleTick, type RollupTickResult } from "./chat/rollup-sche
 import { runRollupSummaryTick } from "./chat/daily-rollup";
 import { scheduleMonthlyCompaction, runMonthlyCompactTick, type MonthlyCompactTickResult } from "./chat/monthly-compact";
 import { scheduleYearlyCompaction, runYearlyCompactTick, type YearlyCompactTickResult } from "./chat/yearly-compact";
-import { executeRoutine } from "./routine-execution";
+import { executeRoutine, type RoutineExecutionResult } from "./routine-execution";
 import {
   advanceRoutine,
   claimRun,
@@ -138,6 +138,9 @@ export async function runScheduler(
       case "queued":
         result.queued += 1;
         break;
+      case "awaiting_approval":
+        // Run is waiting for owner approval; not counted as completed/failed.
+        break;
     }
   }
 
@@ -154,7 +157,7 @@ export async function runScheduler(
   return result;
 }
 
-type Outcome = "completed" | "failed" | "delayed" | "rejected" | "queued";
+type Outcome = "completed" | "failed" | "delayed" | "rejected" | "queued" | "awaiting_approval";
 
 async function executeOne(
   env: Env,
@@ -175,12 +178,32 @@ async function executeOne(
   }
 
   try {
-    const result = await executeRoutine(env, routine.task_prompt);
+    const result: RoutineExecutionResult = await executeRoutine(env, routine.task_prompt, {
+      routineRunId: run.routine_run_id,
+      ownerSub: routine.owner_sub,
+      ownerId: routine.owner_id,
+    });
+
+    // If execution created a pending approval (e.g. gmail.send_email), the run
+    // waits for the owner to Allow/Deny.  It is not retried by the scheduler;
+    // the approval handler resolves it when the owner decides.
+    if (result.approvalId) {
+      await env.DB.prepare(
+        `UPDATE routine_runs
+          SET status = 'awaiting_approval', approval_id = ?1, updated_at = ?2
+        WHERE routine_run_id = ?3`,
+      )
+        .bind(result.approvalId, nowMs, run.routine_run_id)
+        .run();
+      await recordRoutineStatus(env, routine.routine_id, "awaiting_approval", nowMs);
+      return "awaiting_approval";
+    }
+
     await finishRun(
       env,
       run.routine_run_id,
       "completed",
-      { result },
+      { result: result.text },
       nowMs,
     );
     await recordRoutineStatus(env, routine.routine_id, "completed", nowMs);

@@ -97,6 +97,20 @@ export const FIRST_TURN_INSTRUCTION =
 const MAX_CONTENT_CHARS = 100_000;
 const MAX_TOOL_ITERATIONS = 8;
 
+const REFUSAL_PATTERNS = [
+  /i\s+(can|cannot|can't|will not|won't|do not|don't)\s+(send|email|mail)/i,
+  /i\s+(am\s+)?(not\s+)?(able|unable)\s+to\s+(send|email|mail)/i,
+  /i\s+(apologize|apologise|sorry)/i,
+  /i\s+refuse/i,
+  /i\s+decline/i,
+  /cannot\s+send\s+email/i,
+  /unable\s+to\s+send/i,
+];
+
+function isRefusal(text: string): boolean {
+  return REFUSAL_PATTERNS.some((re) => re.test(text.trim()));
+}
+
 export function isChatPath(path: string): boolean {
   return path === "/threads" || path.startsWith("/threads/") || path === "/chat/status";
 }
@@ -583,6 +597,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
       let currentText = "";
       const calls: ToolCall[] = [];
+      let stopReason = "";
       try {
         const chatTools = toolsAllowed
           ? [...ROUTINE_TOOLS, HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, ...CONNECTOR_TOOLS]
@@ -601,6 +616,8 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
             if (usedCallIds.has(id)) id = `${id}_${iteration}`;
             usedCallIds.add(id);
             calls.push({ ...event.call, id });
+          } else if (event.type === "done") {
+            stopReason = event.stopReason;
           }
         }
       } catch (error) {
@@ -619,6 +636,33 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       }
 
       const assistantContent = currentText;
+
+      // A provider-level refusal signal (content filter, safety, etc.) is an
+      // authoritative signal that the model must not act.  Block any tool calls
+      // regardless of what tool_calls were emitted.
+      const REFUSAL_STOP_REASONS = [
+        "content_filter",
+        "safety",
+        "toxic",
+        "blocked",
+        "refusal",
+      ];
+      if (REFUSAL_STOP_REASONS.some((r) => stopReason.toLowerCase().includes(r))) {
+        finalText = assistantContent ||
+          "I'm sorry, but I can't help with that request.";
+        partial = finalText;
+        break;
+      }
+
+      // If the assistant's visible text indicates refusal, do not execute any
+      // tool calls -- the model's words ("I can't send that") are authoritative,
+      // and a tool call alongside refusal text must not result in action.
+      if (isRefusal(assistantContent)) {
+        finalText = assistantContent;
+        partial = assistantContent;
+        break;
+      }
+
       if (currentText) emit.send("reset", {});
       partial = "";
 

@@ -6,7 +6,7 @@
  * Only after the owner clicks Allow does the Worker execute the action.
  * Expired or already-decided approvals can never be replayed.
  */
-import type { Env } from "../env";
+import type { Env } from "./env";
 
 export interface ConnectorApproval {
   approval_id: string;
@@ -142,42 +142,32 @@ export async function resolveConnectorApproval(
   approvalId: string,
   input: ResolveApprovalInput,
 ): Promise<ConnectorApproval | null> {
-  const row = await env.DB.prepare(
-    `SELECT ${APPROVAL_COLUMNS} FROM connector_approvals
-     WHERE approval_id = ?1 AND status = 'pending'`,
-  )
-    .bind(approvalId)
-    .first<ConnectorApproval & { arguments: string }>();
-  if (!row) return null;
-
   const now = nowMs();
-  const expired = now > row.expires_at;
-  if (expired) {
-    input.decision = "expired";
-    input.result = input.result ?? "expired before decision";
-  }
 
-  await env.DB.prepare(
+  // Atomically transition from pending to the decided state.  The conditional
+  // WHERE is the whole point: only one request can win the transition from
+  // 'pending' to anything else.  A second request hitting the same approval
+  // after it has been decided will match zero rows and learn the outcome is
+  // already recorded -- no double-send, no race.
+  const result = await env.DB.prepare(
     `UPDATE connector_approvals
        SET status = ?2, decided_at = ?3, decided_by = ?4, result = ?5, updated_at = ?3
-     WHERE approval_id = ?1`,
+     WHERE approval_id = ?1 AND status = 'pending'`,
   )
-    .bind(
-      approvalId,
-      input.decision,
-      now,
-      input.decidedBy,
-      input.result ?? "",
-    )
+    .bind(approvalId, input.decision, now, input.decidedBy, input.result ?? "")
     .run();
 
-  return {
-    ...row,
-    status: input.decision,
-    decided_at: now,
-    decided_by: input.decidedBy,
-    result: input.result ?? null,
-  };
+  if (result.meta?.changes === 0) {
+    // The approval was not pending: it was already decided, or does not exist.
+    const existing = await getConnectorApproval(env, approvalId);
+    if (!existing) return null;
+    return existing;
+  }
+
+  const row = await getConnectorApproval(env, approvalId);
+  return row
+    ? { ...row, status: input.decision, decided_at: now, decided_by: input.decidedBy, result: input.result ?? null }
+    : null;
 }
 
 export async function expireConnectorApprovals(env: Env, userId: string): Promise<number> {
