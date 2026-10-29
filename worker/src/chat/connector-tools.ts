@@ -97,7 +97,7 @@ export async function executeConnectorTool(
       owner_sub: ownerSub,
       connector: "gmail",
       action: "send_email",
-      arguments: { content },
+      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
     });
     return {
       ok: true,
@@ -108,7 +108,7 @@ export async function executeConnectorTool(
         approval_id: approval.approval_id,
         connector: "gmail",
         action: "send_email",
-        arguments: { content },
+        arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
         expires_at: approval.expires_at,
       },
     };
@@ -170,7 +170,7 @@ export async function executeApprovedConnectorAction(
       `UPDATE connector_approvals SET result = ?1, updated_at = ?2 WHERE approval_id = ?3`,
     )
       .bind(
-        JSON.stringify({ ok: true, connector: "gmail", action: "send_email", recipient, message_id }),
+        JSON.stringify({ ok: true, connector: "gmail", action: "send_email", recipient, message_id: messageId }),
         Date.now(),
         approvalId,
       )
@@ -178,7 +178,7 @@ export async function executeApprovedConnectorAction(
 
     return {
       ok: true,
-      result: { ok: true, connector: "gmail", action: "send_email", recipient, message_id },
+      result: { ok: true, connector: "gmail", action: "send_email", recipient, message_id: messageId },
     };
   } catch (error) {
     return { ok: false, error: (error as Error).message };

@@ -104,7 +104,7 @@ export async function executeMailToolCall(
       owner_sub: ownerSub,
       connector: "gmail",
       action: "send_email",
-      arguments: { content },
+      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
     });
     return {
       ok: true,
@@ -115,7 +115,7 @@ export async function executeMailToolCall(
         approval_id: approval.approval_id,
         connector: "gmail",
         action: "send_email",
-        arguments: { content },
+        arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
         expires_at: approval.expires_at,
       },
     };

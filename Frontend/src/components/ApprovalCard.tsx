@@ -44,6 +44,9 @@ export function ApprovalCard({
     return JSON.stringify(args, null, 2);
   })();
 
+  const senderEmail = String((approval.arguments || {}).sender_email ?? approval.connector);
+  const subject = "RAG Agents";
+
   const handleAllow = useCallback(async () => {
     setBusy(true);
     const result = await executeConnectorApproval(approval.approval_id);
@@ -90,28 +93,21 @@ export function ApprovalCard({
           <span className="approval-card__value">{approval.action}</span>
         </div>
         <div className="approval-card__field">
-          <span className="approval-card__label">Account</span>
-          <span className="approval-card__value">
-            Your connected {approval.connector} account
-          </span>
+          <span className="approval-card__label">From</span>
+          <span className="approval-card__value">{senderEmail}</span>
         </div>
-        {approval.action === "send_email" ? (
-          <>
-            <div className="approval-card__field">
-              <span className="approval-card__label">Recipient</span>
-              <span className="approval-card__value">Your verified email (fixed — cannot be changed)</span>
-            </div>
-            <div className="approval-card__field approval-card__field--content">
-              <span className="approval-card__label">Message</span>
-              <div className="approval-card__message">{argumentsText}</div>
-            </div>
-          </>
-        ) : (
-          <div className="approval-card__field">
-            <span className="approval-card__label">Details</span>
-            <div className="approval-card__message">{argumentsText}</div>
-          </div>
-        )}
+        <div className="approval-card__field">
+          <span className="approval-card__label">To</span>
+          <span className="approval-card__value">Your verified email (fixed — cannot be changed)</span>
+        </div>
+        <div className="approval-card__field">
+          <span className="approval-card__label">Subject</span>
+          <span className="approval-card__value">{subject}</span>
+        </div>
+        <div className="approval-card__field approval-card__field--content">
+          <span className="approval-card__label">Message</span>
+          <div className="approval-card__message">{argumentsText}</div>
+        </div>
         <div className="approval-card__field">
           <span className="approval-card__label">Expires</span>
           <span className="approval-card__value">{expires}</span>

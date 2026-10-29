@@ -715,6 +715,9 @@ export const useCore = create<CoreState>((set, get) => ({
     // Chat is served by the Worker and stays available even when the Codespace
     // socket is down.  The socket is only for computer controls and live screen.
     set({ status: "online" });
+    // Load the user's existing conversations immediately so the sidebar is
+    // populated even before the WebSocket delivers its first event.
+    void get().refreshThreads();
     try {
       ws = new WebSocket(wsUrl(`/ws/${currentUserId()}`));
     } catch {
