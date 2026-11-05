@@ -74,26 +74,27 @@ export async function executeMailToolCall(
   call: ToolCall,
 ): Promise<MailToolResult> {
   if (call.name !== MAIL_TOOL_CALL_NAME) {
-    return { ok: false, error: "The requested mail tool is not available." };
+    return { ok: false, output: "", error: "The requested mail tool is not available." };
   }
 
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(call.arguments || "{}");
   } catch {
-    return { ok: false, error: "The mail tool arguments were malformed." };
+    return { ok: false, output: "", error: "The mail tool arguments were malformed." };
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, error: "The mail tool arguments were malformed." };
+    return { ok: false, output: "", error: "The mail tool arguments were malformed." };
   }
   const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
   if (!content) {
-    return { ok: false, error: "email content is required." };
+    return { ok: false, output: "", error: "email content is required." };
   }
 
   if (!env.GMAIL_SENDER_EMAIL || !env.GMAIL_SENDER_REFRESH_TOKEN) {
     return {
       ok: false,
+      output: "",
       error: "email is not configured on this server; contact your administrator",
     };
   }
@@ -120,6 +121,6 @@ export async function executeMailToolCall(
       },
     };
   } catch (error) {
-    return { ok: false, error: `could not request connector approval: ${(error as Error).message}` };
+    return { ok: false, output: "", error: `could not request connector approval: ${(error as Error).message}` };
   }
 }
