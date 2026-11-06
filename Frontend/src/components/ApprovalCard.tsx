@@ -15,12 +15,18 @@ function connectorIcon(connector: string) {
 
 function statusTone(status: string) {
   switch (status) {
+    case "accepted_by_gmail":
     case "allowed":
       return "green";
     case "denied":
       return "red";
     case "expired":
       return "amber";
+    case "failed":
+    case "outcome_unknown":
+      return "red";
+    case "sending":
+      return "default";
     default:
       return "default";
   }
@@ -45,7 +51,7 @@ export function ApprovalCard({
   })();
 
   const senderEmail = String((approval.arguments || {}).sender_email ?? approval.connector);
-  const subject = "RAG Agents";
+  const subject = String((approval.arguments || {}).subject ?? "RAG Agents");
 
   const handleAllow = useCallback(async () => {
     setBusy(true);
@@ -71,7 +77,8 @@ export function ApprovalCard({
     onResolved?.();
   }, [approval.approval_id, toast, onResolved]);
 
-  const expired = approval.status !== "pending";
+  const open = approval.status === "approval_pending";
+  const decided = !open;
   const expires = new Date(approval.expires_at * 1000).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -119,7 +126,7 @@ export function ApprovalCard({
       </div>
 
       <div className="approval-card__actions">
-        {!expired ? (
+        {open ? (
           <>
             <IconButton
               icon={Send}
@@ -136,7 +143,11 @@ export function ApprovalCard({
               ariaLabel="Deny this connector action"
             />
           </>
-        ) : null}
+        ) : (
+          <span className="approval-card__decided">
+            {decided ? `Already ${approval.status}.` : ""}
+          </span>
+        )}
       </div>
     </div>
   );

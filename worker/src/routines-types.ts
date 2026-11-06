@@ -6,13 +6,14 @@
  * without a circular import between recurrence and the store).
  */
 
-export type ScheduleType = "once" | "daily" | "weekly" | "monthly";
+export type ScheduleType = "once" | "daily" | "weekly" | "monthly" | "interval";
 
 export type RoutineSchedule =
   | { type: "once"; at: string }
   | { type: "daily"; time: string }
   | { type: "weekly"; time: string; weekdays: number[] }
-  | { type: "monthly"; time: string; day: number };
+  | { type: "monthly"; time: string; day: number }
+  | { type: "interval"; every_ms: number; anchor: string };
 
 /**
  * The lifecycle of a run.  The allowed transitions are enforced in the store,
@@ -49,6 +50,7 @@ export interface RoutineRow {
   next_run_at: number | null;
   last_run_at: number | null;
   last_run_status: string;
+  authorization_policy: string;
   created_at: number | null;
   updated_at: number | null;
 }

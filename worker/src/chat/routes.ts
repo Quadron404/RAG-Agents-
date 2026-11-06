@@ -707,17 +707,17 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
             principal.user.timezone ?? "UTC",
             call,
           );
-          output = result.output;
+          output = result.output ?? "";
           errorCode = result.error ?? "";
         } else if (isMailToolCall(call.name)) {
           // Mail sending is backend-owned (encrypted Gmail tokens); proxy to it.
           const result = await executeMailToolCall(env, ownerSub, principal.user.id, call);
-          output = result.output;
+          output = result.output ?? "";
           errorCode = result.error ?? "";
         } else if (isConnectorTool(call.name)) {
           // Connector actions create a pending approval; nothing executes yet.
           const result = await executeConnectorTool(env, ownerSub, principal.user.id, call);
-          output = result.output;
+          output = result.output ?? "";
           errorCode = result.error ?? "";
         } else {
           // Worker-native history tool.

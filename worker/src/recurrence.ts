@@ -216,6 +216,26 @@ export function validateSchedule(
     return { ok: true, schedule: { type: "monthly", time: time.text, day }, timeZone: tz };
   }
 
+  if (type === "interval") {
+    const every = def.every_ms;
+    if (typeof every !== "number" || !Number.isFinite(every) || every <= 0) {
+      return err("an interval routine needs a positive 'every_ms' duration in milliseconds", true);
+    }
+    const anchor = def.anchor;
+    if (typeof anchor !== "string" || !anchor.trim()) {
+      return err("an interval routine needs an 'anchor' UTC ISO timestamp");
+    }
+    const ms = Date.parse(anchor.trim());
+    if (!Number.isFinite(ms)) {
+      return err(`could not read ${JSON.stringify(String(anchor))} as a timestamp`);
+    }
+    return {
+      ok: true,
+      schedule: { type: "interval", every_ms: every, anchor: new Date(ms).toISOString() },
+      timeZone: tz,
+    };
+  }
+
   return err(`unsupported schedule type ${JSON.stringify(String(scheduleType ?? ""))}`);
 }
 
@@ -237,6 +257,18 @@ export function nextOccurrence(
   if (schedule.type === "once") {
     const at = Date.parse(schedule.at);
     return Number.isFinite(at) && at > fromMs ? at : null;
+  }
+
+  if (schedule.type === "interval") {
+    const anchor = Date.parse(schedule.anchor);
+    const every = schedule.every_ms;
+    if (!Number.isFinite(anchor) || !Number.isFinite(every) || every <= 0) return null;
+    // Intervals are duration-based from a UTC anchor: no wall clock, no DST,
+    // no drift. The next occurrence is the smallest anchor + n*every strictly
+    // after fromMs.
+    if (anchor > fromMs) return anchor;
+    const n = Math.floor((fromMs - anchor) / every) + 1;
+    return anchor + n * every;
   }
 
   const time = parseTime(schedule.time);
@@ -292,7 +324,18 @@ export function describeSchedule(schedule: RoutineSchedule, timeZone: string): s
     }
     case "monthly":
       return `monthly on day ${schedule.day} at ${schedule.time} (${timeZone})`;
+    case "interval":
+      return `every ${formatMs(schedule.every_ms)} from ${schedule.anchor} (UTC)`;
   }
+}
+
+function formatMs(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  const mins = Math.floor(secs / 60);
+  const hours = Math.floor(mins / 60);
+  if (hours > 0) return `${hours} hour${hours !== 1 ? "s" : ""}`;
+  if (mins > 0) return `${mins} minute${mins !== 1 ? "s" : ""}`;
+  return `${secs} second${secs !== 1 ? "s" : ""}`;
 }
 
 export function parseScheduleDefinition(raw: unknown): RoutineSchedule | null {

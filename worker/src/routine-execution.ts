@@ -11,7 +11,7 @@
  * owner clicks Allow.
  */
 import type { Env } from "./env";
-import { createConnectorApproval } from "./connector-approvals";
+import { createEmailApproval, type EmailRequestInput } from "./chat/email-service";
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const ROUTINE_MODEL = "openai/gpt-oss-20b";
@@ -171,19 +171,17 @@ export async function executeRoutine(
           typeof parsed.content === "string" ? parsed.content.trim() : "";
         if (!content) continue;
 
-        const approval = await createConnectorApproval(env, {
-          user_id: ownerId,
-          owner_sub: ownerSub,
-          connector: "gmail",
-          action: "send_email",
-          arguments: {
-            content,
-            sender_email: env.GMAIL_SENDER_ALIAS ?? env.GMAIL_SENDER_EMAIL,
-          },
-          routine_run_id: routineRunId,
+        const approvalResult = await createEmailApproval(env, {
+          ownerId,
+          ownerSub,
+          content,
+          senderEmail: env.GMAIL_SENDER_ALIAS ?? env.GMAIL_SENDER_EMAIL ?? "",
+          subject: "RAG Agents",
+          routineRunId,
         });
 
-        return { text, approvalId: approval.approval_id };
+        if (!approvalResult.ok) continue;
+        return { text, approvalId: approvalResult.approval.approval_id };
       }
     }
   }

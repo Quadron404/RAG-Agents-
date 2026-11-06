@@ -30,6 +30,8 @@ export interface Routine {
   next_run_at: number | null;
   last_run_at: number | null;
   last_run_status: string;
+  /** How scheduled email sends are authorized (per_run | setup_only | owner_authorized). */
+  authorization_policy: string;
   created_at: number;
   updated_at: number;
 }

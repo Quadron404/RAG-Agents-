@@ -420,7 +420,7 @@ export default {
           if (approval.user_id !== userId) {
             return json({ error: "approval does not belong to you" }, 403);
           }
-          if (approval.status !== "pending") {
+          if (approval.status !== "approval_pending") {
             return json({ ok: false, error: `approval is ${approval.status}` }, 400);
           }
           if (Date.now() > approval.expires_at) {

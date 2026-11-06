@@ -66,10 +66,17 @@ async function refreshAccessToken(env: Env): Promise<string> {
 
 /** Build an RFC 822 MIME message and return its URL-safe base64raw encoding. */
 function buildRaw(sender: string, to: string, subject: string, body: string): string {
+  // Header injection protection: strip CR/LF from every header field so a
+  // caller cannot inject additional MIME headers (BCC, CC, extra To, etc.).
+  const safe = (value: string) => String(value).replace(/[\r\n]+/g, " ").trim();
+  const safeSender = safe(sender);
+  const safeTo = safe(to);
+  const safeSubject = safe(subject);
+
   const msg = [
-    `From: ${sender}`,
-    `To: ${to}`,
-    `Subject: ${subject}`,
+    `From: ${safeSender}`,
+    `To: ${safeTo}`,
+    `Subject: ${safeSubject}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset="utf-8"`,
     "",
