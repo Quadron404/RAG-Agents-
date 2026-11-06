@@ -114,6 +114,15 @@
   --screen-bg: linear-gradient(160deg, #16151c 0%, #100f15 55%, #14131a 100%);
 }
 
+/* A quiet editorial type system: tighter display text, open reading text, and
+   tabular numerals where the interface carries status or time. */
+:root {
+  --font-ui: "Inter", "Inter Variable", "SF Pro Display", "Segoe UI Variable", system-ui, sans-serif;
+  --font-reading: "Inter", "Inter Variable", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --ease-duet: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.25, 1.18);
+}
+
 /* =============================== base =================================== */
 * {
   box-sizing: border-box;
@@ -132,12 +141,10 @@ html {
 }
 
 body {
-  font-family: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont,
-    "SF Pro Text", "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 15px;
-  line-height: 1.5;
-  letter-spacing: -0.011em;
+  line-height: 1.52;
+  letter-spacing: -0.014em;
   font-feature-settings: "cv11" 1, "ss01" 1, "calt" 1;
   color: var(--text);
   background: var(--bg0);
@@ -6085,4 +6092,103 @@ color: #eef0f6;
   gap: 8px;
 }
 
+/* ======================= duet interaction layer ==========================
+   Motion stays on opacity and transforms so the transcript feels alive without
+   making typing or streaming cause layout thrash. */
+.thread {
+  background:
+    radial-gradient(900px 420px at 54% 0%, var(--accent-soft), transparent 62%),
+    var(--bg0);
+}
 
+.thread__inner {
+  padding-top: 30px;
+  padding-bottom: 28px;
+}
+
+.msg {
+  animation: duet-message-in 520ms var(--ease-duet) both;
+  transform-origin: 50% 100%;
+}
+
+.msg:nth-child(2n) { animation-delay: 18ms; }
+.msg:nth-child(3n) { animation-delay: 36ms; }
+
+.msg__body {
+  gap: 4px;
+}
+
+.msg__meta {
+  letter-spacing: -0.005em;
+}
+
+.msg__name {
+  letter-spacing: -0.018em;
+}
+
+.bubble {
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--text) 4%, transparent);
+  transition: transform 220ms var(--ease-duet), box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.msg:hover .bubble {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.msg--user .bubble {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 92%, white), var(--accent));
+  color: var(--on-accent);
+  border-color: transparent;
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.msg--user .bubble:hover {
+  transform: translateY(-1px);
+}
+
+.composer-shell {
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+}
+
+.composer {
+  border-color: color-mix(in srgb, var(--line-strong) 75%, var(--accent));
+  box-shadow: 0 18px 50px color-mix(in srgb, var(--text) 10%, transparent), 0 0 0 1px color-mix(in srgb, var(--accent) 7%, transparent);
+  transition: transform 300ms var(--ease-duet), box-shadow 300ms ease, border-color 300ms ease;
+}
+
+.composer--focus {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  box-shadow: 0 22px 60px color-mix(in srgb, var(--accent) 14%, transparent), 0 0 0 4px var(--accent-soft);
+}
+
+.composer__send:not(:disabled) {
+  animation: duet-send-breathe 2.8s ease-in-out infinite;
+}
+
+.empty__orb {
+  animation: duet-orb-float 5s ease-in-out infinite;
+  box-shadow: 0 0 0 1px var(--line), 0 16px 42px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+@keyframes duet-message-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes duet-send-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 12%, transparent); }
+}
+
+@keyframes duet-orb-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-7px) rotate(3deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg, .empty__orb, .composer__send:not(:disabled) { animation: none; }
+  .composer--focus, .msg--user .bubble { transform: none; }
+}
