@@ -454,6 +454,28 @@ textarea {
   }
 }
 
+/* ---- AgentAvatar: canonical 3x3 dot-grid specialist mark ---- */
+.agent-avatar__dot {
+  border-radius: 50%;
+  background: var(--accent);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar__dot {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/* ---- accent palette for dynamic specialist roles (secondary differentiator) ---- */
+:root {
+  --accent-chief: var(--violet);
+  --accent-researcher: var(--blue);
+  --accent-engineer: var(--amber);
+  --accent-navigator: var(--green);
+}
+
 /* ---- main ---- */
 .main {
   flex: 1;

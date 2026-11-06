@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Check, Mail, Send, X } from "lucide-react";
+import { Check, Send, X } from "lucide-react";
 import { useUi } from "../store";
 import {
   denyConnectorApproval,
@@ -7,10 +7,10 @@ import {
   type ConnectorApproval,
 } from "../lib/routines";
 import { IconButton, Pill } from "./ui";
+import { AgentAvatar } from "./AgentAvatar";
 
 function connectorIcon(connector: string) {
-  if (connector === "gmail") return <Mail size={16} />;
-  return <Send size={16} />;
+  return <AgentAvatar agentId={connector} name={connector} role="connector" status="idle" size={16} decorative={true} />;
 }
 
 function statusTone(status: string) {

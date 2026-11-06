@@ -2,6 +2,7 @@ import { BOTS, useUi } from "../store";
 import { useCore } from "../core";
 import { useAgentStates } from "../lib/agents";
 import { haptic } from "../lib/haptics";
+import { AgentAvatar } from "../components/AgentAvatar";
 
 export function BotsView() {
   const run = useCore((s) => s.run);
@@ -36,9 +37,8 @@ export function BotsView() {
                   toast(`Talking to ${b.name}`, "info");
                 }}
               >
-                <div className="bot-card__art" style={{ background: b.gradient }}>
-                  {b.glyph}
-                  <span className={`bot-card__status bot-card__status--${st.status}`} />
+                <div className="bot-card__art">
+                  <AgentAvatar agentId={b.id} name={b.name} role={b.role} status={st.status} size={44} />
                 </div>
                 <div className="bot-card__name">{b.name}</div>
                 <div className="bot-card__role">{b.role}</div>

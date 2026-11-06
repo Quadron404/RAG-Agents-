@@ -272,3 +272,347 @@ export async function setDeveloperMode(env: Env, userId: string, enabled: boolea
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Agent identities, assignments, executions                                  */
+/* -------------------------------------------------------------------------- */
+
+export interface AgentIdentityRow {
+  agent_id: string;
+  owner_sub: string;
+  owner_id: string;
+  name: string;
+  slug: string;
+  role: string;
+  description: string;
+  specialization: string;
+  capability_profile: string;
+  identity_version: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AgentAssignmentRow {
+  assignment_id: string;
+  agent_id: string;
+  owner_sub: string;
+  owner_id: string;
+  task_prompt: string;
+  context: string;
+  expected_deliverable: string;
+  output_schema: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AgentExecutionRow {
+  execution_id: string;
+  assignment_id: string;
+  agent_id: string;
+  owner_sub: string;
+  identity_version: number;
+  status: string;
+  result: string | null;
+  error_code: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+}
+
+const IDENTITY_COLUMNS =
+  "agent_id, owner_sub, owner_id, name, slug, role, description, specialization, capability_profile, identity_version, created_at, updated_at";
+
+const ASSIGNMENT_COLUMNS =
+  "assignment_id, agent_id, owner_sub, owner_id, task_prompt, context, expected_deliverable, output_schema, status, created_at, updated_at";
+
+const EXECUTION_COLUMNS =
+  "execution_id, assignment_id, agent_id, owner_sub, identity_version, status, result, error_code, started_at, completed_at, created_at, updated_at";
+
+export async function createAgentIdentity(
+  env: Env,
+  value: {
+    agentId: string;
+    ownerSub: string;
+    ownerId: string;
+    name: string;
+    slug: string;
+    role?: string;
+    description?: string;
+    specialization?: string;
+    capabilityProfile?: Record<string, unknown>;
+  },
+): Promise<AgentIdentityRow> {
+  const now = Date.now();
+  const profile = JSON.stringify(value.capabilityProfile ?? {});
+  const row = await env.DB.prepare(
+    `INSERT INTO agent_identities
+       (agent_id, owner_sub, owner_id, name, slug, role, description, specialization, capability_profile, identity_version, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?10)
+     ON CONFLICT(agent_id) DO UPDATE SET
+       name = excluded.name,
+       slug = excluded.slug,
+       role = excluded.role,
+       description = excluded.description,
+       specialization = excluded.specialization,
+       capability_profile = excluded.capability_profile,
+       updated_at = excluded.updated_at
+     RETURNING ${IDENTITY_COLUMNS}`,
+  )
+    .bind(
+      value.agentId,
+      value.ownerSub,
+      value.ownerId,
+      value.name,
+      value.slug,
+      value.role ?? "specialist",
+      value.description ?? "",
+      value.specialization ?? "",
+      profile,
+      now,
+    )
+    .first<AgentIdentityRow>();
+  if (!row) throw new Error("agent identity insert returned no row");
+  return row;
+}
+
+export async function getAgentIdentity(
+  env: Env,
+  agentId: string,
+): Promise<AgentIdentityRow | null> {
+  return env.DB.prepare(
+    `SELECT ${IDENTITY_COLUMNS} FROM agent_identities WHERE agent_id = ?1`,
+  )
+    .bind(agentId)
+    .first<AgentIdentityRow>();
+}
+
+export async function getAgentIdentityBySlug(
+  env: Env,
+  ownerSub: string,
+  slug: string,
+): Promise<AgentIdentityRow | null> {
+  return env.DB.prepare(
+    `SELECT ${IDENTITY_COLUMNS} FROM agent_identities
+     WHERE owner_sub = ?1 AND slug = ?2`,
+  )
+    .bind(ownerSub, slug)
+    .first<AgentIdentityRow>();
+}
+
+export async function listAgentIdentities(
+  env: Env,
+  ownerSub: string,
+): Promise<AgentIdentityRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${IDENTITY_COLUMNS} FROM agent_identities
+     WHERE owner_sub = ?1
+     ORDER BY updated_at DESC, agent_id ASC`,
+  )
+    .bind(ownerSub)
+    .all<AgentIdentityRow>();
+  return result.results ?? [];
+}
+
+export async function updateAgentIdentity(
+  env: Env,
+  agentId: string,
+  value: {
+    name?: string;
+    description?: string;
+    specialization?: string;
+    capabilityProfile?: Record<string, unknown>;
+  },
+): Promise<AgentIdentityRow | null> {
+  const now = Date.now();
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  let argIndex = 1;
+  if (value.name !== undefined) {
+    sets.push(`name = ?${argIndex++}`);
+    args.push(value.name);
+  }
+  if (value.description !== undefined) {
+    sets.push(`description = ?${argIndex++}`);
+    args.push(value.description);
+  }
+  if (value.specialization !== undefined) {
+    sets.push(`specialization = ?${argIndex++}`);
+    args.push(value.specialization);
+  }
+  if (value.capabilityProfile !== undefined) {
+    sets.push(`capability_profile = ?${argIndex++}`);
+    args.push(JSON.stringify(value.capabilityProfile));
+  }
+  if (sets.length === 0) return getAgentIdentity(env, agentId);
+  sets.push(`identity_version = identity_version + 1`);
+  sets.push(`updated_at = ?${argIndex++}`);
+  args.push(now);
+  args.push(agentId);
+  await env.DB.prepare(
+    `UPDATE agent_identities SET ${sets.join(", ")} WHERE agent_id = ?${argIndex}`,
+  )
+    .bind(...args)
+    .run();
+  return getAgentIdentity(env, agentId);
+}
+
+export async function createAgentAssignment(
+  env: Env,
+  value: {
+    assignmentId: string;
+    agentId: string;
+    ownerSub: string;
+    ownerId: string;
+    taskPrompt: string;
+    context?: Record<string, unknown>;
+    expectedDeliverable?: string;
+    outputSchema?: Record<string, unknown>;
+  },
+): Promise<AgentAssignmentRow> {
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `INSERT INTO agent_assignments
+       (assignment_id, agent_id, owner_sub, owner_id, task_prompt, context, expected_deliverable, output_schema, status, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?9)
+     RETURNING ${ASSIGNMENT_COLUMNS}`,
+  )
+    .bind(
+      value.assignmentId,
+      value.agentId,
+      value.ownerSub,
+      value.ownerId,
+      value.taskPrompt,
+      JSON.stringify(value.context ?? {}),
+      value.expectedDeliverable ?? "",
+      JSON.stringify(value.outputSchema ?? {}),
+      now,
+    )
+    .first<AgentAssignmentRow>();
+  if (!row) throw new Error("agent assignment insert returned no row");
+  return row;
+}
+
+export async function getAgentAssignment(
+  env: Env,
+  assignmentId: string,
+): Promise<AgentAssignmentRow | null> {
+  return env.DB.prepare(
+    `SELECT ${ASSIGNMENT_COLUMNS} FROM agent_assignments WHERE assignment_id = ?1`,
+  )
+    .bind(assignmentId)
+    .first<AgentAssignmentRow>();
+}
+
+export async function listAgentAssignments(
+  env: Env,
+  ownerSub: string,
+  agentId?: string,
+): Promise<AgentAssignmentRow[]> {
+  let sql = `SELECT ${ASSIGNMENT_COLUMNS} FROM agent_assignments WHERE owner_sub = ?1`;
+  const args: unknown[] = [ownerSub];
+  if (agentId) {
+    sql += ` AND agent_id = ?2`;
+    args.push(agentId);
+  }
+  sql += ` ORDER BY created_at DESC`;
+  const result = await env.DB.prepare(sql)
+    .bind(...args)
+    .all<AgentAssignmentRow>();
+  return result.results ?? [];
+}
+
+export async function updateAgentAssignmentStatus(
+  env: Env,
+  assignmentId: string,
+  status: string,
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await env.DB.prepare(
+    "UPDATE agent_assignments SET status = ?2, updated_at = ?3 WHERE assignment_id = ?1",
+  )
+    .bind(assignmentId, status, now)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function createAgentExecution(
+  env: Env,
+  value: {
+    executionId: string;
+    assignmentId: string;
+    agentId: string;
+    ownerSub: string;
+    identityVersion: number;
+  },
+): Promise<AgentExecutionRow> {
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `INSERT INTO agent_executions
+       (execution_id, assignment_id, agent_id, owner_sub, identity_version, status, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?6)
+     RETURNING ${EXECUTION_COLUMNS}`,
+  )
+    .bind(
+      value.executionId,
+      value.assignmentId,
+      value.agentId,
+      value.ownerSub,
+      value.identityVersion,
+      now,
+    )
+    .first<AgentExecutionRow>();
+  if (!row) throw new Error("agent execution insert returned no row");
+  return row;
+}
+
+export async function finishAgentExecution(
+  env: Env,
+  executionId: string,
+  value: {
+    status: string;
+    result?: string | null;
+    errorCode?: string | null;
+  },
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await env.DB.prepare(
+    `UPDATE agent_executions
+       SET status = ?2, result = COALESCE(?3, result), error_code = COALESCE(?4, error_code),
+           completed_at = ?5, updated_at = ?5
+     WHERE execution_id = ?1`,
+  )
+    .bind(executionId, value.status, value.result ?? null, value.errorCode ?? null, now)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function getAgentExecution(
+  env: Env,
+  executionId: string,
+): Promise<AgentExecutionRow | null> {
+  return env.DB.prepare(
+    `SELECT ${EXECUTION_COLUMNS} FROM agent_executions WHERE execution_id = ?1`,
+  )
+    .bind(executionId)
+    .first<AgentExecutionRow>();
+}
+
+export async function listAgentExecutions(
+  env: Env,
+  ownerSub: string,
+  assignmentId?: string,
+): Promise<AgentExecutionRow[]> {
+  let sql = `SELECT ${EXECUTION_COLUMNS} FROM agent_executions WHERE owner_sub = ?1`;
+  const args: unknown[] = [ownerSub];
+  if (assignmentId) {
+    sql += ` AND assignment_id = ?2`;
+    args.push(assignmentId);
+  }
+  sql += ` ORDER BY created_at DESC`;
+  const result = await env.DB.prepare(sql)
+    .bind(...args)
+    .all<AgentExecutionRow>();
+  return result.results ?? [];
+}
+

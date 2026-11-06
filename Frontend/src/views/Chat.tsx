@@ -31,6 +31,7 @@ import { Markdown } from "../lib/markdown";
 import { speechSupported, startDictation } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
+import { AgentAvatar } from "../components/AgentAvatar";
 import { ApprovalsList } from "../components/ApprovalCard";
 import {
   fetchConnectorApprovals,
@@ -290,17 +291,13 @@ function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadI
         baseMessageMenu(m, threadId, openMenu, e.clientX, e.clientY);
       }}
     >
-      <div
-        className="msg__ava"
-        style={
-          isUser
-            ? { background: "var(--bg4)", color: "var(--text-2)" }
-            : { background: bot?.gradient || "var(--bg3)", color: "#fff" }
-        }
-        aria-hidden
-      >
-        {isUser ? "You" : bot?.glyph || "◆"}
-      </div>
+      <AgentAvatar
+        agentId={parsed.kind === "commander" ? "chief" : parsed.kind === "worker" ? `worker-${parsed.role}` : "user"}
+        name={isUser ? "You" : bot?.name || parsed.title}
+        role={parsed.kind === "worker" ? parsed.title : undefined}
+        status={m.pending ? "waiting" : isUser ? "offline" : "idle"}
+        size={36}
+      />
       <div className="msg__body">
         <div className="msg__meta">
           <span className="msg__name">{isUser ? "You" : bot?.name || parsed.title}</span>
@@ -928,9 +925,7 @@ export function ChatView() {
             <ArrowLeft size={19} />
           </button>
           <span className="thread__ava" aria-hidden>
-            <span className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient }}>
-              {BOT_BY_ID.commander.glyph}
-            </span>
+            <AgentAvatar agentId="chief" name="Chief" role="commander" status="idle" size={36} />
           </span>
           <div className="thread__hmeta">
             <div className="thread__hname">Chief</div>
@@ -952,9 +947,7 @@ export function ChatView() {
         </div>
         {pendingApprovals.length > 0 && (
           <div className="msg msg--agent msg--commander">
-            <div className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient, color: "#fff" }}>
-              ◇
-            </div>
+            <AgentAvatar agentId="chief" name="Chief" role="commander" status="idle" size={36} />
             <div className="msg__body">
               <div className="msg__meta">
                 <span className="msg__name">{BOT_BY_ID.commander.name}</span>

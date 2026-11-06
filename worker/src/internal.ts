@@ -24,6 +24,7 @@ import {
   updateRoutine,
 } from "./routines";
 import { runScheduler } from "./scheduler";
+import { providerStatus } from "./chat/providers";
 
 function internalAuthorized(request: Request, env: Env): boolean {
   const supplied = request.headers.get("x-rag-internal-token") ?? "";
@@ -62,6 +63,30 @@ export async function handleInternal(request: Request, env: Env, url: URL): Prom
   if (path === "/internal/scheduler/run" && request.method === "POST") {
     const result = await runScheduler(env, now);
     return json({ ok: true, ...result });
+  }
+
+  if (path === "/internal/health") {
+    const dbOk = await (async () => {
+      try {
+        const row = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+        return row?.ok === 1;
+      } catch {
+        return false;
+      }
+    })();
+    const providers = await providerStatus(env);
+    const healthy = dbOk && providers.configured;
+    return json(
+      {
+        ok: healthy,
+        database: dbOk,
+        provider: providers.provider,
+        model: providers.model,
+        summaryConfigured: providers.summaryConfigured,
+        now,
+      },
+      healthy ? 200 : 503,
+    );
   }
 
   if (path === "/internal/routines" && request.method === "POST") {
