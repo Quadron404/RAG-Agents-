@@ -2,21 +2,18 @@
  * Worker-native mail_tool_call tool for Chief chat.
  *
  * The model can request an email to itself through Groq's native function call.
- * The actual sending uses the central Gmail sender account (GMAIL_SENDER_EMAIL
- * / GMAIL_SENDER_REFRESH_TOKEN as Cloudflare Worker secrets) -- users never
- * connect their personal Gmail just to receive notifications.
- *
- * A model tool call is only a request: the Worker creates a persistent,
- * owner-scoped, one-time pending approval in D1 and returns it without sending
- * anything.  The frontend shows an Allow/Deny card inline in chat; only after
- * the owner clicks Allow does the Worker send the email.
+ * The actual sending uses the shared email service (email-service.ts), which
+ * creates a persistent, owner-scoped, one-time pending approval in D1 and
+ * returns it without sending anything.  The frontend shows an Allow/Deny card
+ * inline in chat; only after the owner clicks Allow does the Worker send the
+ * email through the central Gmail sender.
  *
  * The recipient is always the authenticated user's verified Google account email
  * -- the model cannot supply one.
  */
 import type { Env } from "../env";
 import type { ToolCall, ToolDefinition } from "./types";
-import { createConnectorApproval } from "../connector-approvals";
+import { createEmailApproval, type EmailRequestInput } from "./email-service";
 
 export const MAIL_TOOL_CALL_TOOL: ToolDefinition = {
   name: "mail_tool_call",
@@ -42,7 +39,7 @@ export const MAIL_TOOL_CALL_NAME = MAIL_TOOL_CALL_TOOL.name;
 
 export interface MailToolResult {
   ok: boolean;
-  output: string;
+  output?: string;
   error?: string;
   approval?: {
     approval_id: string;
@@ -63,9 +60,8 @@ function str(value: unknown, fallback = ""): string {
 
 /**
  * Execute mail_tool_call by creating a pending, owner-scoped, one-time approval
- * in Worker D1.  Nothing is sent until the owner clicks Allow on the card.
- * The email is then sent through the central Gmail sender, addressed to the
- * owner's verified email.
+ * in Worker D1 through the shared email service.  Nothing is sent until the
+ * owner clicks Allow on the card.
  */
 export async function executeMailToolCall(
   env: Env,
@@ -98,25 +94,29 @@ export async function executeMailToolCall(
     };
   }
 
+  const input: EmailRequestInput = {
+    ownerSub,
+    ownerId,
+    content,
+    senderEmail: env.GMAIL_SENDER_EMAIL,
+  };
+
   try {
-    const approval = await createConnectorApproval(env, {
-      user_id: ownerId,
-      owner_sub: ownerSub,
-      connector: "gmail",
-      action: "send_email",
-      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-    });
+    const result = await createEmailApproval(env, input);
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
     return {
       ok: true,
       output:
         "Approval required: you will see an Allow/Deny card for sending this " +
         "email. No email is sent until you approve it.",
       approval: {
-        approval_id: approval.approval_id,
+        approval_id: result.approval.approval_id,
         connector: "gmail",
         action: "send_email",
         arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-        expires_at: approval.expires_at,
+        expires_at: result.approval.expires_at,
       },
     };
   } catch (error) {

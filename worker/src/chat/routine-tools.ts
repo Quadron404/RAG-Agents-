@@ -58,26 +58,45 @@ export const CREATE_ROUTINE_TOOL: ToolDefinition = {
       },
       schedule_type: {
         type: "string",
-        enum: ["once", "daily", "monthly"],
-        description: "Whether the routine runs once at a specific time, every day, or once a month.",
+        enum: ["once", "daily", "weekly", "monthly", "interval"],
+        description: "Whether the routine runs once at a specific time, every day, every week, once a month, or on a fixed interval.",
       },
       time: {
         type: ["string", "null"],
-        description: "Execution time in 24-hour HH:MM format, interpreted in the owner's timezone. Required for daily/monthly, not for once.",
+        description: "Execution time in 24-hour HH:MM format, interpreted in the owner's timezone. Required for daily/monthly/weekly, not for once/interval.",
       },
       at: {
         type: ["string", "null"],
         description: "UTC ISO timestamp for a one-time routine (e.g. '2026-10-29T14:30:00Z'). Required when schedule_type is 'once'.",
       },
+      anchor: {
+        type: ["string", "null"],
+        description: "UTC ISO timestamp for the first interval occurrence. Required when schedule_type is 'interval'.",
+      },
+      every_ms: {
+        type: ["integer", "null"],
+        minimum: 1,
+        description: "Fixed interval between occurrences in milliseconds (e.g. 18000000 for five hours). Required when schedule_type is 'interval'.",
+      },
       day_of_month: {
         type: ["integer", "null"],
         minimum: 1,
         maximum: 28,
-        description: "Day of month for monthly routines; null for daily/once routines.",
+        description: "Day of month for monthly routines; null for daily/once/interval routines.",
+      },
+      weekdays: {
+        type: ["array", "null"],
+        items: { type: "integer", minimum: 0, maximum: 6 },
+        description: "Weekdays (0=Sunday..6=Saturday) for weekly routines.",
       },
       timezone: {
         type: "string",
         description: "IANA timezone like 'America/New_York'; defaults to the owner's timezone.",
+      },
+      authorization_policy: {
+        type: "string",
+        enum: ["per_run", "setup_only", "owner_authorized"],
+        description: "How scheduled email sends are authorized: 'per_run' (default) requires owner Allow for every email; 'setup_only' requires one-time setup approval; 'owner_authorized' uses a narrowly scoped owner authorization.",
       },
     },
     required: ["name", "task_prompt", "schedule_type"],
@@ -158,7 +177,7 @@ const TOOL_NAMES = new Set(ROUTINE_TOOLS.map((t) => t.name));
 
 export interface ToolResult {
   ok: boolean;
-  output: string;
+  output?: string;
   error?: string;
   available?: boolean;
   routine?: RoutineView;
@@ -180,7 +199,9 @@ function scheduleFromArgs(args: Record<string, unknown>): { schedule_type: strin
   const schedule_type = str(args.schedule_type);
   const time = str(args.time);
   const at = str(args.at);
+  const anchor = str(args.anchor);
   const day = args.day_of_month;
+  const every_ms = args.every_ms;
 
   let definition: Record<string, unknown>;
   if (schedule_type === "once") {
@@ -200,6 +221,21 @@ function scheduleFromArgs(args: Record<string, unknown>): { schedule_type: strin
       return { schedule_type, schedule_definition: {}, error: "daily routines need a time like '09:00'" };
     }
     definition = { type: "daily", time };
+  } else if (schedule_type === "weekly") {
+    if (!time) {
+      return { schedule_type, schedule_definition: {}, error: "weekly routines need a time like '09:00'" };
+    }
+    if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
+      return { schedule_type, schedule_definition: {}, error: "weekly routines need a time like '09:00'" };
+    }
+    const raw = Array.isArray(args.weekdays) ? args.weekdays : [];
+    const weekdays = Array.from(
+      new Set(raw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value < 7)),
+    ).sort((a, b) => a - b);
+    if (weekdays.length === 0) {
+      return { schedule_type, schedule_definition: {}, error: "weekly routines need at least one weekday (0=Sunday..6=Saturday)" };
+    }
+    definition = { type: "weekly", time, weekdays };
   } else if (schedule_type === "monthly") {
     if (!time) {
       return { schedule_type, schedule_definition: {}, error: "monthly routines need a time like '09:00'" };
@@ -212,8 +248,21 @@ function scheduleFromArgs(args: Record<string, unknown>): { schedule_type: strin
       return { schedule_type, schedule_definition: {}, error: "monthly routines need a day of month between 1 and 28" };
     }
     definition = { type: "monthly", time, day: Math.floor(d) };
+  } else if (schedule_type === "interval") {
+    if (!anchor) {
+      return { schedule_type, schedule_definition: {}, error: "interval routines need an 'anchor' UTC ISO timestamp" };
+    }
+    const anchorMs = Date.parse(anchor);
+    if (!Number.isFinite(anchorMs)) {
+      return { schedule_type, schedule_definition: {}, error: `could not read ${JSON.stringify(anchor)} as a timestamp` };
+    }
+    const every = typeof every_ms === "number" ? every_ms : every_ms !== null && every_ms !== undefined ? Number(every_ms) : NaN;
+    if (!Number.isFinite(every) || every <= 0) {
+      return { schedule_type, schedule_definition: {}, error: "interval routines need a positive 'every_ms' duration in milliseconds" };
+    }
+    definition = { type: "interval", every_ms: Math.floor(every), anchor: new Date(anchorMs).toISOString() };
   } else {
-    return { schedule_type, schedule_definition: {}, error: "schedule_type must be 'once', 'daily' or 'monthly'" };
+    return { schedule_type, schedule_definition: {}, error: "schedule_type must be 'once', 'daily', 'weekly', 'monthly' or 'interval'" };
   }
 
   return { schedule_type, schedule_definition: definition };
@@ -269,6 +318,7 @@ export async function executeRoutineTool(
         return { ok: false, error: schedule.error };
       }
       const timezone = str(args.timezone) || ownerTimezone || "UTC";
+      const authPolicy = str(args.authorization_policy) || "per_run";
       const created = await createRoutine(env, {
         owner_sub: ownerSub,
         owner_id: ownerId,
@@ -278,6 +328,7 @@ export async function executeRoutineTool(
         schedule_type: schedule.schedule_type,
         schedule_definition: schedule.schedule_definition,
         timezone,
+        authorization_policy: authPolicy,
       }, nowMs());
       if (!created.ok) {
         return { ok: false, error: created.error };

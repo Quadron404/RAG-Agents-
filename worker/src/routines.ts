@@ -29,6 +29,7 @@ export interface CreateRoutineInput {
   schedule_type: string;
   schedule_definition: unknown;
   timezone: string;
+  authorization_policy?: string;
 }
 
 export interface RoutineView extends RoutineRow {
@@ -39,7 +40,7 @@ export interface RoutineView extends RoutineRow {
 
 const ROUTINE_COLUMNS =
   "routine_id, owner_sub, owner_id, agent_id, name, task_prompt, schedule_type, schedule_definition, " +
-  "timezone, enabled, next_run_at, last_run_at, last_run_status, created_at, updated_at";
+  "timezone, enabled, next_run_at, last_run_at, last_run_status, authorization_policy, created_at, updated_at";
 
 const RUN_COLUMNS =
   "routine_run_id, routine_id, owner_sub, scheduled_for, status, attempt_count, lease_until, available_at, " +
@@ -103,11 +104,12 @@ export async function createRoutine(
     next_run_at: next,
     last_run_at: null,
     last_run_status: "",
+    authorization_policy: input.authorization_policy ?? "per_run",
     created_at: nowMs,
     updated_at: nowMs,
   };
   await env.DB.prepare(
-    `INSERT INTO routines (${ROUTINE_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
+    `INSERT INTO routines (${ROUTINE_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`,
   )
     .bind(
       row.routine_id,
@@ -123,6 +125,7 @@ export async function createRoutine(
       row.next_run_at,
       row.last_run_at,
       row.last_run_status,
+      row.authorization_policy,
       row.created_at,
       row.updated_at,
     )
@@ -165,6 +168,7 @@ export interface RoutinePatch {
   schedule_type?: string;
   schedule_definition?: unknown;
   timezone?: string;
+  authorization_policy?: string;
 }
 
 export async function updateRoutine(
@@ -189,9 +193,10 @@ export async function updateRoutine(
 
   const name = patch.name ?? existing.name;
   const taskPrompt = patch.task_prompt ?? existing.task_prompt;
+  const authPolicy = patch.authorization_policy ?? existing.authorization_policy;
   await env.DB.prepare(
     `UPDATE routines SET name = ?2, task_prompt = ?3, schedule_type = ?4, schedule_definition = ?5,
-       timezone = ?6, next_run_at = ?7, updated_at = ?8 WHERE routine_id = ?1`,
+       timezone = ?6, next_run_at = ?7, authorization_policy = ?8, updated_at = ?9 WHERE routine_id = ?1`,
   )
     .bind(
       routineId,
@@ -201,6 +206,7 @@ export async function updateRoutine(
       JSON.stringify(checked.schedule),
       checked.timeZone,
       next,
+      authPolicy,
       nowMs,
     )
     .run();

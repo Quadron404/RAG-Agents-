@@ -1,11 +1,13 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
+  advanceRoutine,
   claimRun,
   createRoutine,
   deleteRoutine,
   dispatchableRuns,
   dueRoutines,
+  getRoutine,
   listRoutines,
   listRuns,
   materializeRun,
@@ -144,5 +146,41 @@ describe("routine store", () => {
     expect(await deleteRoutine(env, routine.routine_id, now)).toBe(true);
     expect(await listRuns(env, routine.routine_id)).toHaveLength(0);
     expect(await listRoutines(env, sub)).toHaveLength(0);
+  });
+
+  it("creates an interval routine and advances its cursor without spending it", async () => {
+    const sub = owner();
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    const fiveHours = 5 * 60 * 60 * 1000;
+    const anchor = "2026-01-01T00:00:00.000Z";
+    const routine = await createRoutine(
+      env,
+      {
+        owner_sub: sub,
+        owner_id: "user-1",
+        agent_id: "agent-1",
+        name: "Five-hourly digest",
+        task_prompt: "Summarise the inbox",
+        schedule_type: "interval",
+        schedule_definition: { type: "interval", every_ms: fiveHours, anchor },
+        timezone: "UTC",
+        authorization_policy: "per_run",
+      },
+      now,
+    );
+    expect(routine.ok).toBe(true);
+    if (!routine.ok) throw new Error(routine.error);
+    // Next occurrence strictly after now: anchor + 5h.
+    expect(routine.routine.next_run_at).toBe(Date.parse(anchor) + fiveHours);
+    expect(routine.routine.schedule_text).toBe("every 5 hours from 2026-01-01T00:00:00.000Z (UTC)");
+    expect(routine.routine.enabled).toBe(1);
+    expect(routine.routine.authorization_policy).toBe("per_run");
+
+    // Advancing an interval routine keeps it enabled and moves the cursor.
+    await materializeRun(env, routine.routine, routine.routine.next_run_at as number, now);
+    await advanceRoutine(env, routine.routine, routine.routine.next_run_at as number, now);
+    const after = await getRoutine(env, routine.routine.routine_id);
+    expect(after?.enabled).toBe(1);
+    expect(after?.next_run_at).toBe(Date.parse(anchor) + 2 * fiveHours);
   });
 });

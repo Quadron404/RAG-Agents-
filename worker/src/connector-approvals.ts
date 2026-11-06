@@ -5,6 +5,15 @@
  * owner-scoped, one-time approval here.  The UI shows the Allow/Deny card.
  * Only after the owner clicks Allow does the Worker execute the action.
  * Expired or already-decided approvals can never be replayed.
+ *
+ * Lifecycle states:
+ *   approval_pending - offered on an Allow/Deny card, awaiting a decision
+ *   sending          - Gmail API call in flight (single-flight, atomically claimed)
+ *   accepted_by_gmail - Gmail accepted the message (message ID recorded; not a delivery guarantee)
+ *   denied           - owner clicked Deny; nothing is sent
+ *   expired          - the decision window lapsed without a decision
+ *   failed           - Gmail rejected the message or a hard error occurred
+ *   outcome_unknown  - Gmail's response was ambiguous; requires safe reconciliation
  */
 import type { Env } from "./env";
 
@@ -23,11 +32,12 @@ export interface ConnectorApproval {
   result: string | null;
   routine_id: string | null;
   routine_run_id: string | null;
+  updated_at: number | null;
 }
 
 const APPROVAL_COLUMNS =
   "approval_id, user_id, owner_sub, connector, action, arguments, status, " +
-  "created_at, expires_at, decided_at, decided_by, result, routine_id, routine_run_id";
+  "created_at, expires_at, decided_at, decided_by, result, routine_id, routine_run_id, updated_at";
 
 const APPROVAL_TTL_SECONDS = 30 * 60; // 30 minutes
 
@@ -54,8 +64,8 @@ export async function createConnectorApproval(
   await env.DB.prepare(
     `INSERT INTO connector_approvals
        (approval_id, user_id, owner_sub, connector, action, arguments, status,
-        created_at, expires_at, routine_id, routine_run_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, ?10)`,
+        created_at, expires_at, routine_id, routine_run_id, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'approval_pending', ?7, ?8, ?9, ?10, ?7)`,
   )
     .bind(
       approval_id,
@@ -78,7 +88,7 @@ export async function createConnectorApproval(
     connector: input.connector,
     action: input.action,
     arguments: input.arguments,
-    status: "pending",
+    status: "approval_pending",
     created_at,
     expires_at,
     decided_at: null,
@@ -86,6 +96,7 @@ export async function createConnectorApproval(
     result: null,
     routine_id: input.routine_id ?? null,
     routine_run_id: input.routine_run_id ?? null,
+    updated_at: created_at,
   };
 }
 
@@ -112,7 +123,7 @@ export async function listPendingApprovals(
   if (includeExpired) {
     const result = await env.DB.prepare(
       `SELECT ${APPROVAL_COLUMNS} FROM connector_approvals
-       WHERE user_id = ?1 AND status = 'pending'
+       WHERE user_id = ?1 AND status = 'approval_pending'
        ORDER BY created_at DESC`,
     )
       .bind(userId)
@@ -121,7 +132,7 @@ export async function listPendingApprovals(
   } else {
     const result = await env.DB.prepare(
       `SELECT ${APPROVAL_COLUMNS} FROM connector_approvals
-       WHERE user_id = ?1 AND status = 'pending' AND expires_at > ?2
+       WHERE user_id = ?1 AND status = 'approval_pending' AND expires_at > ?2
        ORDER BY created_at DESC`,
     )
       .bind(userId, now)
@@ -132,7 +143,7 @@ export async function listPendingApprovals(
 }
 
 export interface ResolveApprovalInput {
-  decision: "allowed" | "denied" | "expired" | "failed";
+  decision: "allowed" | "denied" | "expired" | "failed" | "outcome_unknown";
   decidedBy: string;
   result?: string;
 }
@@ -144,15 +155,15 @@ export async function resolveConnectorApproval(
 ): Promise<ConnectorApproval | null> {
   const now = nowMs();
 
-  // Atomically transition from pending to the decided state.  The conditional
-  // WHERE is the whole point: only one request can win the transition from
-  // 'pending' to anything else.  A second request hitting the same approval
-  // after it has been decided will match zero rows and learn the outcome is
-  // already recorded -- no double-send, no race.
+  // Atomically transition from approval_pending to the decided state.  The
+  // conditional WHERE is the whole point: only one request can win the
+  // transition from 'approval_pending' to anything else.  A second request
+  // hitting the same approval after it has been decided will match zero rows
+  // and learn the outcome is already recorded -- no double-send, no race.
   const result = await env.DB.prepare(
     `UPDATE connector_approvals
        SET status = ?2, decided_at = ?3, decided_by = ?4, result = ?5, updated_at = ?3
-     WHERE approval_id = ?1 AND status = 'pending'`,
+     WHERE approval_id = ?1 AND status = 'approval_pending'`,
   )
     .bind(approvalId, input.decision, now, input.decidedBy, input.result ?? "")
     .run();
@@ -175,7 +186,7 @@ export async function expireConnectorApprovals(env: Env, userId: string): Promis
   const result = await env.DB.prepare(
     `UPDATE connector_approvals
        SET status = 'expired', decided_at = ?2, decided_by = 'system', result = 'expired before decision', updated_at = ?2
-     WHERE user_id = ?1 AND status = 'pending' AND expires_at <= ?3`,
+     WHERE user_id = ?1 AND status = 'approval_pending' AND expires_at <= ?3`,
   )
     .bind(userId, now, now)
     .run();

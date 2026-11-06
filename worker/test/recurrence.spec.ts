@@ -94,3 +94,59 @@ describe("describeSchedule", () => {
     );
   });
 });
+
+describe("interval schedules", () => {
+  const anchor = "2026-01-01T00:00:00.000Z";
+  const fiveHours = 5 * 60 * 60 * 1000;
+
+  it("computes the next interval occurrence after a given instant", () => {
+    const schedule: RoutineSchedule = { type: "interval", every_ms: fiveHours, anchor };
+    // 2026-01-01T00:00Z + 5h = 05:00Z, +10h = 10:00Z
+    expect(iso(next(schedule, "UTC", "2026-01-01T00:00:00.000Z"))).toBe("2026-01-01T05:00:00.000Z");
+    expect(iso(next(schedule, "UTC", "2026-01-01T04:59:59.999Z"))).toBe("2026-01-01T05:00:00.000Z");
+    expect(iso(next(schedule, "UTC", "2026-01-01T05:00:00.000Z"))).toBe("2026-01-01T10:00:00.000Z");
+  });
+
+  it("fires every five hours without drifting from the anchor", () => {
+    const schedule: RoutineSchedule = { type: "interval", every_ms: fiveHours, anchor };
+    let cursor = Date.parse(anchor);
+    const seen: number[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      const nxt = next(schedule, "UTC", new Date(cursor).toISOString());
+      if (nxt === null) break;
+      seen.push(nxt);
+      cursor = nxt;
+    }
+    // All occurrences must be exactly anchor + n*5h.
+    const base = Date.parse(anchor);
+    for (let i = 0; i < seen.length; i += 1) {
+      expect(seen[i]).toBe(base + (i + 1) * fiveHours);
+    }
+  });
+
+  it("returns null when the anchor is in the past relative to fromMs and no occurrence remains (bounded search)", () => {
+    // Intervals never run out, so even far in the future there is a next occurrence.
+    const schedule: RoutineSchedule = { type: "interval", every_ms: fiveHours, anchor };
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    expect(next(schedule, "UTC", new Date(far).toISOString())).not.toBeNull();
+  });
+
+  it("is unaffected by the routine's timezone (instants are UTC)", () => {
+    const schedule: RoutineSchedule = { type: "interval", every_ms: fiveHours, anchor };
+    expect(iso(next(schedule, "America/New_York", "2026-01-01T00:00:00.000Z"))).toBe(
+      "2026-01-01T05:00:00.000Z",
+    );
+  });
+
+  it("validates an interval schedule", () => {
+    const ok = validateSchedule("interval", { every_ms: fiveHours, anchor }, "UTC");
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.schedule).toEqual({ type: "interval", every_ms: fiveHours, anchor });
+
+    const bad = validateSchedule("interval", { every_ms: 0, anchor }, "UTC");
+    expect(bad.ok).toBe(false);
+
+    const noAnchor = validateSchedule("interval", { every_ms: fiveHours }, "UTC");
+    expect(noAnchor.ok).toBe(false);
+  });
+});

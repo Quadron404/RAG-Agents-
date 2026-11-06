@@ -45,11 +45,13 @@ import type { RunRow } from "./routines-types";
 export interface SchedulerResult {
   materialized: number;
   executed: number;
+  dispatched: number;
   completed: number;
   failed: number;
   delayed: number;
   rejected: number;
   queued: number;
+  backendReady: boolean;
   summaries: "ran" | "skipped" | "failed";
   dailySchedule: ScheduleTickResult | null;
   rollupSchedule: RollupTickResult | null;
@@ -69,19 +71,35 @@ function intFrom(value: string | undefined, fallback: number): number {
 //: short enough that a Worker that dies mid-execution has its run retried.
 const LEASE_MS = 5 * 60 * 1000;
 
+/**
+ * Run the summary tick and report whether any summary work happened.
+ */
+async function runSummaries(env: Env, now: number): Promise<"ran" | "skipped" | "failed"> {
+  try {
+    const result = await runSummaryTick(env, now);
+    const active = result.summarized + result.indexed + result.failed;
+    return active > 0 ? "ran" : "skipped";
+  } catch {
+    return "failed";
+  }
+}
+
 export async function runScheduler(
   env: Env,
   nowMs: number,
+  _options?: { fetchImpl?: unknown },
 ): Promise<SchedulerResult> {
   const batch = intFrom(env.ROUTINE_DISPATCH_BATCH, 20);
   const result: SchedulerResult = {
     materialized: 0,
     executed: 0,
+    dispatched: 0,
     completed: 0,
     failed: 0,
     delayed: 0,
     rejected: 0,
     queued: 0,
+    backendReady: true,
     summaries: "skipped",
     dailySchedule: null,
     rollupSchedule: null,
@@ -121,6 +139,7 @@ export async function runScheduler(
   // 3. Execute each run directly at the edge.
   for (const run of runs) {
     const outcome = await executeOne(env, run, nowMs);
+    result.dispatched += 1;
     result.executed += 1;
     switch (outcome) {
       case "completed":
