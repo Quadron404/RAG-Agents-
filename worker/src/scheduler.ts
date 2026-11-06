@@ -20,7 +20,7 @@
  * Routines never depend on the Codespace backend being awake.
  */
 import type { Env } from "./env";
-import { runSummaryTick } from "./chat/summaries";
+import { runSummaryTick, type SummaryTickResult } from "./chat/summaries";
 import { runDailyScheduleTick, runDailySummaryTick, type DailySummaryTickResult, type ScheduleTickResult } from "./chat/daily-schedule";
 import { runRollupScheduleTick, type RollupTickResult } from "./chat/rollup-schedule";
 import { runRollupSummaryTick } from "./chat/daily-rollup";
@@ -51,8 +51,7 @@ export interface SchedulerResult {
   delayed: number;
   rejected: number;
   queued: number;
-  backendReady: boolean;
-  summaries: "ran" | "skipped" | "failed";
+  summaries: SummaryTickResult;
   dailySchedule: ScheduleTickResult | null;
   rollupSchedule: RollupTickResult | null;
   rollupGenerated: number;
@@ -99,8 +98,7 @@ export async function runScheduler(
     delayed: 0,
     rejected: 0,
     queued: 0,
-    backendReady: true,
-    summaries: "skipped",
+    summaries: { eligible: 0, summarized: 0, indexed: 0, failed: 0 },
     dailySchedule: null,
     rollupSchedule: null,
     rollupGenerated: 0,
@@ -123,7 +121,7 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    result.summaries = await runSummaryTick(env, nowMs);
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -132,7 +130,7 @@ export async function runScheduler(
     result.monthlyCompact = await runMonthlyCompactTick(env, nowMs);
     result.yearlyCompact = await scheduleYearlyCompaction(env, nowMs);
     result.yearlyCompact = await runYearlyCompactTick(env, nowMs);
-    result.note = `no routine work; ${result.summaries} summaries ran`;
+    result.note = `no routine work; ${result.summaries.summarized} summaries ran`;
     return result;
   }
 
@@ -164,7 +162,7 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  result.summaries = await runSummaryTick(env, nowMs);
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
