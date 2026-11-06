@@ -379,10 +379,13 @@ export async function searchConversationHistory(
   // to the raw search dump).
   const selection = selectSummaryProvider(env);
   if (!selection) {
+    // No summarizer configured: return the raw filtered results directly.
+    // The tenancy filter above already ensures only the owner's active
+    // conversation chunks are included.
+    const rawEvidence = lines.join("\n\n");
     return {
-      ok: false,
-      error: "Historical conversation summarization is not configured.",
-      text: "",
+      ok: true,
+      text: rawEvidence || "No matching conversation summaries were found.",
       resultCount: lines.length,
     };
   }
