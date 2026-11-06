@@ -22,10 +22,10 @@
   --text-2: #56565e;
   --text-3: #94949e;
 
-  /* accent — Grok violet */
-  --accent: #7d4bc6;
-  --accent-strong: #6a37b4;
-  --accent-soft: rgba(125, 75, 198, 0.12);
+  /* accent — restrained deep red / maroon on light */
+  --accent: #9d3a42;
+  --accent-strong: #842f36;
+  --accent-soft: rgba(157, 58, 66, 0.12);
   --accent-ink: #ffffff;
   --on-accent: #ffffff;
 
@@ -60,6 +60,51 @@
   --scrollbar: rgba(23, 23, 26, 0.16);
 
   --screen-bg: linear-gradient(160deg, #eff1f6 0%, #f7f7f8 55%, #f3f3f5 100%);
+
+  /* semantic tokens — theme-independent layer (typography, spacing, borders,
+     elevation, focus, motion). Surface, text and status colors remain theme
+     specific in :root / [data-theme="dark"]. */
+  --font-sans: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --leading-tight: 1.25;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+  --font-light: 300;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --border-width: 1px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+  --elev-1: 0 1px 2px rgba(23, 23, 26, 0.16);
+  --elev-2: 0 2px 8px rgba(23, 23, 26, 0.16), 0 6px 24px rgba(23, 23, 26, 0.13);
+  --elev-3: 0 8px 28px rgba(23, 23, 26, 0.2), 0 24px 60px rgba(23, 23, 26, 0.16);
+  --focus-ring: 0 0 0 2px var(--accent);
+  --focus-offset: 2px;
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 [data-theme="dark"] {
@@ -80,10 +125,11 @@
   --text-2: #a1a1aa;
   --text-3: #6d6d77;
 
-  --accent: #a78bfa;
-  --accent-strong: #bda5ff;
-  --accent-soft: rgba(167, 139, 250, 0.15);
-  --accent-ink: #14101f;
+  /* accent — restrained deep red / maroon on dark */
+  --accent: #a83a45;
+  --accent-strong: #8a2f36;
+  --accent-soft: rgba(168, 58, 69, 0.15);
+  --accent-ink: #fffdfa;
   --on-accent: #f8f7ff;
 
   --green: #3bd68c;
