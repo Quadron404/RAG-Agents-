@@ -105,7 +105,7 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    result.summaries = await summarize(env, nowMs);
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -145,7 +145,7 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  result.summaries = await summarize(env, nowMs);
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -155,6 +155,14 @@ export async function runScheduler(
   result.yearlyCompact = await scheduleYearlyCompaction(env, nowMs);
   result.yearlyCompact = await runYearlyCompactTick(env, nowMs);
   return result;
+}
+
+/** Runs the Worker-native summary tick and maps its outcome to a string status. */
+async function summarize(env: Env, nowMs: number): Promise<"ran" | "skipped" | "failed"> {
+  const outcome = await runSummaryTick(env, nowMs);
+  if (outcome.failed > 0) return "failed";
+  if (outcome.summarized > 0 || outcome.eligible > 0) return "ran";
+  return "skipped";
 }
 
 type Outcome = "completed" | "failed" | "delayed" | "rejected" | "queued" | "awaiting_approval";
@@ -213,8 +221,11 @@ async function executeOne(
     const attempt = claimed.attempt_count;
     const maxAttempts = intFrom(env.ROUTINE_MAX_ATTEMPTS, 5);
 
-    // Retryable failures are delayed with backoff unless the attempt budget is spent.
-    const isRetryable = attempt < maxAttempts;
+    // A non-retryable error (e.g. a 400 bad request) fails immediately instead of
+    // being retried until the attempt budget is spent.  Rate limits (429) and
+    // server errors (5xx) are retryable and back off.
+    const retryable = (error as { retryable?: boolean }).retryable === true;
+    const isRetryable = retryable && attempt < maxAttempts;
     if (isRetryable) {
       const base = intFrom(env.ROUTINE_RETRY_BASE_MS, 60000);
       const backoff = Math.min(base * 2 ** Math.max(0, attempt - 1), 60 * 60 * 1000);

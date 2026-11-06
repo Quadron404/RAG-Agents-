@@ -143,7 +143,11 @@ export async function executeRoutine(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(`Groq API error ${response.status}${errorText ? ": " + errorText.slice(0, 300) : ""}`);
+    const message = `Groq API error ${response.status}${errorText ? ": " + errorText.slice(0, 300) : ""}`;
+    const err = new Error(message);
+    // 429 rate limits and 5xx server errors are retryable; 4xx client errors are not.
+    (err as { retryable?: boolean }).retryable = response.status === 429 || response.status >= 500;
+    throw err;
   }
 
   const payload = (await response.json()) as GroqResponse;
