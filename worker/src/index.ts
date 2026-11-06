@@ -32,6 +32,7 @@ import { removeSummaryDoc } from "./chat/search";
 import { resolvePrincipal, type Principal } from "./principal";
 import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
+import { ensureSchema } from "./migrations";
 import { TokenError, verifyIdToken } from "./idtoken";
 import { validateTimezone } from "./timezone";
 import { listPendingApprovals, resolveConnectorApproval, getConnectorApproval } from "./connector-approvals";
@@ -324,6 +325,7 @@ async function proxyApi(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    await ensureSchema(env);
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -449,6 +451,7 @@ export default {
    * real work, and runs that cannot dispatch yet stay queued for a later tick.
    */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    await ensureSchema(env);
     ctx.waitUntil(runScheduler(env, Date.now()));
   },
 };
