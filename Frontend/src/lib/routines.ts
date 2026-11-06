@@ -77,15 +77,42 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/** The Worker stores timestamps in epoch ms; the format helpers expect seconds. */
+function msToSec(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.floor(n / 1000) : null;
+}
+
 export async function fetchRoutines(): Promise<RoutinesResult> {
   try {
     const response = await apiFetch("/routines");
     const data = await readJson(response);
+    const raw = Array.isArray(data.routines) ? (data.routines as unknown[]) : [];
     return {
       ok: Boolean(data.ok),
       available: data.available !== false,
       error: typeof data.error === "string" ? data.error : "",
-      routines: Array.isArray(data.routines) ? (data.routines as Routine[]) : [],
+      routines: raw.map((r) => {
+        const row = r as Record<string, unknown>;
+        return {
+          routine_id: typeof row.routine_id === "string" ? row.routine_id : "",
+          owner_sub: typeof row.owner_sub === "string" ? row.owner_sub : "",
+          owner_id: typeof row.owner_id === "string" ? row.owner_id : "",
+          agent_id: typeof row.agent_id === "string" ? row.agent_id : "",
+          name: typeof row.name === "string" ? row.name : "",
+          task_prompt: typeof row.task_prompt === "string" ? row.task_prompt : "",
+          schedule_type: typeof row.schedule_type === "string" ? row.schedule_type : "",
+          timezone: typeof row.timezone === "string" ? row.timezone : "",
+          schedule_text: typeof row.schedule_text === "string" ? row.schedule_text : "",
+          enabled: typeof row.enabled === "number" ? row.enabled : 0,
+          next_run_at: msToSec(row.next_run_at),
+          last_run_at: msToSec(row.last_run_at),
+          last_run_status: typeof row.last_run_status === "string" ? row.last_run_status : "",
+          created_at: msToSec(row.created_at) ?? 0,
+          updated_at: msToSec(row.updated_at) ?? 0,
+        };
+      }),
     };
   } catch {
     return { ok: false, available: true, error: "Could not reach the backend.", routines: [] };
@@ -96,11 +123,25 @@ export async function fetchRoutineRuns(routineId: string): Promise<RoutineRunsRe
   try {
     const response = await apiFetch(`/routines/${encodeURIComponent(routineId)}/runs`);
     const data = await readJson(response);
+    const raw = Array.isArray(data.runs) ? (data.runs as unknown[]) : [];
     return {
       ok: Boolean(data.ok),
       available: data.available !== false,
       error: typeof data.error === "string" ? data.error : "",
-      runs: Array.isArray(data.runs) ? (data.runs as RoutineRun[]) : [],
+      runs: raw.map((r) => {
+        const row = r as Record<string, unknown>;
+        return {
+          routine_run_id: typeof row.routine_run_id === "string" ? row.routine_run_id : "",
+          routine_id: typeof row.routine_id === "string" ? row.routine_id : "",
+          scheduled_for: msToSec(row.scheduled_for) ?? 0,
+          status: typeof row.status === "string" ? row.status : "pending",
+          attempt_count: typeof row.attempt_count === "number" ? row.attempt_count : 0,
+          started_at: msToSec(row.started_at),
+          completed_at: msToSec(row.completed_at),
+          result_summary: typeof row.result_summary === "string" ? row.result_summary : "",
+          error_code: typeof row.error_code === "string" ? row.error_code : "",
+        };
+      }),
     };
   } catch {
     return { ok: false, available: true, error: "Could not reach the backend.", runs: [] };
@@ -162,7 +203,22 @@ export async function fetchConnectorApprovals(): Promise<ConnectorApprovalsResul
     return {
       ok: Boolean(data.ok),
       error: typeof data.error === "string" ? data.error : "",
-      approvals: Array.isArray(data.approvals) ? (data.approvals as ConnectorApproval[]) : [],
+      approvals: Array.isArray(data.approvals)
+        ? (data.approvals as unknown[]).map((a) => {
+            const row = a as Record<string, unknown>;
+            return {
+              approval_id: typeof row.approval_id === "string" ? row.approval_id : "",
+              connector: typeof row.connector === "string" ? row.connector : "",
+              action: typeof row.action === "string" ? row.action : "",
+              arguments: typeof row.arguments === "object" && row.arguments !== null ? (row.arguments as Record<string, unknown>) : {},
+              expires_at: msToSec(row.expires_at) ?? 0,
+              created_at: msToSec(row.created_at) ?? 0,
+              routine_id: typeof row.routine_id === "string" ? row.routine_id : "",
+              routine_run_id: typeof row.routine_run_id === "string" ? row.routine_run_id : "",
+              status: typeof row.status === "string" ? row.status : "pending",
+            };
+          })
+        : [],
     };
   } catch {
     return { ok: false, error: "Could not reach the backend.", approvals: [] };

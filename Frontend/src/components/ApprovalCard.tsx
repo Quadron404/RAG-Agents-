@@ -71,7 +71,7 @@ export function ApprovalCard({
     onResolved?.();
   }, [approval.approval_id, toast, onResolved]);
 
-  const expired = approval.status !== "pending";
+  const decided = approval.status !== "pending";
   const expires = new Date(approval.expires_at * 1000).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -119,7 +119,7 @@ export function ApprovalCard({
       </div>
 
       <div className="approval-card__actions">
-        {!expired ? (
+        {!decided ? (
           <>
             <IconButton
               icon={Send}

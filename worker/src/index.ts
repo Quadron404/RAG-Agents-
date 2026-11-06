@@ -37,6 +37,13 @@ import { validateTimezone } from "./timezone";
 import { listPendingApprovals, resolveConnectorApproval, getConnectorApproval } from "./connector-approvals";
 import { executeApprovedConnectorAction } from "./chat/connector-tools";
 import {
+  deleteRoutine,
+  getRoutine,
+  listRoutines,
+  listRuns,
+  setRoutineEnabled,
+} from "./routines";
+import {
   auditLogin,
   consumeOauthState,
   createOauthState,
@@ -50,7 +57,7 @@ import {
   upsertUser,
 } from "./store";
 
-const API_PREFIXES = ["/threads", "/computer", "/ai", "/sysinfo", "/file", "/cdp", "/screen", "/websockify", "/ws", "/routines"];
+const API_PREFIXES = ["/threads", "/computer", "/ai", "/sysinfo", "/file", "/cdp", "/screen", "/websockify", "/ws"];
 
 function isProxyPath(path: string): boolean {
   if (path === "/health") return true;
@@ -431,6 +438,90 @@ export default {
           return json({ ok: true, status: "denied" });
         }
       }
+    }
+
+    // Worker-native routine endpoints.  These run entirely at the edge, reading
+    // from the same D1 the scheduler writes to, so the UI can see scheduled
+    // tasks even when the Codespace backend is asleep.  Authentication comes
+    // from the session cookie; the caller's Google subject is the owner scope.
+    const routinePath = /^\/routines(?:\/([^/]+))?(?:\/(runs|pause|resume))?$/.exec(path);
+    if (routinePath) {
+      const principal = await resolvePrincipal(env, request);
+      if (!principal) {
+        return json({ error: "authentication required" }, 401);
+      }
+      const ownerSub = principal.user.google_sub;
+      const routineId = routinePath[1];
+      const action = routinePath[2];
+      const now = Date.now();
+
+      if (!routineId && request.method === "GET" && !action) {
+        const rows = await listRoutines(env, ownerSub);
+        return json({
+          ok: true,
+          available: true,
+          routines: rows.map((r) => ({
+            routine_id: r.routine_id,
+            owner_sub: r.owner_sub,
+            owner_id: r.owner_id,
+            agent_id: r.agent_id,
+            name: r.name,
+            task_prompt: r.task_prompt,
+            schedule_type: r.schedule_type,
+            timezone: r.timezone,
+            schedule_text: r.schedule_text,
+            enabled: r.enabled,
+            next_run_at: r.next_run_at,
+            last_run_at: r.last_run_at,
+            last_run_status: r.last_run_status,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+          })),
+        });
+      }
+
+      if (routineId && action === "runs" && request.method === "GET") {
+        const limit = Number(url.searchParams.get("limit") ?? "20") || 20;
+        const runs = await listRuns(env, routineId, limit);
+        return json({
+          ok: true,
+          available: true,
+          runs: runs.map((run) => ({
+            routine_run_id: run.routine_run_id,
+            routine_id: run.routine_id,
+            scheduled_for: run.scheduled_for,
+            status: run.status,
+            attempt_count: run.attempt_count,
+            started_at: run.started_at,
+            completed_at: run.completed_at,
+            result_summary: run.result_summary,
+            error_code: run.error_code,
+          })),
+        });
+      }
+
+      const routine = await getRoutine(env, routineId);
+      if (!routine) return json({ error: "no such routine" }, 404);
+      if (routine.owner_sub !== ownerSub) {
+        return json({ error: "no such routine" }, 404);
+      }
+
+      if (action === "pause" && request.method === "POST") {
+        const updated = await setRoutineEnabled(env, routineId, false, now);
+        return json({ ok: true, available: true, routine: updated });
+      }
+
+      if (action === "resume" && request.method === "POST") {
+        const updated = await setRoutineEnabled(env, routineId, true, now);
+        return json({ ok: true, available: true, routine: updated });
+      }
+
+      if (!action && request.method === "DELETE") {
+        await deleteRoutine(env, routineId, now);
+        return json({ ok: true });
+      }
+
+      return json({ error: "method not allowed" }, 405);
     }
 
     if (isProxyPath(path)) return proxyApi(request, env, url);

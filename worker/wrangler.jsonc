@@ -60,6 +60,9 @@
     // configured under Gmail Settings → Accounts and Import → Send mail as.
     // Leave empty to use the central sender address.
     "GMAIL_SENDER_ALIAS": "",
+    // The central Gmail address used as the From header when no alias is set.
+    // Must be a verified send-as address on the central Gmail account.
+    "GMAIL_SENDER_EMAIL": "",
     // Worker-native chat.  Provider secrets are set with `wrangler secret put`;
     // an empty/absent provider key is skipped rather than invented.
     "AI_SEARCH_INSTANCE": "rag-conversations",
