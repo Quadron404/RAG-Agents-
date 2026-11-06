@@ -3,6 +3,22 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy } from "lucide-react";
 
+/* Schemes that are safe to follow. Anything else (javascript:, data: with an
+   executable mime, vbscript:, etc.) is neutralised so model output can never
+   turn a rendered link into executable markup. */
+const SAFE_URL_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+export function sanitizeUrl(href: string | undefined): string | undefined {  if (!href) return href;
+  try {
+    const url = new URL(href);
+    if (!SAFE_URL_SCHEMES.has(url.protocol)) return "#";
+  } catch {
+    // Relative URLs (no scheme) resolve against the current origin and are safe.
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return "#";
+  }
+  return href;
+}
+
 interface Props {
   text: string;
   className?: string;
@@ -45,7 +61,7 @@ export const Markdown = memo(function Markdown({ text, className, streaming }: P
       },
       a({ href, children }: { href?: string; children?: ReactNode }) {
         return (
-          <a href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+          <a href={sanitizeUrl(href)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
             {children}
           </a>
         );

@@ -5,6 +5,7 @@ import { useAuth, type GmailStatus } from "../auth";
 import { useCore } from "../core";
 import { haptic, hapticSupported } from "../lib/haptics";
 import { Switch, Sheet } from "../components/ui";
+import { Button } from "../components/primitives";
 
 const APPEARANCES: { id: Appearance; name: string; tone: "light" | "dark" | "auto" }[] = [
   { id: "light", name: "Light", tone: "light" },
@@ -283,15 +284,12 @@ export function SettingsSheet() {
           <div className="setrow__label">{user?.name || user?.email || "Signed in"}</div>
           <div className="setrow__sub">{user?.email || "Your Google session is active."}</div>
         </div>
-        <button
-          className="btn btn--ghost"
-          onClick={() => {
-            haptic("medium");
-            logout();
-          }}
-        >
+        <Button variant="ghost" size="sm" onClick={() => {
+          haptic("medium");
+          logout();
+        }}>
           Sign out
-        </button>
+        </Button>
       </div>
 
       <SheetDivider label="Mailbox" />
@@ -351,12 +349,12 @@ function ConfirmRow({
         </div>
         <div className="setrow__sub">Deletes all your chats, history and indexed documents from the server.</div>
       </div>
-      <button className="btn btn--danger" onClick={onReset}>
+      <Button variant="danger" size="sm" onClick={onReset}>
         Reset
-      </button>
-      <button className="btn btn--ghost" onClick={() => setConfirm(false)}>
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>
         Cancel
-      </button>
+      </Button>
     </div>
   ) : (
     <div className="setrow">
@@ -364,9 +362,9 @@ function ConfirmRow({
         <div className="setrow__label">Reset local state</div>
         <div className="setrow__sub">Clears appearance, pins and archives.</div>
       </div>
-      <button className="btn btn--ghost" onClick={() => setConfirm(true)}>
+      <Button variant="ghost" size="sm" onClick={() => setConfirm(true)}>
         Reset
-      </button>
+      </Button>
     </div>
   );
 }

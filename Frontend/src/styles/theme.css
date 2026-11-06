@@ -60,6 +60,70 @@
   --scrollbar: rgba(23, 23, 26, 0.16);
 
   --screen-bg: linear-gradient(160deg, #eff1f6 0%, #f7f7f8 55%, #f3f3f5 100%);
+
+  /* ========================================================================
+     Design tokens — semantic colour & surface hierarchy (PROMPT-11)
+
+     Canvas surfaces   : --canvas, --surface, --surface-raised, --surface-muted
+     Glass surfaces    : --glass (see premium glass block below)
+     Borders           : --line, --line-strong
+     Text              : --text (primary), --text-2 (muted), --text-3 (subtle)
+     State colours     : --accent, --danger, --success, --warning
+     Focus ring        : --focus
+     ======================================================================== */
+
+  /* semantics */
+  --canvas: var(--bg0);
+  --surface: var(--bg1);
+  --surface-raised: var(--bg2);
+  --surface-muted: var(--bg3);
+  --surface-border: var(--bg4);
+
+  --danger: var(--red);
+  --danger-soft: var(--red-soft);
+  --success: var(--green);
+  --success-soft: var(--green-soft);
+  --warning: var(--amber);
+  --warning-soft: var(--amber-soft);
+
+  --focus: var(--accent);
+
+  /* ========================================================================
+     Design tokens — typography & spacing scale (PROMPT-12)
+     ======================================================================== */
+
+  /* type scale */
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.875rem;   /* 14px */
+  --text-base: 1rem;     /* 16px */
+  --text-lg: 1.125rem;   /* 18px */
+  --text-xl: 1.25rem;    /* 20px */
+  --text-2xl: 1.5rem;    /* 24px */
+
+  /* line heights */
+  --leading-tight: 1.25;
+  --leading-base: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* font weights */
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-black: 800;
+
+  /* spacing scale (8px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* message width */
+  --msg-width: min(78%, 640px);
 }
 
 [data-theme="dark"] {
@@ -698,6 +762,22 @@ textarea {
 .btn--danger:hover {
   background: var(--red);
   color: #fff;
+}
+
+/* Quiet button: invisible until hovered, for secondary toolbar actions. */
+.btn--quiet {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  box-shadow: none;
+}
+.btn--quiet:hover {
+  background: var(--bg3);
+  color: var(--text);
+  border-color: var(--line);
+}
+.btn--quiet:active {
+  transform: scale(0.97);
 }
 
 .btn:disabled {
