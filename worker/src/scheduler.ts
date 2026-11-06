@@ -105,7 +105,7 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    result.summaries = await runSummaryTick(env, nowMs);
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -145,7 +145,7 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  result.summaries = await runSummaryTick(env, nowMs);
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);

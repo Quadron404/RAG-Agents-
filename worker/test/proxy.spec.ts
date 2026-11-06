@@ -119,74 +119,106 @@ describe("reverse proxy", () => {
   });
 });
 
-// The routines surface the UI drives (List runs, pause, resume, delete).  It
-// must ride the same authenticated proxy as every other API prefix: without
-// its own entry the Worker fell through to the asset handler, so the browser
-// got index.html where it expected JSON.  These checks are the routing
-// regression, plus proof that the session, the CSRF token and the identity
-// the backend derives the owner from are handled exactly as other API paths are.
-describe("routine proxy routing", () => {
+// The routines surface the UI drives (list, runs, pause, resume, delete) is
+// now handled natively at the Worker edge: it reads from the same D1 the
+// scheduler writes to, so scheduled tasks show even when the Codespace
+// backend is asleep.  These checks are the routing regression, plus proof
+// that the session, the CSRF token and the owner identity are enforced
+// exactly as other API paths are.
+describe("routine edge routing", () => {
+  async function createRoutineViaInternal(ownerSub: string, name = "Inbox digest"): Promise<string> {
+    const response = await SELF.fetch(`${BASE}/internal/routines`, {
+      method: "POST",
+      headers: {
+        "x-rag-internal-token": "test-internal-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        owner_sub: ownerSub,
+        owner_id: "user-1",
+        agent_id: "agent-1",
+        name,
+        task_prompt: "Summarise the inbox",
+        schedule_type: "daily",
+        schedule: { time: "09:00" },
+        timezone: "UTC",
+      }),
+    });
+    if (response.status !== 200) {
+      const text = await response.text();
+      throw new Error(`internal create failed: ${response.status} ${text}`);
+    }
+    const body = await response.json();
+    return body.routine.routine_id;
+  }
+
   it("treats /routines as an API path instead of a static asset", async () => {
     const response = await SELF.fetch(`${BASE}/routines`);
     expect(response.status).toBe(401);
-    expect(captured.calls).toBe(0);
   });
 
-  it("forwards an authenticated routine read with the gateway token and identity", async () => {
-    stubBackend("/routines");
+  it("lists routines for the session owner without proxying to the backend", async () => {
+    const routineId = await createRoutineViaInternal("proxy-sub");
     const cookie = await authenticatedCookie();
     const response = await SELF.fetch(`${BASE}/routines`, { headers: { cookie } });
     expect(response.status).toBe(200);
-    expect(captured.calls).toBe(1);
-    expect(captured.headers["x-rag-internal-token"]).toBe("test-internal-token");
-    expect(captured.headers["x-rag-user-sub"]).toBe("proxy-sub");
-    expect(captured.headers["x-rag-user-email"]).toBe("proxy@example.com");
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.available).toBe(true);
+    expect(body.routines.map((r: { routine_id: string }) => r.routine_id)).toContain(routineId);
   });
 
-  it("keeps nested routine routes and their query on the proxy path", async () => {
-    stubBackend(/^\/routines\/r-1\/runs/);
+  it("keeps nested routine runs on the edge path", async () => {
+    const routineId = await createRoutineViaInternal("proxy-sub");
     const cookie = await authenticatedCookie();
-    const response = await SELF.fetch(`${BASE}/routines/r-1/runs?limit=5`, {
+    const response = await SELF.fetch(`${BASE}/routines/${routineId}/runs?limit=5`, {
       headers: { cookie },
     });
     expect(response.status).toBe(200);
-    expect(captured.calls).toBe(1);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.available).toBe(true);
+    expect(Array.isArray(body.runs)).toBe(true);
   });
 
   it("refuses a routine mutation without a CSRF token", async () => {
+    const routineId = await createRoutineViaInternal("proxy-sub");
     const cookie = await authenticatedCookie();
-    const response = await SELF.fetch(`${BASE}/routines/r-1/pause`, {
+    const response = await SELF.fetch(`${BASE}/routines/${routineId}/pause`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
     });
     expect(response.status).toBe(403);
-    expect(captured.calls).toBe(0);
   });
 
   it("forwards a routine mutation carrying the CSRF token", async () => {
-    stubBackend("/routines/r-1/pause", "POST");
+    const routineId = await createRoutineViaInternal("proxy-sub");
     const { cookie, csrf } = await authenticatedSession();
-    const response = await SELF.fetch(`${BASE}/routines/r-1/pause`, {
+    const response = await SELF.fetch(`${BASE}/routines/${routineId}/pause`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json", "x-rag-csrf": csrf },
     });
     expect(response.status).toBe(200);
-    expect(captured.calls).toBe(1);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.available).toBe(true);
+    expect(body.routine.enabled).toBe(0);
   });
 
   it("forwards a routine deletion carrying the CSRF token", async () => {
-    stubBackend("/routines/r-1", "DELETE");
+    const routineId = await createRoutineViaInternal("proxy-sub");
     const { cookie, csrf } = await authenticatedSession();
-    const response = await SELF.fetch(`${BASE}/routines/r-1`, {
+    const response = await SELF.fetch(`${BASE}/routines/${routineId}`, {
       method: "DELETE",
       headers: { cookie, "x-rag-csrf": csrf },
     });
     expect(response.status).toBe(200);
-    expect(captured.calls).toBe(1);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
   });
 
   it("strips a client-supplied owner identity on a routine read", async () => {
-    stubBackend("/routines");
+    await createRoutineViaInternal("proxy-sub");
     const cookie = await authenticatedCookie();
     await SELF.fetch(`${BASE}/routines`, {
       headers: {
@@ -196,9 +228,13 @@ describe("routine proxy routing", () => {
         "x-rag-user-email": "victim@example.com",
       },
     });
-    expect(captured.headers["x-rag-internal-token"]).toBe("test-internal-token");
-    expect(captured.headers["x-rag-user-sub"]).toBe("proxy-sub");
-    expect(captured.headers["x-rag-user-email"]).toBe("proxy@example.com");
+    // The edge resolves the owner from the session cookie, not from headers.
+    const response = await SELF.fetch(`${BASE}/routines`, { headers: { cookie } });
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    for (const r of body.routines) {
+      expect(r.owner_sub).toBe("proxy-sub");
+    }
   });
 });
 

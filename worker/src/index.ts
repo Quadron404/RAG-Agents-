@@ -455,6 +455,16 @@ export default {
       const action = routinePath[2];
       const now = Date.now();
 
+      // State-changing routine operations need CSRF, same as every other
+      // proxied API mutation.  Safe reads (list, runs) do not.
+      if (!SAFE_METHODS.has(request.method)) {
+        const supplied = request.headers.get(CSRF_HEADER) ?? "";
+        const expected = principal.session.csrf ?? "";
+        if (!expected || !timingSafeEqual(supplied, expected)) {
+          return json({ error: "invalid CSRF token" }, 403);
+        }
+      }
+
       if (!routineId && request.method === "GET" && !action) {
         const rows = await listRoutines(env, ownerSub);
         return json({
