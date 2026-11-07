@@ -105,7 +105,6 @@ describe("internal routines API", () => {
   });
 
   it("runs a scheduler tick on demand", async () => {
-    stubBackend("/health", "GET");
     const { status, body } = await call("/internal/scheduler/run", authed({}, "POST"));
     expect(status).toBe(200);
     expect(body.ok).toBe(true);

@@ -292,6 +292,44 @@ async function authResetAccount(request: Request, env: Env): Promise<Response> {
   return response;
 }
 
+async function authQaLoginQuick(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  // AI Testing entry point: a fixed, deterministic QA automation identity that
+  // does not touch Google OAuth.  The same google_sub is reused on every call
+  // so the QA session and its conversations persist across refreshes.  This is
+  // purely a testing shortcut and is entirely separate from the normal Google
+  // sign-in flow, which is left untouched.
+  const base = publicBaseUrl(env, url);
+  const next = safeNext(url.searchParams.get("next"));
+  const user = await upsertUser(env, {
+    sub: "qa-automation",
+    email: "qa-automation@rag-agents.test",
+    email_verified: true,
+    name: "QA Automation",
+    picture: "",
+  });
+  await setDeveloperMode(env, user.id, false);
+  await setUserTimezone(env, user.id, "Asia/Calcutta");
+
+  const existing = sessionTokenFromRequest(request);
+  const rotatedFrom = existing ? await hashSessionToken(env, existing) : undefined;
+  const session = await createSession(env, user.id, rotatedFrom);
+
+  const response = redirect(`${base}${next}`);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+      secure: isSecureRequest(env, url),
+    }),
+  );
+  await auditLogin(env, user.google_sub, user.id, "success", "qa-automation");
+  return response;
+}
+
 async function proxyApi(
   request: Request,
   env: Env,
@@ -345,6 +383,11 @@ export default {
     if (path === "/auth/settings/reset") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
       return authResetAccount(request, env);
+    }
+
+    if (path === "/auth/qa-login-quick") {
+      if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+      return authQaLoginQuick(request, env, url);
     }
 
     // The backend's own routes.  Handled here, never proxied, and behind the

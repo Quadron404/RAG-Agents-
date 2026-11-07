@@ -218,9 +218,23 @@ describe("chat summaries", () => {
   it("filters foreign and deleted conversations before the model sees them", async () => {
     const chunks: AiSearchChunk[] = [];
     const search = fakeSearch(chunks);
+    fetchMock
+      .get("https://api.groq.com")
+      .intercept({ path: "/openai/v1/chat/completions", method: "POST" })
+      .reply(() => ({
+        statusCode: 200,
+        data: [
+          `data: {"choices":[{"delta":{"content":"Owner-only content summary."}}]}`,
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+        headers: { "content-type": "text/event-stream" },
+      }));
     const testEnv = withEnv({
       AI_SEARCH: search.namespace,
       AI_SEARCH_INSTANCE: search.instanceName,
+      GROQ_API_KEY: "test-key",
     });
     const owner = await createConversation(env, "search-owner", "user-1", "Owner note");
     const foreign = await createConversation(env, "other-owner", "user-2", "Foreign note");

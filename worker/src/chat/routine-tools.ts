@@ -76,7 +76,7 @@ export const CREATE_ROUTINE_TOOL: ToolDefinition = {
         description: "Day of month for monthly routines; null for daily/once routines.",
       },
       timezone: {
-        type: "string",
+        type: ["string", "null"],
         description: "IANA timezone like 'America/New_York'; defaults to the owner's timezone.",
       },
     },
@@ -166,11 +166,10 @@ export interface ToolResult {
 
 function routineText(r: RoutineView): string {
   const next = r.next_run_at
-    ? new Date(r.next_run_at).toLocaleString(undefined, {
+    ? new Intl.DateTimeFormat(undefined, {
         dateStyle: "short",
         timeStyle: "short",
-        timeZoneName: "short",
-      })
+      }).format(new Date(r.next_run_at))
     : "none";
   const active = r.enabled === 1 ? "active" : "paused";
   return `[${r.routine_id}] ${r.name} — ${r.schedule_text || r.schedule_type} · ${active} · next ${next} · last ${r.last_run_status || "never run"}`;

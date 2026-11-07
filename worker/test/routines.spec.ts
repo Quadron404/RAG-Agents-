@@ -6,12 +6,14 @@ import {
   deleteRoutine,
   dispatchableRuns,
   dueRoutines,
+  getRoutine,
   listRoutines,
   listRuns,
   materializeRun,
   setRoutineEnabled,
   updateRoutine,
 } from "../src/routines";
+import { executeRoutineTool } from "../src/chat/routine-tools";
 
 let seq = 0;
 function owner(): string {
@@ -146,3 +148,36 @@ describe("routine store", () => {
     expect(await listRoutines(env, sub)).toHaveLength(0);
   });
 });
+
+describe("routine tools", () => {
+  it("create_routine accepts a null timezone and defaults to the owner timezone", async () => {
+    const sub = owner();
+    const now = Date.now();
+    const result = await executeRoutineTool(
+      env,
+      sub,
+      "user-1",
+      "agent-1",
+      "Asia/Calcutta",
+      {
+        id: "call_create_routine",
+        name: "create_routine",
+        arguments: JSON.stringify({
+          name: "Null TZ routine",
+          task_prompt: "do it",
+          schedule_type: "once",
+          at: new Date(now + 3_600_000).toISOString(),
+          timezone: null,
+        }),
+      },
+    );
+    if (!result.ok) console.log("CREATE ERROR:", JSON.stringify(result.error));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.routine) {
+      expect(result.routine.timezone).toBe("Asia/Calcutta");
+      const fetched = await getRoutine(env, result.routine.routine_id);
+      expect(fetched?.timezone).toBe("Asia/Calcutta");
+    }
+  });
+});
+

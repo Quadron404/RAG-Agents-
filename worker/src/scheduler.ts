@@ -20,13 +20,13 @@
  * Routines never depend on the Codespace backend being awake.
  */
 import type { Env } from "./env";
-import { runSummaryTick } from "./chat/summaries";
+import { runSummaryTick, type SummaryTickResult } from "./chat/summaries";
 import { runDailyScheduleTick, runDailySummaryTick, type DailySummaryTickResult, type ScheduleTickResult } from "./chat/daily-schedule";
 import { runRollupScheduleTick, type RollupTickResult } from "./chat/rollup-schedule";
 import { runRollupSummaryTick } from "./chat/daily-rollup";
 import { scheduleMonthlyCompaction, runMonthlyCompactTick, type MonthlyCompactTickResult } from "./chat/monthly-compact";
 import { scheduleYearlyCompaction, runYearlyCompactTick, type YearlyCompactTickResult } from "./chat/yearly-compact";
-import { executeRoutine, type RoutineExecutionResult } from "./routine-execution";
+import { executeRoutine, type FetchLike, type RoutineExecutionResult } from "./routine-execution";
 import {
   advanceRoutine,
   claimRun,
@@ -50,7 +50,7 @@ export interface SchedulerResult {
   delayed: number;
   rejected: number;
   queued: number;
-  summaries: "ran" | "skipped" | "failed";
+  summaries: SummaryTickResult;
   dailySchedule: ScheduleTickResult | null;
   rollupSchedule: RollupTickResult | null;
   rollupGenerated: number;
@@ -72,8 +72,10 @@ const LEASE_MS = 5 * 60 * 1000;
 export async function runScheduler(
   env: Env,
   nowMs: number,
+  deps?: { fetchImpl?: FetchLike },
 ): Promise<SchedulerResult> {
   const batch = intFrom(env.ROUTINE_DISPATCH_BATCH, 20);
+  const httpFetch = deps?.fetchImpl ?? globalThis.fetch;
   const result: SchedulerResult = {
     materialized: 0,
     executed: 0,
@@ -82,7 +84,7 @@ export async function runScheduler(
     delayed: 0,
     rejected: 0,
     queued: 0,
-    summaries: "skipped",
+    summaries: { eligible: 0, summarized: 0, indexed: 0, failed: 0 },
     dailySchedule: null,
     rollupSchedule: null,
     rollupGenerated: 0,
@@ -105,7 +107,7 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    result.summaries = await runSummaryTick(env, nowMs);
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -114,13 +116,13 @@ export async function runScheduler(
     result.monthlyCompact = await runMonthlyCompactTick(env, nowMs);
     result.yearlyCompact = await scheduleYearlyCompaction(env, nowMs);
     result.yearlyCompact = await runYearlyCompactTick(env, nowMs);
-    result.note = `no routine work; ${result.summaries} summaries ran`;
+    result.note = `no routine work; ${result.summaries.summarized} summaries ran`;
     return result;
   }
 
   // 3. Execute each run directly at the edge.
   for (const run of runs) {
-    const outcome = await executeOne(env, run, nowMs);
+    const outcome = await executeOne(env, run, nowMs, httpFetch);
     result.executed += 1;
     switch (outcome) {
       case "completed":
@@ -145,7 +147,7 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  result.summaries = await runSummaryTick(env, nowMs);
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -163,6 +165,7 @@ async function executeOne(
   env: Env,
   run: RunRow,
   nowMs: number,
+  httpFetch: FetchLike,
 ): Promise<Outcome> {
   const routine = await getRoutine(env, run.routine_id);
   if (!routine) {
@@ -182,6 +185,7 @@ async function executeOne(
       routineRunId: run.routine_run_id,
       ownerSub: routine.owner_sub,
       ownerId: routine.owner_id,
+      fetch: httpFetch,
     });
 
     // If execution created a pending approval (e.g. gmail.send_email), the run
