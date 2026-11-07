@@ -97,6 +97,12 @@ export const FIRST_TURN_INSTRUCTION =
 const MAX_CONTENT_CHARS = 100_000;
 const MAX_TOOL_ITERATIONS = 8;
 
+const DEFAULT_MAX_TURN_ELAPSED_MS = 120_000;
+const DEFAULT_MAX_CONCURRENT_TURNS = 20;
+
+/** Ceiling on chat turns executing at once, so a loop cannot starve the Worker. */
+let inflightTurns = 0;
+
 const REFUSAL_PATTERNS = [
   /i\s+(can|cannot|can't|will not|won't|do not|don't)\s+(send|email|mail)/i,
   /i\s+(am\s+)?(not\s+)?(able|unable)\s+to\s+(send|email|mail)/i,
@@ -567,6 +573,14 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
   const { env, principal, conversation, requestId, userMessage, assistantMessage, provider } = context;
   const ownerSub = principal.user.google_sub;
   const started = nowMs();
+  const maxElapsedMs = intFrom(env.CHAT_TURN_ELAPSED_MS, DEFAULT_MAX_TURN_ELAPSED_MS);
+  const maxConcurrent = intFrom(env.CHAT_MAX_CONCURRENT_TURNS, DEFAULT_MAX_CONCURRENT_TURNS);
+  let inflight = false;
+  if (inflightTurns >= maxConcurrent) {
+    throw new TurnFailure("the chat service is at capacity; please try again shortly");
+  }
+  inflightTurns += 1;
+  inflight = true;
   let partial = "";
 
   emit.send("meta", {
@@ -595,6 +609,10 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
     let finalText = "";
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+      // Elapsed-time budget: stop the turn before it can consume unbounded time.
+      if (nowMs() - started > maxElapsedMs) {
+        throw new TurnFailure("the turn reached its time budget; no further tool calls are allowed");
+      }
       let currentText = "";
       const calls: ToolCall[] = [];
       let stopReason = "";
@@ -803,6 +821,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       });
     }
   } finally {
+    if (inflight) inflightTurns -= 1;
     await releaseConversationLock(env, conversation.id, requestId, nowMs());
   }
 }

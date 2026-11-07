@@ -16,7 +16,7 @@
  */
 import type { Env } from "../env";
 import type { ToolCall, ToolDefinition } from "./types";
-import { createConnectorApproval } from "../connector-approvals";
+import { parseEmailContent, requestEmailSendApproval } from "./connector-tools";
 
 export const MAIL_TOOL_CALL_TOOL: ToolDefinition = {
   name: "mail_tool_call",
@@ -74,52 +74,19 @@ export async function executeMailToolCall(
   call: ToolCall,
 ): Promise<MailToolResult> {
   if (call.name !== MAIL_TOOL_CALL_NAME) {
-    return { ok: false, error: "The requested mail tool is not available." };
+    return { ok: false, output: "", error: "The requested mail tool is not available." };
   }
-
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(call.arguments || "{}");
-  } catch {
-    return { ok: false, error: "The mail tool arguments were malformed." };
+  const parsed = parseEmailContent(call);
+  if (!parsed.ok) {
+    return { ok: false, output: "", error: parsed.error };
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, error: "The mail tool arguments were malformed." };
+  const result = await requestEmailSendApproval(env, ownerSub, ownerId, parsed.content);
+  if (!result.ok) {
+    return { ok: false, output: "", error: result.error };
   }
-  const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
-  if (!content) {
-    return { ok: false, error: "email content is required." };
-  }
-
-  if (!env.GMAIL_SENDER_EMAIL || !env.GMAIL_SENDER_REFRESH_TOKEN) {
-    return {
-      ok: false,
-      error: "email is not configured on this server; contact your administrator",
-    };
-  }
-
-  try {
-    const approval = await createConnectorApproval(env, {
-      user_id: ownerId,
-      owner_sub: ownerSub,
-      connector: "gmail",
-      action: "send_email",
-      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-    });
-    return {
-      ok: true,
-      output:
-        "Approval required: you will see an Allow/Deny card for sending this " +
-        "email. No email is sent until you approve it.",
-      approval: {
-        approval_id: approval.approval_id,
-        connector: "gmail",
-        action: "send_email",
-        arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-        expires_at: approval.expires_at,
-      },
-    };
-  } catch (error) {
-    return { ok: false, error: `could not request connector approval: ${(error as Error).message}` };
-  }
+  return {
+    ok: true,
+    output: result.output,
+    approval: result.approval,
+  };
 }

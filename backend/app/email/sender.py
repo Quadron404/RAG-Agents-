@@ -10,6 +10,7 @@ from email.mime.text import MIMEText
 from typing import Optional, Tuple
 
 import httpx
+import re
 
 from ..auth import google as google_oauth
 from ..auth import crypto
@@ -17,6 +18,12 @@ from ..auth import crypto
 #: The Gmail send endpoint, addressed to the authenticated sender's own mailbox
 #: (``me``), never to any address taken from a tool call or message.
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+
+#: Ceilings so a single message cannot be used to exfiltrate or flood.
+MAX_SUBJECT_CHARS = 200
+MAX_BODY_CHARS = 100_000
+#: CR/LF in a header value is header injection; neutralise it.
+_HEADER_CRLF = re.compile(r"[\r\n]+")
 
 
 class BotSenderError(Exception):
@@ -32,6 +39,72 @@ class BotSenderError(Exception):
         self.configured = bool(configured)
         self.retryable = bool(retryable)
         self.needs_reconnect = bool(needs_reconnect)
+
+
+def _sanitize_header(value: str) -> str:
+    """Neutralise CR/LF so a header value cannot inject new headers."""
+    return _HEADER_CRLF.sub(" ", value)
+
+
+def build_mime(sender: str, to: str, subject: str, body: str) -> str:
+    """Build an RFC 822 MIME message for the Gmail send API.
+
+    All of sender, recipient and subject are resolved server-side; nothing in the
+    headers comes from a model or tool argument.
+    """
+    if len(subject) > MAX_SUBJECT_CHARS:
+        raise BotSenderError(
+            f"subject is too long (limit {MAX_SUBJECT_CHARS} characters)",
+            configured=True,
+            retryable=False,
+        )
+    if len(body) > MAX_BODY_CHARS:
+        raise BotSenderError(
+            f"body is too long (limit {MAX_BODY_CHARS} characters)",
+            configured=True,
+            retryable=False,
+        )
+    msg = MIMEMultipart()
+    msg["From"] = _sanitize_header(sender)
+    msg["To"] = _sanitize_header(to)
+    msg["Subject"] = _sanitize_header(subject)
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+    return msg.as_string()
+
+
+async def send_raw_gmail(
+    access_token: str,
+    sender: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    *,
+    client: Optional[httpx.AsyncClient] = None,
+) -> str:
+    """Send one RFC 822 message through the Gmail send endpoint.
+
+    Returns the provider message id.  The sender and recipient are resolved
+    server-side; neither is ever derived from a model or tool argument.
+    """
+    if not sender or not recipient or not subject:
+        raise BotSenderError("sender, recipient and subject required", configured=True, retryable=False)
+    raw = (
+        base64.urlsafe_b64encode(build_mime(sender, recipient, subject, body).encode("utf-8"))
+        .decode("utf-8")
+        .replace("=", "")
+    )
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    async with (client if client is not None else httpx.AsyncClient(timeout=30.0)) as c:
+        resp = await c.post(GMAIL_SEND_URL, headers=headers, content=json.dumps({"raw": raw}))
+        if resp.status_code >= 500:
+            raise BotSenderError(f"Gmail API error {resp.status_code}; the email was not sent", configured=True, retryable=True)
+        if resp.status_code >= 400:
+            raise BotSenderError(f"Gmail API rejected the message {resp.status_code}; the email was not sent", configured=True, retryable=False)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+    return str(data.get("id") or "")
 
 
 class BotSender:
@@ -149,31 +222,16 @@ class BotSender:
         if not access:
             raise BotSenderError("bot sender refresh returned no token", configured=True, retryable=True)
 
-        mime = self._build_mime(self.settings.bot_sender_email, recipient_email, subject, body)
-        # The Gmail API takes the whole RFC 822 message base64url-encoded.  The
-        # From header is the configured bot sender, the To header the resolved
-        # owner -- neither is ever derived from model output.
-        raw = base64.urlsafe_b64encode(mime.encode("utf-8")).decode("utf-8").replace("=", "")
-        headers = {"Authorization": f"Bearer {access}", "Content-Type": "application/json"}
-        async with (client if client is not None else httpx.AsyncClient(timeout=30.0)) as c:
-            resp = await c.post(GMAIL_SEND_URL, headers=headers, content=json.dumps({"raw": raw}))
-            if resp.status_code >= 500:
-                raise BotSenderError(f"Gmail API error {resp.status_code}", configured=True, retryable=True)
-            if resp.status_code >= 400:
-                raise BotSenderError(f"Gmail API rejected message {resp.status_code}", configured=True, retryable=False)
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
-        return str(data.get("id") or "")
-
-    def _build_mime(self, sender: str, to: str, subject: str, body: str) -> str:
-        msg = MIMEMultipart()
-        msg["From"] = sender
-        msg["To"] = to
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        return msg.as_string()
+        # The shared send service builds the RFC 822 message, base64url-encodes
+        # it, posts to the Gmail send endpoint and returns the provider id.
+        return await send_raw_gmail(
+            access,
+            self.settings.bot_sender_email,
+            recipient_email,
+            subject,
+            body,
+            client=client,
+        )
 
     async def _send_smtp(self, recipient_email: str, subject: str, body: str) -> str:
         user = self.settings.bot_sender_smtp_user or self.settings.bot_sender_email

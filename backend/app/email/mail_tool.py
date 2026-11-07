@@ -15,14 +15,9 @@ browser, a model prompt or a log line.
 """
 from __future__ import annotations
 
-import base64
-import json
-import uuid
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from typing import Dict, List, Optional
-
 import httpx
+import uuid
+from typing import Dict, List, Optional
 
 from ..auth.deps import AuthService
 from ..config import Settings
@@ -31,7 +26,7 @@ from . import gmail as gmail_connection
 from .gmail import GmailError
 from ..routines.context import get_current
 from ..tools.base import Tool
-from .sender import GMAIL_SEND_URL
+from .sender import BotSenderError, send_raw_gmail
 
 #: The Gmail scope that must be present on the connected mailbox before mail can
 #: be sent.  Google sign-in (openid email profile) does not include it.
@@ -73,15 +68,6 @@ def mail_tools() -> List[Tool]:
 
 def _result(output: str = "", error: str = "") -> Dict[str, object]:
     return {"type": "result", "output": output, "error": error}
-
-
-def _build_mime(sender: str, to: str, subject: str, body: str) -> str:
-    msg = MIMEMultipart()
-    msg["From"] = sender
-    msg["To"] = to
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-    return msg.as_string()
 
 
 async def run_mail_tool(
@@ -166,44 +152,23 @@ async def run_mail_tool(
         )
 
     subject = "RAG Agents"
-    mime = _build_mime(sender_email, recipient, subject, content)
-    raw = (
-        base64.urlsafe_b64encode(mime.encode("utf-8"))
-        .decode("utf-8")
-        .replace("=", "")
-    )
-    headers = {"Authorization": f"Bearer {access}", "Content-Type": "application/json"}
 
+    # The shared send service builds the RFC 822 message, base64url-encodes it,
+    # posts to the Gmail send endpoint and returns the provider message id.  The
+    # access token belongs to the user's own connected mailbox; sender and
+    # recipient are both resolved server-side above.
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                GMAIL_SEND_URL, headers=headers, content=json.dumps({"raw": raw})
-            )
-            if resp.status_code >= 500:
-                return _result(
-                    error=f"Gmail API error {resp.status_code}; the email was not sent"
-                )
-            if resp.status_code >= 400:
-                return _result(
-                    error=f"Gmail API rejected the message {resp.status_code}; "
-                    "the email was not sent"
-                )
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
+        message_id = await send_raw_gmail(access, sender_email, recipient, subject, content)
+    except BotSenderError as exc:
+        return _result(error=f"could not send email: {exc}")
     except (httpx.HTTPError, OSError) as exc:
         return _result(
             error=f"could not reach the Gmail API: {type(exc).__name__}; "
             "the email was not sent"
         )
 
-    message_id = str(data.get("id") or "")
     if not message_id:
-        return _result(
-            error="the Gmail API accepted the request but returned no message id; "
-            "the email was not confirmed sent"
-        )
+        return _result(error="the Gmail API accepted the request but returned no message id")
 
     # Record the durable send (owner-isolated) so the outcome is auditable.
     agent_id = str(getattr(ctx, "agent_id", "") or "")

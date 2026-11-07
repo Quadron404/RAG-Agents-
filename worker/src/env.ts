@@ -122,6 +122,11 @@ export interface Env {
   /** Maximum history-tool calls in one user turn. */
   CHAT_MAX_TOOL_CALLS?: string;
 
+  /** Maximum wall-clock time a single chat turn may consume, in ms. */
+  CHAT_TURN_ELAPSED_MS?: string;
+  /** Ceiling on chat turns executing at once. */
+  CHAT_MAX_CONCURRENT_TURNS?: string;
+
   GROQ_API_KEY?: string;
   GROQ_BASE_URL?: string;
   OPENAI_API_KEY?: string;

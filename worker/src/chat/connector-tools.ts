@@ -9,6 +9,7 @@
 import type { Env } from "../env";
 import type { ToolCall, ToolDefinition } from "./types";
 import { createConnectorApproval, getConnectorApproval } from "../connector-approvals";
+import type { ConnectorApproval } from "../connector-approvals";
 
 export const GMAIL_SEND_EMAIL_TOOL: ToolDefinition = {
   name: "gmail.send_email",
@@ -33,6 +34,68 @@ export const GMAIL_SEND_EMAIL_TOOL: ToolDefinition = {
 export const CONNECTOR_TOOLS: ToolDefinition[] = [GMAIL_SEND_EMAIL_TOOL];
 
 const CONNECTOR_TOOL_NAMES = new Set(CONNECTOR_TOOLS.map((t) => t.name));
+
+/** Shared validation + pending-owner-scoped approval for every email-send tool. */
+export interface EmailSendResult {
+  ok: true;
+  content: string;
+}
+export interface EmailSendRejection {
+  ok: false;
+  error: string;
+}
+
+export function parseEmailContent(call: ToolCall): EmailSendResult | EmailSendRejection {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(call.arguments || "{}");
+  } catch {
+    return { ok: false, error: "The email arguments were malformed." };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "The email arguments were malformed." };
+  }
+  const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
+  if (!content) {
+    return { ok: false, error: "email content is required." };
+  }
+  return { ok: true, content };
+}
+
+export async function requestEmailSendApproval(
+  env: Env,
+  ownerSub: string,
+  ownerId: string,
+  content: string,
+): Promise<ConnectorToolResult> {
+  if (!env.GMAIL_SENDER_EMAIL || !env.GMAIL_SENDER_REFRESH_TOKEN) {
+    return {
+      ok: false,
+      output: "",
+      error: "email is not configured on this server; contact your administrator",
+    };
+  }
+  const approval = await createConnectorApproval(env, {
+    user_id: ownerId,
+    owner_sub: ownerSub,
+    connector: "gmail",
+    action: "send_email",
+    arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
+  });
+  return {
+    ok: true,
+    output:
+      "Approval required: you will see an Allow/Deny card for sending this " +
+      "email. No email is sent until you approve it.",
+    approval: {
+      approval_id: approval.approval_id,
+      connector: "gmail",
+      action: "send_email",
+      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
+      expires_at: approval.expires_at,
+    },
+  };
+}
 
 export interface ConnectorToolResult {
   ok: boolean;
@@ -69,53 +132,11 @@ export async function executeConnectorTool(
   if (!isConnectorTool(call.name)) {
     return { ok: false, output: "", error: "The requested connector tool is not available." };
   }
-
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(call.arguments || "{}");
-  } catch {
-    return { ok: false, output: "", error: "The connector tool arguments were malformed." };
+  const parsed = parseEmailContent(call);
+  if (!parsed.ok) {
+    return { ok: false, output: "", error: parsed.error };
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, output: "", error: "The connector tool arguments were malformed." };
-  }
-  const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
-  if (!content) {
-    return { ok: false, output: "", error: "email content is required." };
-  }
-
-  if (!env.GMAIL_SENDER_EMAIL || !env.GMAIL_SENDER_REFRESH_TOKEN) {
-    return {
-      ok: false,
-      output: "",
-      error: "email is not configured on this server; contact your administrator",
-    };
-  }
-
-  try {
-    const approval = await createConnectorApproval(env, {
-      user_id: ownerId,
-      owner_sub: ownerSub,
-      connector: "gmail",
-      action: "send_email",
-      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-    });
-    return {
-      ok: true,
-      output:
-        "Approval required: you will see an Allow/Deny card for sending this " +
-        "email. No email is sent until you approve it.",
-      approval: {
-        approval_id: approval.approval_id,
-        connector: "gmail",
-        action: "send_email",
-        arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
-        expires_at: approval.expires_at,
-      },
-    };
-  } catch (error) {
-    return { ok: false, output: "", error: `could not request connector approval: ${(error as Error).message}` };
-  }
+  return requestEmailSendApproval(env, ownerSub, ownerId, parsed.content);
 }
 
 /**
