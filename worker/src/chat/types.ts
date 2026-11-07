@@ -20,10 +20,29 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/** Typed stop reasons mapped from provider finish reasons. */
+export type StopReason =
+  | "stop"
+  | "tool_calls"
+  | "length"
+  | "refusal"
+  | "error"
+  | "cancel"
+  | string;
+
+export interface Usage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+/** Provider-neutral event stream emitted by every model adapter. */
 export type ProviderEvent =
   | { type: "text"; text: string }
   | { type: "tool_call"; call: ToolCall }
-  | { type: "done"; stopReason: string };
+  | { type: "done"; stopReason: StopReason; usage?: Usage }
+  | { type: "error"; message: string; retryable?: boolean; status?: number }
+  | { type: "cancel" };
 
 export interface ModelProvider {
   name: string;

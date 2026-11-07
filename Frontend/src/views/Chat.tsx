@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -269,13 +270,17 @@ export { ChatListPane };
 
 /* ============================ message list ================================= */
 
-function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadId: string; summarizedThrough: number }) {
+const MessageBubble = memo(function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadId: string; summarizedThrough: number }) {
   const openMenu = useUi((s) => s.openMenu);
   const setReplyTo = useUi((s) => s.setReplyTo);
   const [editing, setEditing] = useState(false);
   const isUser = m.role === "user";
   const parsed = parseAgentField(m.agent);
-  const bot = parsed.kind === "commander" ? BOT_BY_ID.commander : parsed.kind === "worker" ? botForRole(parsed.role) : null;
+  const bot = useMemo(() => {
+    if (parsed.kind === "commander") return BOT_BY_ID.commander;
+    if (parsed.kind === "worker") return botForRole(parsed.role);
+    return null;
+  }, [parsed.kind, parsed.role]);
   const developerMode = useAuth((s) => s.user?.developer_mode === 1);
   const isSummarized = m.seq <= summarizedThrough;
 
@@ -363,7 +368,7 @@ function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadI
       </div>
     </div>
   );
-}
+});
 
 function EditBox({ m, threadId, onDone }: { m: Message; threadId: string; onDone: () => void }) {
   const [v, setV] = useState(m.content);

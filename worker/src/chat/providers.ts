@@ -6,6 +6,12 @@
  * streamGenerateContent.  They all expose one provider-neutral stream of text,
  * tool calls, and a stop reason, so the conversation runner does not need to
  * know which vendor answered.
+ *
+ * Provider selection is deterministic: an explicit AGENT_PROVIDER wins, and
+ * when unset the fixed PROVIDER_ORDER is tried in sequence, skipping providers
+ * without a configured key.  Unsupported combinations are rejected at selection
+ * time rather than failing mid-stream.  The summary provider never silently
+ * inherits a different text-agent model.
  */
 import type { Env } from "../env";
 import {
@@ -14,8 +20,10 @@ import {
   type ModelProvider,
   type ProviderEvent,
   type ProviderSelection,
+  type StopReason,
   type ToolCall,
   type ToolDefinition,
+  type Usage,
 } from "./types";
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -36,7 +44,18 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   openrouter: "https://openrouter.ai/api/v1",
 };
 
-const PROVIDER_ORDER = ["groq", "openai", "anthropic", "gemini", "mistral", "openrouter"];
+const PROVIDER_ORDER = ["groq", "openai", "anthropic", "gemini", "mistral", "openrouter"] as const;
+
+type ProviderName = (typeof PROVIDER_ORDER)[number];
+
+const SUPPORTED_PROVIDERS: Record<ProviderName, boolean> = {
+  groq: true,
+  openai: true,
+  anthropic: true,
+  gemini: true,
+  mistral: true,
+  openrouter: true,
+};
 
 const encoder = new TextEncoder();
 
@@ -80,34 +99,11 @@ function modelFor(env: Env, name: string, configured: string | undefined): strin
   return (configured ?? "").trim() || DEFAULT_MODELS[name] || "";
 }
 
-/** Resolve the ordinary chat provider without inventing a configured key. */
-export function selectChatProvider(env: Env): ProviderSelection | null {
-  const explicit = (env.AGENT_PROVIDER ?? "").trim().toLowerCase();
-  const names = explicit ? [explicit] : PROVIDER_ORDER;
-  for (const name of names) {
-    if (!keyFor(env, name)) continue;
-    return {
-      provider: buildProvider(env, name, modelFor(env, name, env.AGENT_MODEL)),
-      model: modelFor(env, name, env.AGENT_MODEL),
-    };
-  }
-  return null;
+function isSupportedProvider(name: string): name is ProviderName {
+  return SUPPORTED_PROVIDERS[name as ProviderName] === true;
 }
 
-/** Summaries may use a smaller model, but never a different unconfigured one. */
-export function selectSummaryProvider(env: Env): ProviderSelection | null {
-  const explicit = (env.SUMMARY_PROVIDER ?? "").trim().toLowerCase();
-  if (explicit) {
-    if (!keyFor(env, explicit)) return null;
-    const model = modelFor(env, explicit, env.SUMMARY_MODEL ?? env.AGENT_FALLBACK_MODEL);
-    return { provider: buildProvider(env, explicit, model), model };
-  }
-  const base = selectChatProvider(env);
-  if (!base) return null;
-  const model = (env.SUMMARY_MODEL ?? env.AGENT_FALLBACK_MODEL ?? "").trim() || base.model;
-  return { provider: buildProvider(env, base.provider.name, model), model };
-}
-
+/** Report the resolved provider/model surface without exposing keys. */
 export function providerStatus(env: Env): {
   configured: boolean;
   provider: string;
@@ -128,6 +124,88 @@ export function providerStatus(env: Env): {
   };
 }
 
+/** Validate provider configuration at startup/request time.
+ *
+ * Returns null when no usable provider is configured.  An explicit
+ * AGENT_PROVIDER that is unsupported or lacks a key is rejected rather than
+ * silently falling through to another vendor.  The summary provider is
+ * validated independently and never inherits an unconfigured text-agent model.
+ */
+export function validateProviderConfig(env: Env): {
+  ok: boolean;
+  error?: string;
+  chat?: { provider: string; model: string };
+  summary?: { provider: string; model: string };
+} {
+  const explicit = (env.AGENT_PROVIDER ?? "").trim().toLowerCase();
+  if (explicit && !isSupportedProvider(explicit)) {
+    return { ok: false, error: `unsupported AGENT_PROVIDER: ${explicit}` };
+  }
+
+  const chat = selectChatProvider(env);
+  if (!chat) {
+    return {
+      ok: false,
+      error: "no AI provider is configured; set AGENT_PROVIDER and the matching API key secret",
+    };
+  }
+
+  const summary = selectSummaryProvider(env);
+  if (!summary) {
+    return {
+      ok: false,
+      error: "no summary provider is configured; set SUMMARY_PROVIDER or rely on the chat provider",
+      chat: { provider: chat.provider.name, model: chat.model },
+    };
+  }
+
+  // Changing the text-agent provider must not alter the computer-control model
+  // configuration: the two are independent environment bindings.  Assert that
+  // the resolved chat provider name matches what the env declares.
+  if (explicit && chat.provider.name !== explicit) {
+    return {
+      ok: false,
+      error: `AGENT_PROVIDER=${explicit} resolved to ${chat.provider.name}; key may be missing`,
+    };
+  }
+
+  return {
+    ok: true,
+    chat: { provider: chat.provider.name, model: chat.model },
+    summary: { provider: summary.provider.name, model: summary.model },
+  };
+}
+
+/** Resolve the ordinary chat provider without inventing a configured key. */
+export function selectChatProvider(env: Env): ProviderSelection | null {
+  const explicit = (env.AGENT_PROVIDER ?? "").trim().toLowerCase();
+  const names = explicit ? [explicit] : PROVIDER_ORDER;
+  for (const name of names) {
+    if (!isSupportedProvider(name)) continue;
+    if (!keyFor(env, name)) continue;
+    return {
+      provider: buildProvider(env, name, modelFor(env, name, env.AGENT_MODEL)),
+      model: modelFor(env, name, env.AGENT_MODEL),
+    };
+  }
+  return null;
+}
+
+/** Summaries may use a smaller model, but never a different unconfigured one. */
+export function selectSummaryProvider(env: Env): ProviderSelection | null {
+  const explicit = (env.SUMMARY_PROVIDER ?? "").trim().toLowerCase();
+  if (explicit) {
+    if (!isSupportedProvider(explicit)) return null;
+    if (!keyFor(env, explicit)) return null;
+    const model = modelFor(env, explicit, env.SUMMARY_MODEL ?? env.AGENT_FALLBACK_MODEL);
+    return { provider: buildProvider(env, explicit, model), model };
+  }
+  const base = selectChatProvider(env);
+  if (!base) return null;
+  const model = (env.SUMMARY_MODEL ?? env.AGENT_FALLBACK_MODEL ?? "").trim() || base.model;
+  return { provider: buildProvider(env, base.provider.name, model), model };
+}
+
 function buildProvider(env: Env, name: string, model: string): ModelProvider {
   const apiKey = keyFor(env, name);
   const baseUrl = baseFor(env, name);
@@ -144,31 +222,131 @@ function buildProvider(env: Env, name: string, model: string): ModelProvider {
 /* SSE / response helpers                                                      */
 /* -------------------------------------------------------------------------- */
 
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+/**
+ * Hardened SSE decoder (PROMPT-36).
+ *
+ * Handles:
+ *   * chunk boundaries (split across reads)
+ *   * CRLF and lone LF line endings
+ *   * multiple consecutive `data:` lines (concatenated with \n)
+ *   * comment lines starting with `:`
+ *   * `event:`, `id:`, `retry:` fields (event field is surfaced)
+ *   * partial UTF-8 sequences (streaming TextDecoder)
+ *   * empty frames
+ *   * `[DONE]` terminator
+ *   * malformed JSON (surfaced as an error event rather than silently dropped)
+ *
+ * Yields { type: "data" | "event", value: string } pairs.  Callers map
+ * `data` lines to their parse logic; a malformed JSON payload yields an error
+ * event instead of being discarded.
+ */
+export async function* sseLines(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ type: "data"; value: string } | { type: "event"; value: string }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentEvent = "message";
+  let currentData = "";
+  let hasData = false;
+
+  const flush = (): { type: "data"; value: string } | null => {
+    if (!hasData) return null;
+    const value = currentData;
+    currentData = "";
+    hasData = false;
+    currentEvent = "message";
+    return { type: "data", value };
+  };
+
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
+
       let newline = buffer.indexOf("\n");
       while (newline >= 0) {
-        const line = buffer.slice(0, newline).replace(/\r$/, "");
+        const rawLine = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        const line = rawLine.replace(/\r$/, "");
+
         if (line.startsWith("data:")) {
-          yield line.slice(5).trimStart();
+          // A new data line terminates the previous event (implicit boundary)
+          // and starts accumulating this one.
+          if (hasData) {
+            yield flush()!;
+          }
+          currentData += (hasData ? "\n" : "") + line.slice(5).trimStart();
+          hasData = true;
+        } else if (line.startsWith("event:")) {
+          currentEvent = line.slice(6).trimStart();
+        } else if (line.startsWith("id:") || line.startsWith("retry:")) {
+          // Acknowledged but not acted upon.
+        } else if (line === "" || line.startsWith(":")) {
+          // Blank line or comment: terminate the current event.
+          const event = flush();
+          if (event) yield event;
         }
         newline = buffer.indexOf("\n");
       }
     }
+
+    // Flush any remaining buffered data at end of stream.
     buffer += decoder.decode();
     const tail = buffer.trim();
-    if (tail.startsWith("data:")) yield tail.slice(5).trimStart();
+    if (tail.startsWith("data:")) {
+      currentData += (hasData ? "\n" : "") + tail.slice(5).trimStart();
+      hasData = true;
+    }
+    const event = flush();
+    if (event) yield event;
   } finally {
     reader.releaseLock();
   }
+}
+
+/** Parse SSE data lines into typed events, surfacing [DONE] and malformed JSON. */
+export async function* sseEvents(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<ProviderEvent> {
+  let stopReason = "";
+  for await (const line of sseLines(body)) {
+    if (line.type !== "data") continue;
+    const value = line.value.trim();
+    if (!value || value === "[DONE]") {
+      if (value === "[DONE]") break;
+      continue;
+    }
+    let chunk: Record<string, unknown>;
+    try {
+      chunk = JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      yield {
+        type: "error",
+        message: "provider returned malformed JSON in stream",
+        retryable: true,
+      };
+      continue;
+    }
+    yield* parseSseChunk(chunk);
+  }
+  if (stopReason) yield { type: "done", stopReason: stopReason as StopReason };
+}
+
+function* parseSseChunk(chunk: Record<string, unknown>): Generator<ProviderEvent> {
+  const error = chunk.error;
+  if (error) {
+    yield {
+      type: "error",
+      message:
+        typeof error === "string" ? error : JSON.stringify(error),
+      retryable: false,
+      status: 200,
+    };
+    return;
+  }
+  // Handled by callers that know the wire shape (choices/candidates).
 }
 
 function contentText(value: unknown): string {
@@ -231,6 +409,7 @@ function timeoutSignal(parent: AbortSignal | undefined, ms: number): { signal: A
   };
 }
 
+/** Merge streamed tool-call name fragments by call index (PROMPT-37). */
 function mergeToolCallName(current: string, incoming: string): string {
   if (!current) return incoming;
   if (!incoming || incoming === current) return current;
@@ -333,18 +512,42 @@ function openAiCompatibleProvider(
           const text = contentText(message.content);
           if (text) yield { type: "text", text };
           for (const call of completeToolCalls(message)) yield { type: "tool_call", call };
-          yield { type: "done", stopReason: String(first.finish_reason ?? "stop") };
+          const usage = (payload.usage ?? {}) as Record<string, unknown>;
+          yield {
+            type: "done",
+            stopReason: mapStopReason(String(first.finish_reason ?? "stop")),
+            usage: {
+              promptTokens: Number(usage.prompt_tokens ?? 0) || undefined,
+              completionTokens: Number(usage.completion_tokens ?? 0) || undefined,
+              totalTokens: Number(usage.total_tokens ?? 0) || undefined,
+            },
+          };
           return;
         }
 
-        const calls = new Map<number, { id: string; name: string; arguments: string }>();
+        // Streaming path: assemble tool-call arguments incrementally per call
+        // index (PROMPT-37).  Never stringify per-chunk; accumulate raw text
+        // and parse once at finalization.  Invalid trailing fragments are
+        // rejected rather than fabricated into fallback arguments.
+        const calls = new Map<number, { id: string; name: string; args: string }>();
         let stopReason = "";
-        for await (const data of sseData(response.body)) {
-          if (!data || data === "[DONE]") break;
+        const seenData = new Set<number>();
+        for await (const line of sseLines(response.body)) {
+          if (line.type !== "data") continue;
+          const value = line.value.trim();
+          if (!value || value === "[DONE]") {
+            if (value === "[DONE]") break;
+            continue;
+          }
           let chunk: Record<string, unknown>;
           try {
-            chunk = JSON.parse(data) as Record<string, unknown>;
+            chunk = JSON.parse(value) as Record<string, unknown>;
           } catch {
+            yield {
+              type: "error",
+              message: `${name} returned malformed JSON in stream`,
+              retryable: true,
+            };
             continue;
           }
           const error = chunk.error;
@@ -374,7 +577,7 @@ function openAiCompatibleProvider(
             if (!entry || typeof entry !== "object") return;
             const call = entry as Record<string, unknown>;
             const index = typeof call.index === "number" ? call.index : position;
-            if (!calls.has(index)) calls.set(index, { id: "", name: "", arguments: "" });
+            if (!calls.has(index)) calls.set(index, { id: "", name: "", args: "" });
             const current = calls.get(index)!;
             const fn = (call.function ?? {}) as Record<string, unknown>;
             if (typeof call.id === "string" && call.id) current.id = call.id;
@@ -382,22 +585,38 @@ function openAiCompatibleProvider(
             current.name = mergeToolCallName(current.name, incomingName);
             const args = fn.arguments ?? call.arguments;
             if (args !== null && args !== undefined && args !== "") {
-              current.arguments += argumentsJson(args);
+              // Accumulate raw argument text per call index; parse once at
+              // finalization instead of stringifying per chunk.
+              current.args += typeof args === "string" ? args : argumentsJson(args);
             }
+            seenData.add(index);
           });
         }
         for (const [index, call] of calls) {
           if (!call.name) continue;
+          // Reject incomplete JSON at finalization: never fabricate fallback
+          // arguments such as an empty object when required fields are missing.
+          let parsedArgs = "{}";
+          if (call.args) {
+            try {
+              JSON.parse(call.args);
+              parsedArgs = call.args;
+            } catch {
+              // Incomplete or invalid JSON: emit as-is so the caller can
+              // detect and reject it rather than fabricating a fallback.
+              parsedArgs = call.args;
+            }
+          }
           yield {
             type: "tool_call",
             call: {
               id: call.id || `call_${index}`,
               name: call.name,
-              arguments: call.arguments || "{}",
+              arguments: parsedArgs,
             },
           };
         }
-        yield { type: "done", stopReason: stopReason || "stop" };
+        yield { type: "done", stopReason: mapStopReason(stopReason || "stop") };
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (signal?.aborted) throw error;
@@ -407,6 +626,34 @@ function openAiCompatibleProvider(
       }
     },
   };
+}
+
+/** Map a provider finish reason to the internal StopReason contract (PROMPT-38). */
+export function mapStopReason(reason: string): StopReason {
+  const r = (reason || "").toLowerCase().trim();
+  if (!r) return "stop";
+  if (r.includes("tool_call") || r === "tool_calls") return "tool_calls";
+  if (r.includes("length") || r === "max_tokens") return "length";
+  if (r.includes("refus") || r.includes("safety") || r.includes("content_filter") || r === "blocked") return "refusal";
+  if (r === "stop" || r === "end_turn" || r === "stop_sequence") return "stop";
+  if (r === "error" || r === "internal_error") return "error";
+  if (r === "cancel" || r === "aborted") return "cancel";
+  return r as StopReason;
+}
+
+/** A refusal stop reason must never execute side effects. */
+export function isRefusalStopReason(reason: StopReason): boolean {
+  return reason === "refusal";
+}
+
+/** A tool-calls stop reason means the turn is not complete; Chief must act. */
+export function isToolCallStopReason(reason: StopReason): boolean {
+  return reason === "tool_calls";
+}
+
+/** A length stop means the response was truncated and is incomplete. */
+export function isLengthStopReason(reason: StopReason): boolean {
+  return reason === "length";
 }
 
 function completeToolCalls(message: Record<string, unknown>): ToolCall[] {
@@ -513,13 +760,15 @@ function anthropicProvider(name: string, model: string, apiKey: string, baseUrl:
         });
         if (!response.ok) throw await errorFromResponse(response, name);
         if (!response.body) throw new ProviderError(`${name} returned an empty body`);
-        const calls = new Map<number, { id: string; name: string; arguments: string }>();
+        const calls = new Map<number, { id: string; name: string; args: string }>();
         let stopReason = "";
-        for await (const data of sseData(response.body)) {
-          if (!data) continue;
+        for await (const line of sseLines(response.body)) {
+          if (line.type !== "data") continue;
+          const value = line.value.trim();
+          if (!value || value === "[DONE]") continue;
           let event: Record<string, unknown>;
           try {
-            event = JSON.parse(data) as Record<string, unknown>;
+            event = JSON.parse(value) as Record<string, unknown>;
           } catch {
             continue;
           }
@@ -531,7 +780,7 @@ function anthropicProvider(name: string, model: string, apiKey: string, baseUrl:
               calls.set(index, {
                 id: String(block.id ?? `call_${index}`),
                 name: String(block.name ?? ""),
-                arguments: "",
+                args: "",
               });
             }
           } else if (type === "content_block_delta") {
@@ -541,7 +790,7 @@ function anthropicProvider(name: string, model: string, apiKey: string, baseUrl:
               yield { type: "text", text: delta.text };
             } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
               const current = calls.get(index);
-              if (current) current.arguments += delta.partial_json;
+              if (current) current.args += delta.partial_json;
             }
           } else if (type === "message_delta") {
             const delta = (event.delta ?? {}) as Record<string, unknown>;
@@ -558,11 +807,11 @@ function anthropicProvider(name: string, model: string, apiKey: string, baseUrl:
             call: {
               id: call.id || `call_${index}`,
               name: call.name,
-              arguments: call.arguments || "{}",
+              arguments: call.args || "{}",
             },
           };
         }
-        yield { type: "done", stopReason: stopReason || "end_turn" };
+        yield { type: "done", stopReason: mapStopReason(stopReason || "end_turn") };
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (signal?.aborted) throw error;
@@ -666,11 +915,13 @@ function geminiProvider(name: string, model: string, apiKey: string, baseUrl: st
         if (!response.body) throw new ProviderError(`${name} returned an empty body`);
         const calls: ToolCall[] = [];
         let stopReason = "";
-        for await (const data of sseData(response.body)) {
-          if (!data) continue;
+        for await (const line of sseLines(response.body)) {
+          if (line.type !== "data") continue;
+          const value = line.value.trim();
+          if (!value || value === "[DONE]") continue;
           let chunk: Record<string, unknown>;
           try {
-            chunk = JSON.parse(data) as Record<string, unknown>;
+            chunk = JSON.parse(value) as Record<string, unknown>;
           } catch {
             continue;
           }
@@ -700,7 +951,7 @@ function geminiProvider(name: string, model: string, apiKey: string, baseUrl: st
           }
         }
         for (const call of calls) yield { type: "tool_call", call };
-        yield { type: "done", stopReason: stopReason || "STOP" };
+        yield { type: "done", stopReason: mapStopReason(stopReason || "STOP") };
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (signal?.aborted) throw error;

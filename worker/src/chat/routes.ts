@@ -45,22 +45,24 @@ import {
 } from "./store";
 import { generateIncrementalHistory } from "./history";
 import { removeSummaryDoc, searchConfigured } from "./search";
-import { executeHistoryTool, HISTORY_TOOL } from "./tools";
+import { executeHistoryTool } from "./tools";
 import {
   executeRoutineTool,
   isRoutineTool,
-  ROUTINE_TOOLS,
 } from "./routine-tools";
 import {
   executeMailToolCall,
   isMailToolCall,
-  MAIL_TOOL_CALL_TOOL,
 } from "./mail-tool";
 import {
   executeConnectorTool,
   isConnectorTool,
-  CONNECTOR_TOOLS,
 } from "./connector-tools";
+import {
+  getRegisteredTool,
+  getRegisteredToolDefinitions,
+  validateToolArguments,
+} from "./tool-registry";
 import {
   ProviderError,
   type LlmMessage,
@@ -600,7 +602,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       let stopReason = "";
       try {
         const chatTools = toolsAllowed
-          ? [...ROUTINE_TOOLS, HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, ...CONNECTOR_TOOLS]
+          ? getRegisteredToolDefinitions()
           : [];
         for await (const event of provider.provider.stream(
           llm,
@@ -682,7 +684,40 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       for (const call of calls) {
         // Never execute a tool merely because plain assistant text claims to call it.
         // Only provider-emitted tool_call events reach here.
-        const parsed = parseData(call.arguments || "{}");
+        const registered = getRegisteredTool(call.name);
+        if (!registered) {
+          emit.send("tool", {
+            id: call.id,
+            name: call.name,
+            status: "error",
+            query: "",
+            error: "unknown_tool",
+          });
+          continue;
+        }
+
+        // Validate arguments against the strict schema before authorization or
+        // execution (PROMPT-39).  Structured validation errors go back to Chief
+        // so it can correct safe mistakes.
+        const validation = validateToolArguments(registered, call);
+        if (!validation.ok) {
+          emit.send("tool", {
+            id: call.id,
+            name: call.name,
+            status: "error",
+            query: "",
+            error: validation.error.code,
+          });
+          llm.push({
+            role: "tool",
+            content: validation.error.message,
+            toolCallId: call.id,
+            name: call.name,
+          });
+          continue;
+        }
+
+        const parsed = validation.arguments;
         const query = typeof parsed.query === "string" ? parsed.query : "";
         emit.send("tool", {
           id: call.id,

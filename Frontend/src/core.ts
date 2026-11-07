@@ -64,6 +64,9 @@ const pendingTools = new Map<string, PendingTool>();
 let reqSeq = 0;
 let chatAbort: AbortController | null = null;
 
+/** Bound retained conversation data per thread to prevent unbounded memory growth. */
+const MAX_MESSAGES_PER_THREAD = 500;
+
 /* ============================================================================
    Core store
    ========================================================================== */
@@ -136,8 +139,12 @@ const emptyComputer: ComputerState = { running: false, booting: false, msg: "com
 
 function pushMsg(threadId: string, msg: Message) {
   useCore.setState((s) => {
-    const list = s.messages[threadId] || [];
-    return { messages: { ...s.messages, [threadId]: [...list, msg] } };
+    const list = [...(s.messages[threadId] || [])];
+    list.push(msg);
+    if (list.length > MAX_MESSAGES_PER_THREAD) {
+      list.splice(0, list.length - MAX_MESSAGES_PER_THREAD);
+    }
+    return { messages: { ...s.messages, [threadId]: list } };
   });
 }
 
@@ -510,6 +517,9 @@ function upsertMessage(threadId: string, message: Message): void {
     const index = list.findIndex((m) => m.id === message.id);
     if (index >= 0) list[index] = { ...list[index], ...message, pending: false };
     else list.push(message);
+    if (list.length > MAX_MESSAGES_PER_THREAD) {
+      list.splice(0, list.length - MAX_MESSAGES_PER_THREAD);
+    }
     return { messages: { ...s.messages, [threadId]: list } };
   });
 }
@@ -908,7 +918,11 @@ export const useCore = create<CoreState>((set, get) => ({
       const server = (d.messages || []) as Message[];
       const cur = get().messages[id] || [];
       const pending = cur.filter((m) => m.pending && !server.some((x) => x.role === "user" && x.content === m.content));
-      set({ messages: { ...get().messages, [id]: [...server, ...pending] } });
+      const merged = [...server, ...pending];
+      if (merged.length > MAX_MESSAGES_PER_THREAD) {
+        merged.splice(0, merged.length - MAX_MESSAGES_PER_THREAD);
+      }
+      set({ messages: { ...get().messages, [id]: merged } });
     } catch {
       /* ignore */
     }

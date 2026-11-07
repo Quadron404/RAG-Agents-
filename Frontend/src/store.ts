@@ -169,9 +169,11 @@ export function applyAppearance(appearance: Appearance) {
 
 export function initAppearance() {
   applyAppearance(usePrefs.getState().appearance);
-  mq?.addEventListener("change", () => {
+  const handler = () => {
     if (usePrefs.getState().appearance === "system") applyAppearance("system");
-  });
+  };
+  mq?.addEventListener("change", handler);
+  return () => mq?.removeEventListener("change", handler);
 }
 
 /* ============================================================================
