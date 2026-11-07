@@ -34,6 +34,15 @@ import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
 import { TokenError, verifyIdToken } from "./idtoken";
 import { validateTimezone } from "./timezone";
+import {
+  createRoutine,
+  deleteRoutine,
+  getRoutine,
+  listRoutines,
+  listRuns,
+  setRoutineEnabled,
+  updateRoutine,
+} from "./routines";
 import { listPendingApprovals, resolveConnectorApproval, getConnectorApproval } from "./connector-approvals";
 import { executeApprovedConnectorAction } from "./chat/connector-tools";
 import {
@@ -473,6 +482,58 @@ export default {
           await resolveConnectorApproval(env, approvalId, { decision: "denied", decidedBy: userId, result: "denied by owner" });
           return json({ ok: true, status: "denied" });
         }
+      }
+    }
+
+    // Worker-native routine listing.  Routines live in D1 at the edge and must
+    // be readable whether or not the Codespace backend is reachable, so the
+    // edge serves this directly (session-authenticated) instead of proxying
+    // through the backend.  The backend's own /internal/routines path remains
+    // its privileged client route.
+    if (path === "/routines" && request.method === "GET") {
+      const principal = await resolvePrincipal(env, request);
+      if (!principal) return json({ error: "authentication required" }, 401);
+      const ownerSub = principal.user.google_sub;
+      if (!ownerSub) {
+        return json({ ok: false, available: false, error: "This account has no routine identity.", routines: [] });
+      }
+      return json({ ok: true, available: true, routines: await listRoutines(env, ownerSub) });
+    }
+
+    // Worker-native routine run history and lifecycle.  Same reasoning as the
+    // listing endpoint above: these run on D1 at the edge and should not depend
+    // on the Codespace backend being awake.
+    if (!path.startsWith("/routines/connectors/")) {
+      const routineMatch = /^\/routines\/([^/]+)(\/(runs|pause|resume))?$/.exec(path);
+      if (routineMatch) {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const ownerSub = principal.user.google_sub;
+        if (!ownerSub) {
+          return json({ ok: false, available: false, error: "This account has no routine identity.", routines: [] });
+        }
+        const routineId = decodeURIComponent(routineMatch[1]);
+        const action = routineMatch[2] ? routineMatch[2].slice(1) : "";
+        const routine = await getRoutine(env, routineId);
+        if (!routine || routine.owner_sub !== ownerSub) {
+          return json({ ok: false, error: "no such routine" }, 404);
+        }
+        const now = Date.now();
+        if (action === "runs" && request.method === "GET") {
+          const limit = Number(url.searchParams.get("limit") ?? "20") || 20;
+          return json({ ok: true, runs: await listRuns(env, routineId, limit) });
+        }
+        if (action === "pause" && request.method === "POST") {
+          return json({ ok: true, routine: await setRoutineEnabled(env, routineId, false, now) });
+        }
+        if (action === "resume" && request.method === "POST") {
+          return json({ ok: true, routine: await setRoutineEnabled(env, routineId, true, now) });
+        }
+        if (request.method === "DELETE" && !action) {
+          await deleteRoutine(env, routineId, now);
+          return json({ ok: true });
+        }
+        return json({ ok: false, error: "method not allowed" }, 405);
       }
     }
 
