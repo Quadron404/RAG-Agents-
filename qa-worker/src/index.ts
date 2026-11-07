@@ -7,13 +7,15 @@
  *
  * Endpoints:
  *   GET  /qa/health        - service health (no auth)
- *   POST /qa/run           - read-only smoke test (QA_SECRET bearer auth)
+ *   POST /qa/run           - read-only page-load smoke test (QA_SECRET bearer auth)
+ *   POST /qa/chat-test     - end-to-end RAG Agents chat test (QA_SECRET bearer auth)
  *
  * Security:
- *   - QA_SECRET is a Worker secret, never logged or returned.
+ *   - QA_SECRET, QA_TEST_EMAIL, QA_TEST_PASSWORD are Worker secrets, never logged or returned.
  *   - Constant-time token comparison.
  *   - Test targets restricted to an explicit allowlist; arbitrary URLs rejected.
- *   - No destructive actions, no form submissions, no production data writes.
+ *   - Dedicated QA test account only; never a personal account.
+ *   - No destructive actions, no emails, no purchases, no external actions.
  *   - Browser closed in `finally` on every code path.
  */
 
@@ -31,7 +33,9 @@ const DEFAULT_TARGET = "https://rag-agents.pratyakshrawat768.workers.dev/";
 
 // --- Timeouts (ms) -----------------------------------------------------------
 const NAVIGATE_TIMEOUT_MS = 30000;
-const BROWSER_OPERATION_TIMEOUT_MS = 110000;
+const BROWSER_OPERATION_TIMEOUT_MS = 180000;
+const AUTH_TIMEOUT_MS = 90000;
+const RESPONSE_TIMEOUT_MS = 120000;
 
 // --- JSON helpers ------------------------------------------------------------
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -53,9 +57,6 @@ function toBase64(bytes: Uint8Array | null | undefined): string | null {
 // --- Constant-time token comparison ------------------------------------------
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) {
-    // Different lengths can never be equal; still perform a full-width XOR loop
-    // against a buffer of the longer length so the compare path has no early
-    // return that depends on secret contents when lengths match.
     const n = Math.max(a.length, b.length);
     let result = 0;
     for (let i = 0; i < n; i++) {
@@ -87,7 +88,36 @@ function isApprovedTarget(urlString: string): boolean {
   }
 }
 
-// --- Smoke test --------------------------------------------------------------
+// --- Helpers -----------------------------------------------------------------
+async function waitForSelector(page: any, selector: string, timeoutMs = 15000): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const el = await page.$(selector);
+      if (el) return el;
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`selector not found within ${timeoutMs}ms: ${selector}`);
+}
+
+async function clickWhenVisible(page: any, selector: string, timeoutMs = 15000): Promise<void> {
+  const el = await waitForSelector(page, selector, timeoutMs);
+  await el.click();
+}
+
+async function captureScreenshot(page: any, label: string): Promise<string | null> {
+  try {
+    const img = await page.screenshot({ fullPage: true });
+    return toBase64(img);
+  } catch (err: any) {
+    return null;
+  }
+}
+
+// --- Screenshot report (page-load smoke test) --------------------------------
 interface ScreenshotReport {
   ok: boolean;
   passed: boolean;
@@ -122,29 +152,20 @@ async function runSmokeTest(browserBinding: BrowserWorker, target: string): Prom
   };
 
   let browser: any = null;
-  let started = false;
-
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), BROWSER_OPERATION_TIMEOUT_MS);
 
   try {
     browser = await launch(browserBinding);
-    started = true;
 
     const context = browser.contexts()[0] ?? (await browser.newContext());
     let page = context.pages()[0] ?? (await context.newPage());
 
-    // Collect console errors (read-only).
     page.on("console", (msg: any) => {
       if (msg.type() === "error") {
-        report.consoleErrors.push({
-          text: msg.text(),
-          url: msg.location?.url,
-        });
+        report.consoleErrors.push({ text: msg.text(), url: msg.location?.url });
       }
     });
-
-    // Collect failed network requests / HTTP error responses (read-only).
     page.on("requestfailed", (req: any) => {
       report.failedNetworkRequests.push({
         url: req.url(),
@@ -172,7 +193,6 @@ async function runSmokeTest(browserBinding: BrowserWorker, target: string): Prom
     report.pageTitle = await page.title();
     report.loadStatus = response ? (response.ok() ? "ok" : `http-${response.status()}`) : "unknown";
 
-    // Read-only visible UI checks (no clicks, no form submission).
     report.visibleUiChecks = await page.evaluate(() => {
       const checks: Record<string, unknown> = {};
       const selectors = [
@@ -203,7 +223,6 @@ async function runSmokeTest(browserBinding: BrowserWorker, target: string): Prom
       return checks;
     });
 
-    // Capture screenshot (read-only evidence).
     const screenshot = await page.screenshot({ fullPage: true });
     report.screenshotBase64 = toBase64(screenshot);
     report.screenshotContentType = "image/png";
@@ -213,6 +232,369 @@ async function runSmokeTest(browserBinding: BrowserWorker, target: string): Prom
       report.loadStatus === "ok" &&
       report.consoleErrors.length === 0 &&
       report.failedNetworkRequests.length === 0;
+  } catch (error: any) {
+    report.error = error?.message ?? String(error);
+    report.ok = false;
+    report.passed = false;
+  } finally {
+    clearTimeout(timeoutId);
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        // Best-effort cleanup; never mask the original result.
+      }
+    }
+  }
+
+  return report;
+}
+
+// --- Chat test report --------------------------------------------------------
+interface ChatTestReport {
+  ok: boolean;
+  passed: boolean;
+  target: string;
+  timestamp: string;
+  error: string | null;
+  stage: string;
+  pageTitle: string | null;
+  finalUrl: string | null;
+  loginResult: { ok: boolean; authenticated: boolean; error: string | null };
+  submissionResult: { ok: boolean; sent: boolean; error: string | null };
+  aiResponseText: string | null;
+  responseValidation: { ok: boolean; checklistItemCount: number; itemsStartWithBracket: boolean; error: string | null };
+  responseTimeMs: number | null;
+  persistenceResult: { ok: boolean; persisted: boolean; error: string | null };
+  consoleErrors: Array<{ text: string; url?: string }>;
+  failedNetworkRequests: Array<{ url: string; method?: string; status?: number; failure?: string }>;
+  screenshots: { input?: string | null; response?: string | null; persistence?: string | null };
+}
+
+// --- End-to-end chat test ----------------------------------------------------
+async function runChatTest(browserBinding: BrowserWorker, target: string, env: Env): Promise<ChatTestReport> {
+  const report: ChatTestReport = {
+    ok: false,
+    passed: false,
+    target,
+    timestamp: new Date().toISOString(),
+    error: null,
+    stage: "start",
+    pageTitle: null,
+    finalUrl: null,
+    loginResult: { ok: false, authenticated: false, error: null },
+    submissionResult: { ok: false, sent: false, error: null },
+    aiResponseText: null,
+    responseValidation: { ok: false, checklistItemCount: 0, itemsStartWithBracket: false, error: null },
+    responseTimeMs: null,
+    persistenceResult: { ok: false, persisted: false, error: null },
+    consoleErrors: [],
+    failedNetworkRequests: [],
+    screenshots: {},
+  };
+
+  if (!env.QA_TEST_EMAIL || !env.QA_TEST_PASSWORD) {
+    report.error = "QA_TEST_EMAIL or QA_TEST_PASSWORD Worker secret is not configured. A dedicated QA test account is required.";
+    report.stage = "configuration";
+    return report;
+  }
+
+  let browser: any = null;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), BROWSER_OPERATION_TIMEOUT_MS);
+
+  try {
+    browser = await launch(browserBinding);
+    report.stage = "browser_launched";
+
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    let page = context.pages()[0] ?? (await context.newPage());
+
+    page.on("console", (msg: any) => {
+      if (msg.type() === "error") {
+        report.consoleErrors.push({ text: msg.text(), url: msg.location?.url });
+      }
+    });
+    page.on("requestfailed", (req: any) => {
+      report.failedNetworkRequests.push({
+        url: req.url(),
+        method: req.method(),
+        failure: req.failure?.errorText,
+      });
+    });
+    page.on("response", (res: any) => {
+      if (!res.ok()) {
+        report.failedNetworkRequests.push({
+          url: res.url(),
+          method: res.request().method(),
+          status: res.status(),
+        });
+      }
+    });
+
+    // --- Step 1: Navigate to the app --------------------------------------
+    report.stage = "navigating";
+    const response = await page.goto(target, {
+      waitUntil: "domcontentloaded",
+      timeout: NAVIGATE_TIMEOUT_MS,
+      signal: abortController.signal,
+    });
+    report.finalUrl = page.url();
+    report.pageTitle = await page.title();
+
+    // --- Step 2: Authenticate via Google OAuth ----------------------------
+    report.stage = "authenticating";
+
+    let authenticated = false;
+    try {
+      const sessionCheck = await page.evaluate(() => {
+        const signIn = document.querySelector("a[href*='/auth/login']");
+        const chatView = document.querySelector(".thread, .composer__ta, .chatlist");
+        return {
+          hasSignInGate: !!signIn,
+          hasChatView: !!chatView,
+        };
+      });
+      authenticated = sessionCheck.hasChatView && !sessionCheck.hasSignInGate;
+    } catch {
+      /* proceed to auth flow */
+    }
+
+    if (!authenticated) {
+      try {
+        await clickWhenVisible(page, "a[href*='/auth/login'], text='Continue with Google'", 10000);
+      } catch {
+        try {
+          await clickWhenVisible(page, "text=Continue with Google", 5000);
+        } catch {
+          /* may already be on the OAuth page */
+        }
+      }
+
+      // --- Google OAuth: email step ---------------------------------------
+      try {
+        await waitForSelector(page, 'input[type="email"], input#identifierId', AUTH_TIMEOUT_MS);
+        await page.fill('input[type="email"], input#identifierId', env.QA_TEST_EMAIL);
+        await clickWhenVisible(page, "button#identifierNext, text=Next, text=Continue", 10000);
+      } catch (err: any) {
+        report.loginResult.error = `Google email step failed: ${err?.message ?? String(err)}`;
+        report.stage = "auth_failed";
+        throw new Error(report.loginResult.error);
+      }
+
+      // --- Google OAuth: password step ------------------------------------
+      try {
+        await waitForSelector(page, 'input[type="password"], input#password', AUTH_TIMEOUT_MS);
+        await page.fill('input[type="password"], input#password', env.QA_TEST_PASSWORD);
+        await clickWhenVisible(page, "button#passwordNext, text=Next, text=Continue, text=Sign in", 10000);
+      } catch (err: any) {
+        report.loginResult.error = `Google password step failed: ${err?.message ?? String(err)}`;
+        report.stage = "auth_failed";
+        throw new Error(report.loginResult.error);
+      }
+
+      // --- Wait for redirect back to app ----------------------------------
+      try {
+        await waitForSelector(page, ".thread, .composer__ta, .chatlist", AUTH_TIMEOUT_MS);
+        authenticated = true;
+      } catch (err: any) {
+        report.loginResult.error = `Post-auth redirect to app failed: ${err?.message ?? String(err)}`;
+        report.stage = "auth_failed";
+        throw new Error(report.loginResult.error);
+      }
+    }
+
+    report.loginResult.ok = true;
+    report.loginResult.authenticated = authenticated;
+    report.stage = "authenticated";
+
+    // --- Step 3: Open a new conversation ----------------------------------
+    report.stage = "new_conversation";
+    let hasComposer = false;
+    try {
+      hasComposer = Boolean(await page.$(".composer__ta"));
+    } catch {
+      /* proceed */
+    }
+
+    if (!hasComposer) {
+      try {
+        await clickWhenVisible(page, ".chatlist__head button[title='New conversation'], .chatlist__head button", 10000);
+      } catch {
+        try {
+          await clickWhenVisible(page, "button[aria-label='New conversation']", 5000);
+        } catch {
+          /* may already be on a conversation */
+        }
+      }
+    }
+
+    try {
+      await waitForSelector(page, ".composer__ta, textarea[placeholder='Message Chief…']", 15000);
+    } catch (err: any) {
+      report.submissionResult.error = `Composer not found after new conversation: ${err?.message ?? String(err)}`;
+      report.stage = "composer_not_found";
+      throw new Error(report.submissionResult.error);
+    }
+
+    report.submissionResult.ok = true;
+    report.stage = "composer_ready";
+
+    // --- Step 4: Enter the test message -----------------------------------
+    const testMessage = "Create a checklist containing exactly three items for preparing a school bag. Each item must start with [ ]. Keep it concise.";
+    report.stage = "entering_message";
+
+    try {
+      const input = await waitForSelector(page, ".composer__ta", 10000);
+      await input.fill("");
+      await input.type(testMessage, { delay: 10 });
+    } catch (err: any) {
+      report.submissionResult.error = `Failed to type message: ${err?.message ?? String(err)}`;
+      report.stage = "type_failed";
+      throw new Error(report.submissionResult.error);
+    }
+
+    report.screenshots.input = await captureScreenshot(page, "input");
+
+    // --- Step 5: Submit the message ---------------------------------------
+    report.stage = "submitting";
+
+    try {
+      const sendButton = await waitForSelector(page, "button.composer__send:not(.composer__stop)", 10000);
+      await sendButton.click();
+    } catch (err: any) {
+      try {
+        await page.keyboard.press("Enter");
+      } catch (e2: any) {
+        report.submissionResult.error = `Failed to submit message: ${err?.message ?? String(err)}`;
+        report.stage = "submit_failed";
+        throw new Error(report.submissionResult.error);
+      }
+    }
+
+    report.submissionResult.sent = true;
+    report.submissionResult.ok = true;
+    report.stage = "submitted";
+
+    // --- Step 6: Wait for Chief's response --------------------------------
+    report.stage = "waiting_for_response";
+
+    let aiResponseText = null;
+    try {
+      await waitForSelector(page, ".msg--agent, .step-card, .runbanner", RESPONSE_TIMEOUT_MS);
+
+      await new Promise((resolve) => {
+        const check = async () => {
+          try {
+            const busy = await page.evaluate(() => {
+              const run = document.querySelector(".runbanner");
+              const stepCard = document.querySelector(".step-card--busy");
+              return !run && !stepCard;
+            });
+            if (busy) {
+              resolve(null);
+            } else {
+              setTimeout(check, 1000);
+            }
+          } catch {
+            setTimeout(check, 1000);
+          }
+        };
+        check();
+      });
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      aiResponseText = await page.evaluate(() => {
+        const agentMsgs = Array.from(document.querySelectorAll(".msg--agent .bubble, .step-card__report"));
+        if (agentMsgs.length === 0) return null;
+        const last = agentMsgs[agentMsgs.length - 1];
+        return last.textContent ? last.textContent.trim() : null;
+      });
+    } catch (err: any) {
+      report.responseValidation.error = `No AI response received: ${err?.message ?? String(err)}`;
+      report.stage = "no_response";
+      throw new Error(report.responseValidation.error);
+    }
+
+    report.aiResponseText = aiResponseText;
+    report.stage = "response_received";
+    report.screenshots.response = await captureScreenshot(page, "response");
+
+    // --- Step 7: Validate the response ------------------------------------
+    report.stage = "validating_response";
+    let checklistItemCount = 0;
+    let itemsStartWithBracket = false;
+    let validationError: string | null = null;
+
+    if (aiResponseText) {
+      const lines = aiResponseText.split("\n").map((l: string) => l.trim()).filter(Boolean);
+      const bracketItems = lines.filter((l: string) => l.startsWith("[ ]"));
+      checklistItemCount = bracketItems.length;
+      itemsStartWithBracket = checklistItemCount === 3 && lines.length >= 3;
+
+      if (checklistItemCount !== 3) {
+        validationError = `Expected exactly 3 checklist items starting with [ ], found ${checklistItemCount}`;
+      }
+    } else {
+      validationError = "No AI response text captured";
+    }
+
+    report.responseValidation = {
+      ok: validationError === null,
+      checklistItemCount,
+      itemsStartWithBracket,
+      error: validationError,
+    };
+    report.stage = "validated";
+
+    // --- Step 8: Refresh and verify persistence ---------------------------
+    report.stage = "persistence_check";
+
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: NAVIGATE_TIMEOUT_MS });
+
+      await waitForSelector(page, ".composer__ta, .thread__scroll", 20000);
+
+      const persistenceCheck = await page.evaluate((expectedText: string) => {
+        const agentMsgs = Array.from(document.querySelectorAll(".msg--agent .bubble, .step-card__report"));
+        const combined = agentMsgs.map((m) => m.textContent ? m.textContent.trim() : "").join("\n");
+        return {
+          hasAgentMessages: agentMsgs.length > 0,
+          containsResponse: combined.includes(expectedText),
+          threadCount: document.querySelectorAll(".convrow").length,
+        };
+      }, testMessage);
+
+      report.persistenceResult = {
+        ok: persistenceCheck.hasAgentMessages && persistenceCheck.containsResponse,
+        persisted: persistenceCheck.hasAgentMessages && persistenceCheck.containsResponse,
+        error: persistenceCheck.hasAgentMessages && persistenceCheck.containsResponse
+          ? null
+          : "Conversation or response did not persist after refresh",
+      };
+    } catch (err: any) {
+      report.persistenceResult.error = `Persistence check failed: ${err?.message ?? String(err)}`;
+      report.stage = "persistence_failed";
+    }
+
+    report.screenshots.persistence = await captureScreenshot(page, "persistence");
+    report.stage = "persistence_done";
+
+    // --- Overall pass/fail ------------------------------------------------
+    const allOk =
+      report.loginResult.ok &&
+      report.loginResult.authenticated &&
+      report.submissionResult.ok &&
+      report.submissionResult.sent &&
+      report.responseValidation.ok &&
+      report.persistenceResult.ok &&
+      report.aiResponseText !== null;
+
+    report.ok = allOk;
+    report.passed = allOk;
+    report.error = allOk ? null : "One or more chat-test stages did not pass";
+
   } catch (error: any) {
     report.error = error?.message ?? String(error);
     report.ok = false;
@@ -246,7 +628,6 @@ export default {
     }
 
     if (path === "/qa/run" && request.method === "POST") {
-      // Authentication: Bearer QA_SECRET, constant-time comparison.
       const supplied = extractBearerToken(request);
       if (!supplied || !env.QA_SECRET || !constantTimeEqual(supplied, env.QA_SECRET)) {
         return json({ ok: false, error: "authentication required" }, 401);
@@ -270,6 +651,33 @@ export default {
 
       const report = await runSmokeTest(env.BROWSER, target);
       const status = report.ok ? 200 : 502;
+      return json(report, status);
+    }
+
+    if (path === "/qa/chat-test" && request.method === "POST") {
+      const supplied = extractBearerToken(request);
+      if (!supplied || !env.QA_SECRET || !constantTimeEqual(supplied, env.QA_SECRET)) {
+        return json({ ok: false, error: "authentication required" }, 401);
+      }
+
+      let body: { url?: string } = {};
+      try {
+        body = (await request.json()) ?? {};
+      } catch {
+        /* ignore invalid body */
+      }
+      const target = typeof body.url === "string" && body.url ? body.url : DEFAULT_TARGET;
+
+      if (!isApprovedTarget(target)) {
+        return json(
+          { ok: false, error: "target not authorised", target },
+          403,
+          { "content-type": "application/json; charset=utf-8" },
+        );
+      }
+
+      const report = await runChatTest(env.BROWSER, target, env);
+      const status = report.passed ? 200 : 502;
       return json(report, status);
     }
 
