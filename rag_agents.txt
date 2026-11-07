@@ -3,43 +3,48 @@ Owner: Pratyaksh Singh Rawat | Organization: Rawat Systems
 Repository: https://github.com/Quadron404/RAG-Agents-
 Primary branch: main
 Production Worker: https://rag-agents.pratyakshrawat768.workers.dev
-Prepared: 2026-11-06
+Prepared: 2026-11-07
 
 HOW TO USE THIS FILE
 Each PROMPT-N is a separate, literal engineering instruction. Execute only the prompt range assigned by the task runner. Do not skip, merge, reinterpret, or silently mark a prompt complete. A prompt may be marked complete only after its acceptance conditions have been demonstrated. If a prompt discovers that the requested behaviour is already implemented correctly, prove that with source references and tests instead of rewriting it.
 
-VERIFIED BASELINE SNAPSHOT — 2026-11-06
+VERIFIED BASELINE SNAPSHOT — 2026-11-07
 GitHub:
-- Repository Quadron404/RAG-Agents- is public, default branch main, not archived.
-- Main HEAD: f91e2ac609e8ba54744ada1dc845937bf64bba0e, dated 2026-11-05 11:32:43 UTC. Its message is "Create rag_agents.txt"; the commit adds the 5,309-line prompt file and its parent is f002e1f8245caffc800aa76b06e3a44229cd707a.
-- Parent source commit f002e1f8245caffc800aa76b06e3a44229cd707a is dated 2026-10-29 14:01:39 UTC and includes one-time scheduling, scheduled-to-Gmail execution, sender-alias configuration, refusal gating, and awaiting_approval run status.
-- GitHub Actions query returned zero workflow runs. The main branch API reported branch protection disabled. Re-check both before relying on this snapshot.
-- A root package.json fetch returned 404. Discover the actual Frontend/ and worker/ manifests; do not invent a root workspace.
+- Repository Quadron404/RAG-Agents- is public, default branch main, and not archived.
+- Current main HEAD: 56dae81fa5f134d30fb1f89d376fd5c928628619, dated 2026-11-06 08:45:26 UTC, commit message "Create voyager.txt". The immediately preceding commit 4e7120aaf4183b2dffdf19e8e33f12ba8ea840e5, dated 2026-11-06 08:44:07 UTC, updates rag_agents.txt. These latest commits change prompt documentation, not application source.
+- The latest source-changing commit observed in the retrieved recent-commit window is f002e1f8245caffc800aa76b06e3a44229cd707a, dated 2026-10-29 14:01:39 UTC. It includes one-time scheduling, scheduled-to-Gmail approval execution, sender-alias configuration, refusal gating, and awaiting_approval run status. Do not assume the current Worker bundle maps to this commit.
+- Both rag_agents.txt and voyager.txt already exist on main and contain exactly 100 literal PROMPT-N blocks each: 200 prompts total across two separate documents. The current blob SHAs are ec429257588534ea85541a5ce83b08e73ad5bd3d and a5e724e24861bd407d00ce220105054fdb13f230 respectively.
+- The .github/workflows directory was not found on main (GitHub returned 404); no repository workflow definitions were observed. A root package.json is also absent. The actual manifests are worker/package.json and Frontend/package.json. Do not invent a root workspace or claim CI passed without evidence.
 
 Cloudflare:
-- The connected account inventory contained one account; account identifiers and all secret values are intentionally omitted here.
-- Worker rag-agents is present, has fetch and scheduled handlers, assets/modules, and workers.dev enabled.
-- Active deployment observed: version number 77, version ID a1f4e643-670e-4059-95e0-fea59aa2d44d, 100% traffic, deployment created 2026-11-01 10:02:31 UTC. Worker modified_on was 2026-11-01 10:02:35 UTC. The deployments API showed 77 records; the first page was inspected.
-- Live settings show compatibility date 2026-03-27, nodejs_compat, ASSETS, D1 binding DB to rag-agents-auth, AI_SEARCH namespace default, and Cron * * * * *.
-- Live model settings observed: AGENT_PROVIDER=groq, AGENT_MODEL=openai/gpt-oss-20b, SUMMARY_PROVIDER=groq, SUMMARY_MODEL=openai/gpt-oss-20b, AI_SEARCH_INSTANCE=rag-conversations, CHAT_MAX_TOOL_CALLS=3, ROUTINE_MAX_ATTEMPTS=5, ROUTINE_DISPATCH_BATCH=20, ROUTINE_RETRY_BASE_MS=60000.
-- Live BACKEND_ORIGIN points to a GitHub Codespaces app URL. CODESPACE_NAME was blank in the observed settings and no binding named GITHUB_TOKEN appeared in the visible list; verify whether Codespace wake-up is actually configured.
-- GMAIL_SENDER_ALIAS is empty in live settings. Secret binding names include Gmail/Groq/Google/session/internal credentials and bot-sender-related names. A token-shaped secret binding name was also observed. Do not reproduce any secret value or token-shaped name in logs, source, or reports; investigate safely.
-- Cloudflare resource inventory also contains other Workers and databases. Do not confuse rag-agents with rag-cdi-controller, rag-backend, wellness-insights, or unrelated projects.
+- The connected account inventory contained one account; omit account IDs and all secret values from every report.
+- Worker rag-agents exists with fetch and scheduled handlers, assets/modules, workers.dev enabled, and observability enabled.
+- Current active deployment: Worker version number 83, version ID 79a30112-5fbb-4001-b29b-a3938d932d2c, deployment ID 8e9ba687-68ec-4885-bf58-12f75f033b3a, serving 100% of traffic. Deployment created 2026-11-06 11:38:54 UTC; Worker modified_on was 2026-11-06 11:38:57 UTC. The deployments and versions APIs each report 83 total records; only the first 10 were returned. The deployment metadata did not expose a Git SHA, so exact source-to-deployment parity is UNVERIFIED until independently proven.
+- Live settings show compatibility date 2026-03-27, nodejs_compat, ASSETS, D1 binding DB to rag-agents-auth, AI_SEARCH namespace default, AI_SEARCH_INSTANCE=rag-conversations, and Cron * * * * *.
+- The D1 database rag-agents-auth currently reports 16 tables. Repository migrations run through 0011_connector_approvals_updated_at.sql. Do not assume a migration has been applied merely because its file exists; inspect D1 migration state before any schema change.
+- Live model settings: AGENT_PROVIDER=groq, AGENT_MODEL=openai/gpt-oss-20b, SUMMARY_PROVIDER=groq, SUMMARY_MODEL=openai/gpt-oss-20b, CHAT_MAX_TOOL_CALLS=3, ROUTINE_MAX_ATTEMPTS=5, ROUTINE_DISPATCH_BATCH=20, ROUTINE_RETRY_BASE_MS=60000.
+- BACKEND_ORIGIN points to a GitHub Codespaces app URL, but CODESPACE_NAME is empty and no GITHUB_TOKEN binding appeared in the live settings metadata. worker/src/codespace.ts requires both GITHUB_TOKEN and CODESPACE_NAME for lifecycleConfigured() to return true. The Cron can still run and leave work queued, but the current visible configuration cannot start a stopped Codespace. Do not claim offline wake-up works.
+- Email configuration is inconsistent and currently must be treated as unconfigured: GMAIL_SENDER_EMAIL is an empty plain-text binding; GMAIL_SENDER_ALIAS is also empty; GMAIL_SENDER_REFRESH_TOKEN exists as a secret binding. BOT_SENDER_EMAIL and BOT_SENDER_PROVIDER also exist as secret bindings, but they are not declared in worker/src/env.ts and are not used by worker/src/gmail-sender.ts. The current sender code requires GMAIL_SENDER_EMAIL during token refresh. It also chooses GMAIL_SENDER_ALIAS with nullish coalescing, so an empty-string alias is not treated as absent. Fix the configuration contract before claiming email is production-ready; never send a real message during tests.
+- A secret binding name resembling a raw Google token was observed. Its value was not retrieved. Never reproduce the name or value, never log it, and inspect/rename/rotate only through an owner-approved secret-management procedure after verifying what it represents.
+- Observability is enabled with persisted invocation logs and 100% head sampling; traces are disabled. Keep sensitive headers, prompts, message bodies, OAuth data, and tool arguments out of logs.
 
 CONFIRMED SOURCE OBSERVATIONS
 - worker/wrangler.jsonc declares Worker rag-agents, main src/index.ts, D1 database rag-agents-auth, AI Search binding, and one-minute Cron.
-- worker/src/index.ts owns authentication, proxying, approval endpoints, and the scheduled handler.
-- worker/src/chat/routes.ts implements Worker-native SSE chat, tool registration, and an orchestration loop with MAX_TOOL_ITERATIONS=8.
-- worker/src/chat/providers.ts contains provider adapters for OpenAI-compatible providers, Anthropic, and Gemini; the configured provider selection includes Groq, OpenAI, Anthropic, Gemini, Mistral, and OpenRouter.
-- worker/src/chat/routine-tools.ts exposes Worker-native routine tools. Verify actual recurrence support; current schema includes once/daily/monthly concepts.
-- worker/src/routines.ts and worker/src/scheduler.ts implement D1-backed routine/run state and Cron scheduling.
-- worker/src/chat/mail-tool.ts and worker/src/chat/connector-tools.ts are separate email tool paths; both currently create approval requests. Unify their underlying service without weakening approval.
-- Frontend/src/views/Chat.tsx polls approvals and renders them inline. Frontend/src/components/ApprovalCard.tsx contains the current approval UI.
-- Frontend/src/store.ts has view IDs chat/bots/tasks/computer/files and a predefined BOTS catalogue. Frontend/src/views/Bots.tsx currently derives activity from the current run; this is not proof of a persistent dynamic workforce.
-- Frontend/src/core.ts maps live run events into frontend run/step state. Preserve its conversation and Computer responsibilities.
-- README.md documents a separate bot-owned sender model, while the latest mission requests a verified alias on the central Gmail account. Treat the latest explicit mission as the target, but inspect and safely reconcile this policy conflict before changing sender configuration.
+- worker/src/index.ts owns edge authentication, proxy routing, Worker-native connector approval endpoints, and the scheduled handler. Worker-native chat is handled by worker/src/chat/routes.ts; Computer and other backend-owned surfaces still cross the Codespace boundary.
+- worker/src/chat/routes.ts builds the provider conversation, accepts provider-emitted tool_call events, enforces refusal checks, persists hidden tool calls/results, and uses a bounded iteration loop. CHAT_MAX_TOOL_CALLS is separately used for history-tool calls; do not confuse that setting with the overall iteration ceiling.
+- worker/src/chat/providers.ts contains provider adapters for OpenAI-compatible providers, Anthropic, and Gemini; provider selection includes Groq, OpenAI, Anthropic, Gemini, Mistral, and OpenRouter.
+- worker/src/chat/routine-tools.ts exposes Worker-native routine tools; worker/src/routines.ts, worker/src/scheduler.ts, worker/src/recurrence.ts, worker/src/routine-execution.ts, and worker/src/codespace.ts form the durable scheduling path.
+- worker/src/chat/mail-tool.ts and worker/src/chat/connector-tools.ts are separate tool entry points that both create approval records. worker/src/gmail-sender.ts is the shared low-level sender, but its live configuration contract is currently mismatched as described above.
+- backend/app/agents/commander.py currently plans 1–4 subtasks, starts ephemeral worker-N executions through backend/app/agents/loop.py, and synthesizes their reports. This is real bounded delegation, but it is not yet the requested persistent, dynamically named agent workforce with a hire_agent tool and durable agent identities.
+- Frontend/src/views/Bots.tsx renders the predefined BOTS catalogue from Frontend/src/store.ts. Frontend/src/store.ts ViewId contains chat/bots/tasks/computer/files, not Team. Frontend/src/lib/agents.ts derives statuses from the current run. This is not a persistent Team roster.
+- Frontend/src/components/ApprovalCard.tsx is currently a Gmail connector-approval card, not a general-purpose card registry or versioned interaction framework.
+- worker/migrations contains 0001 through 0011; no dedicated persistent agent-identity or general interaction-card migration was observed. Inspect D1 and all callers before designing those schemas.
+- Frontend/src/core.ts owns WebSocket/run projection and thread restoration. Preserve it, the Worker-native chat path, Computer, Files, authentication, approvals, routines, and existing memory/history retrieval.
+- README.md documents a separate bot-owned sender model, while the latest mission requests a verified alias belonging to the central Gmail account. Treat the latest explicit mission as the target policy, but reconcile it with actual Gmail authorization and the live binding mismatch before changing sender configuration.
 
 NON-NEGOTIABLE RULES FOR EVERY PROMPT
+
+
 1. Work from the latest main checkout and verify the exact commit before editing. Re-check Cloudflare deployment metadata before any release.
 2. Inspect actual files, callers, imports, types, tests, migrations, database schema, API routes, and bindings. Confirm a path exists before editing it. The supplied path list is a discovery map, not permission to invent files.
 3. Preserve Google authentication, session security, thread restoration, history/memory retrieval, provider selection, Worker-native chat, Computer connectivity, Files, approvals, Gmail, routines, scheduler, and existing data.
@@ -86,8 +91,7 @@ PROMPT-2
 TITLE: Reconcile GitHub source with the active Cloudflare deployment
 
 MISSION
-Compare the current main source tree with the Cloudflare rag-agents Worker deployment. The connector audit found active version 77 (version ID a1f4e643-670e-4059-95e0-fea59aa2d44d), deployed 2026-11-01 10:02:31 UTC, while main HEAD f91e2ac609e8ba54744ada1dc845937bf64bba0e was created 2026-11-05 11:32:43 UTC and only adds rag_agents.txt. Establish whether the deployed bundle maps to source commit f002e1f8245caffc800aa76b06e3a44229cd707a or another SHA; if the mapping cannot be proven, label parity unverified.
-
+Compare the current main source tree with the Cloudflare rag-agents Worker deployment. The live Cloudflare API reports active Worker version 83 (version ID 79a30112-5fbb-4001-b29b-a3938d932d2c), deployment ID 8e9ba687-68ec-4885-bf58-12f75f033b3a, serving 100% of traffic and created 2026-11-06 11:38:54 UTC. GitHub main HEAD is 56dae81fa5f134d30fb1f89d376fd5c928628619, created 2026-11-06 08:45:26 UTC, and its latest two commits are documentation-only updates to voyager.txt and rag_agents.txt. The latest source-changing commit observed in the retrieved recent history is f002e1f8245caffc800aa76b06e3a44229cd707a from 2026-10-29. The Cloudflare deployment metadata did not expose a source SHA. Trace the actual build/deploy provenance using available version metadata, source maps or build annotations, Wrangler output, and repository history. Do not infer parity from timestamps or matching configuration. If an exact mapping cannot be proven, explicitly mark source-to-production parity UNVERIFIED and produce a safe reconciliation plan without deploying merely to force a match.
 MANDATORY EXECUTION
 Start by checking the current main SHA and confirming the relevant paths exist. Read the implementation, callers, types, tests, migrations, configuration, and runtime contracts before editing. Trace the complete path from the user action to the authoritative backend operation and persisted result. Implement the smallest integrated root-cause change that satisfies this mission; reuse existing services and contracts wherever they are sound. Add regression tests for normal behaviour, invalid input, failure, concurrency, owner isolation, and recovery as applicable.
 
@@ -104,8 +108,7 @@ PROMPT-3
 TITLE: Audit live Cloudflare Worker configuration without exposing secrets
 
 MISSION
-Inspect worker/wrangler.jsonc against the live rag-agents Worker settings. Compare compatibility date, flags, handlers, assets, D1, AI Search, Cron, plain-text variables, and secret binding names. Never retrieve, print, log, copy, or commit secret values. Investigate the unusual secret-binding name that resembles a token, plus the difference between live bindings and the declared Env interface; report names and risk only, not values.
-
+Inspect worker/wrangler.jsonc, worker/src/env.ts, worker/src/gmail-sender.ts, worker/src/codespace.ts, D1 binding metadata, and the live rag-agents Worker settings. Compare compatibility date, flags, handlers, assets, D1, AI Search, Cron, model variables, and secret binding names. Specifically verify the empty GMAIL_SENDER_EMAIL and GMAIL_SENDER_ALIAS values, the presence of GMAIL_SENDER_REFRESH_TOKEN, the unused BOT_SENDER_EMAIL and BOT_SENDER_PROVIDER secret bindings, the blank CODESPACE_NAME, the absent visible GITHUB_TOKEN binding, and the token-shaped secret-binding name. Never retrieve or print secret values. Do not copy the token-shaped name into source or reports. Explain the operational effect of every mismatch and propose the smallest owner-approved correction; do not mutate production secrets or bindings without authorization.
 MANDATORY EXECUTION
 Start by checking the current main SHA and confirming the relevant paths exist. Read the implementation, callers, types, tests, migrations, configuration, and runtime contracts before editing. Trace the complete path from the user action to the authoritative backend operation and persisted result. Implement the smallest integrated root-cause change that satisfies this mission; reuse existing services and contracts wherever they are sound. Add regression tests for normal behaviour, invalid input, failure, concurrency, owner isolation, and recovery as applicable.
 
@@ -1004,8 +1007,7 @@ PROMPT-53
 TITLE: Audit the sender identity policy against the current mission
 
 MISSION
-Inspect README.md, worker/src/env.ts, worker/src/gmail-sender.ts, mail-tool.ts, connector-tools.ts, and live Cloudflare binding names. The current mission requests a verified alias belonging to the central Gmail account, while repository documentation also describes a dedicated bot mailbox. Treat the latest explicit mission as the target policy, but map the existing behaviour and migration risk before changing sender identity.
-
+Inspect README.md, worker/src/env.ts, worker/src/gmail-sender.ts, worker/src/chat/mail-tool.ts, worker/src/chat/connector-tools.ts, worker/src/connector-approvals.ts, and live Cloudflare binding metadata. The latest mission requests a verified Gmail alias belonging to the central Gmail account, while README.md describes a separate bot-owned sender model. The live GMAIL_SENDER_EMAIL and GMAIL_SENDER_ALIAS bindings are empty; GMAIL_SENDER_REFRESH_TOKEN exists as a secret binding; BOT_SENDER_EMAIL and BOT_SENDER_PROVIDER also exist as secrets but are not part of the current Env interface or sender implementation. The current sender requires GMAIL_SENDER_EMAIL before refreshing a token and uses GMAIL_SENDER_ALIAS ?? GMAIL_SENDER_EMAIL, meaning an empty-string alias is selected rather than falling back. Map the complete current flow, determine whether the OAuth grant has the scopes required to verify Gmail send-as aliases, and design one explicit sender policy. Do not claim the bot identity works until the alias is verified by Gmail and a controlled end-to-end test is authorized.
 MANDATORY EXECUTION
 Start by checking the current main SHA and confirming the relevant paths exist. Read the implementation, callers, types, tests, migrations, configuration, and runtime contracts before editing. Trace the complete path from the user action to the authoritative backend operation and persisted result. Implement the smallest integrated root-cause change that satisfies this mission; reuse existing services and contracts wherever they are sound. Add regression tests for normal behaviour, invalid input, failure, concurrency, owner isolation, and recovery as applicable.
 
@@ -1580,8 +1582,7 @@ PROMPT-85
 TITLE: Verify Codespace wake-up and offline scheduling
 
 MISSION
-Inspect worker/src/scheduler.ts, worker/src/index.ts, wrangler.jsonc, GitHub wake logic, and README setup. Live settings currently showed CODESPACE_NAME blank and did not show a GITHUB_TOKEN binding by that name; verify the current configuration without exposing secrets. Confirm whether the Worker can wake a stopped Codespace or whether runs simply queue until the backend returns.
-
+Inspect worker/src/scheduler.ts, worker/src/index.ts, worker/src/codespace.ts, worker/src/env.ts, wrangler.jsonc, and the live Worker settings. Current live metadata shows CODESPACE_NAME empty and no GITHUB_TOKEN binding by that name. The source function lifecycleConfigured() returns true only when both env.GITHUB_TOKEN and env.CODESPACE_NAME exist. Confirm that the one-minute Cron can materialize and retain due work while the Codespace is stopped, but cannot start the stopped machine with the currently visible configuration. Trace the exact run status and retry path when the backend is unavailable. Implement no fake wake-up or success state; report the exact owner-controlled configuration required to enable wake-up and verify it with a safe test before claiming offline execution.
 MANDATORY EXECUTION
 Start by checking the current main SHA and confirming the relevant paths exist. Read the implementation, callers, types, tests, migrations, configuration, and runtime contracts before editing. Trace the complete path from the user action to the authoritative backend operation and persisted result. Implement the smallest integrated root-cause change that satisfies this mission; reuse existing services and contracts wherever they are sound. Add regression tests for normal behaviour, invalid input, failure, concurrency, owner isolation, and recovery as applicable.
 
@@ -1688,8 +1689,7 @@ PROMPT-91
 TITLE: Audit secrets and suspicious binding names
 
 MISSION
-Compare worker/wrangler.jsonc, worker/src/env.ts, Cloudflare live binding metadata, and backend environment documentation. Investigate unused, duplicate, or token-shaped binding names without retrieving their values. Confirm the intended names for Gmail, Groq, Google OAuth, session, internal, and GitHub credentials. Recommend rotation only when evidence justifies it and obtain explicit owner authorization before changing production secrets.
-
+Compare worker/wrangler.jsonc, worker/src/env.ts, worker/src/gmail-sender.ts, worker/src/codespace.ts, Cloudflare live binding metadata, and backend environment documentation. Investigate unused, duplicate, or token-shaped binding names without retrieving their values. Specifically reconcile the current GMAIL_SENDER_* contract with the unused BOT_SENDER_EMAIL and BOT_SENDER_PROVIDER secret names, verify the blank sender and alias variables, check the missing visible GITHUB_TOKEN and blank CODESPACE_NAME, and investigate the token-shaped secret name without echoing it. Confirm intended names for Gmail, Groq, Google OAuth, session, internal, and GitHub credentials. Do not print, log, copy, or commit secret values or token-shaped names. Recommend rotation only if the binding is confirmed to contain a live credential and obtain owner authorization before changing production secrets.
 MANDATORY EXECUTION
 Start by checking the current main SHA and confirming the relevant paths exist. Read the implementation, callers, types, tests, migrations, configuration, and runtime contracts before editing. Trace the complete path from the user action to the authoritative backend operation and persisted result. Implement the smallest integrated root-cause change that satisfies this mission; reuse existing services and contracts wherever they are sound. Add regression tests for normal behaviour, invalid input, failure, concurrency, owner isolation, and recovery as applicable.
 
