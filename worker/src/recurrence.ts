@@ -216,6 +216,18 @@ export function validateSchedule(
     return { ok: true, schedule: { type: "monthly", time: time.text, day }, timeZone: tz };
   }
 
+  if (type === "interval") {
+    const everyMs = Number(def.every_ms ?? def.everyMs ?? def.every);
+    if (!Number.isInteger(everyMs) || everyMs <= 0) {
+      return err("an interval routine needs a positive whole-number interval in milliseconds");
+    }
+    const maxMs = 365 * 24 * 60 * 60 * 1000;
+    if (everyMs > maxMs) {
+      return err(`an interval cannot exceed ${Math.round(maxMs / 1000 / 60 / 60 / 24)} days`);
+    }
+    return { ok: true, schedule: { type: "interval", everyMs }, timeZone: tz };
+  }
+
   return err(`unsupported schedule type ${JSON.stringify(String(scheduleType ?? ""))}`);
 }
 
@@ -237,6 +249,10 @@ export function nextOccurrence(
   if (schedule.type === "once") {
     const at = Date.parse(schedule.at);
     return Number.isFinite(at) && at > fromMs ? at : null;
+  }
+
+  if (schedule.type === "interval") {
+    return fromMs + schedule.everyMs;
   }
 
   const time = parseTime(schedule.time);
@@ -292,6 +308,17 @@ export function describeSchedule(schedule: RoutineSchedule, timeZone: string): s
     }
     case "monthly":
       return `monthly on day ${schedule.day} at ${schedule.time} (${timeZone})`;
+    case "interval": {
+      const hours = Math.floor(schedule.everyMs / 3_600_000);
+      const minutes = Math.floor((schedule.everyMs % 3_600_000) / 60_000);
+      const seconds = Math.floor((schedule.everyMs % 60_000) / 1000);
+      const parts: string[] = [];
+      if (hours) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
+      if (minutes) parts.push(`${minutes} minute${minutes === 1 ? "" : "s"}`);
+      if (seconds && !hours && !minutes) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
+      if (!parts.length) parts.push(`${schedule.everyMs} ms`);
+      return `every ${parts.join(" ")}`;
+    }
   }
 }
 

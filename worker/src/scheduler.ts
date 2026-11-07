@@ -41,6 +41,7 @@ import {
   type RoutineView,
 } from "./routines";
 import type { RunRow } from "./routines-types";
+import { ProviderError } from "./chat/types";
 
 export interface SchedulerResult {
   materialized: number;
@@ -105,7 +106,8 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    const summaryOutcome = await runSummaryTick(env, nowMs);
+    result.summaries = summaryOutcome.summarized > 0 ? "ran" : "skipped";
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -145,7 +147,8 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  const summaryOutcome = await runSummaryTick(env, nowMs);
+  result.summaries = summaryOutcome.summarized > 0 ? "ran" : "skipped";
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -213,8 +216,10 @@ async function executeOne(
     const attempt = claimed.attempt_count;
     const maxAttempts = intFrom(env.ROUTINE_MAX_ATTEMPTS, 5);
 
-    // Retryable failures are delayed with backoff unless the attempt budget is spent.
-    const isRetryable = attempt < maxAttempts;
+    // Only retry transient failures.  Permanent errors (e.g. 400 bad request)
+    // fail immediately even if attempts remain.
+    const providerError = error instanceof ProviderError ? error : null;
+    const isRetryable = (providerError ? providerError.retryable : true) && attempt < maxAttempts;
     if (isRetryable) {
       const base = intFrom(env.ROUTINE_RETRY_BASE_MS, 60000);
       const backoff = Math.min(base * 2 ** Math.max(0, attempt - 1), 60 * 60 * 1000);

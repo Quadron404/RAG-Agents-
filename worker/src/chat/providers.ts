@@ -144,30 +144,111 @@ function buildProvider(env: Env, name: string, model: string): ModelProvider {
 /* SSE / response helpers                                                      */
 /* -------------------------------------------------------------------------- */
 
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  let buffer = new Uint8Array(0);
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline = buffer.indexOf("\n");
+      buffer = concatBytes(buffer, value);
+      let newline = indexOfByte(buffer, 0x0a); // \n
       while (newline >= 0) {
-        const line = buffer.slice(0, newline).replace(/\r$/, "");
+        const lineBytes = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        // Strip trailing \r
+        const end = lineBytes.length > 0 && lineBytes[lineBytes.length - 1] === 0x0d
+          ? lineBytes.length - 1
+          : lineBytes.length;
+        const line = decoder.decode(lineBytes.slice(0, end));
         if (line.startsWith("data:")) {
-          yield line.slice(5).trimStart();
+          const value = line.slice(5).trimStart();
+          if (value === "[DONE]") return;
+          if (value) yield value;
         }
-        newline = buffer.indexOf("\n");
+        newline = indexOfByte(buffer, 0x0a);
       }
     }
-    buffer += decoder.decode();
-    const tail = buffer.trim();
-    if (tail.startsWith("data:")) yield tail.slice(5).trimStart();
+    // Flush any remaining bytes.
+    if (buffer.length > 0) {
+      const tail = decoder.decode(buffer).trim();
+      if (tail.startsWith("data:")) {
+        const value = tail.slice(5).trimStart();
+        if (value !== "[DONE]" && value) yield value;
+      }
+    }
   } finally {
     reader.releaseLock();
+  }
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+function indexOfByte(buffer: Uint8Array, byte: number): number {
+  for (let i = 0; i < buffer.length; i++) {
+    if (buffer[i] === byte) return i;
+  }
+  return -1;
+}
+
+/**
+ * Coalesce accumulated tool-call argument fragments into valid JSON.
+ *
+ * Streaming providers deliver argument fragments as raw strings.  Concatenating
+ * them should produce valid JSON, but a fragment boundary can split a string
+ * escape or structural character.  This attempts a straight parse first, then
+ * a best-effort repair (close an unterminated string, balance braces), then
+ * falls back to "{}" so the downstream validator can report a clear error.
+ */
+function coalesceToolArguments(raw: string): string {
+  if (!raw) return "{}";
+  try {
+    JSON.parse(raw);
+    return raw;
+  } catch {
+    /* fall through to repair */
+  }
+  let s = raw.trim();
+  // Close an unterminated string value: if we're inside quotes, add the closing quote.
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    }
+  }
+  if (inString) s += '"';
+  // Balance braces: count open/close at the top level (outside strings).
+  let depth = 0;
+  inString = false;
+  escaped = false;
+  for (const ch of s) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+  }
+  while (depth > 0) { s += "}"; depth--; }
+  try {
+    JSON.parse(s);
+    return s;
+  } catch {
+    return "{}";
   }
 }
 
@@ -382,7 +463,7 @@ function openAiCompatibleProvider(
             current.name = mergeToolCallName(current.name, incomingName);
             const args = fn.arguments ?? call.arguments;
             if (args !== null && args !== undefined && args !== "") {
-              current.arguments += argumentsJson(args);
+              current.arguments += args;
             }
           });
         }
@@ -393,7 +474,7 @@ function openAiCompatibleProvider(
             call: {
               id: call.id || `call_${index}`,
               name: call.name,
-              arguments: call.arguments || "{}",
+              arguments: coalesceToolArguments(call.arguments),
             },
           };
         }
@@ -558,7 +639,7 @@ function anthropicProvider(name: string, model: string, apiKey: string, baseUrl:
             call: {
               id: call.id || `call_${index}`,
               name: call.name,
-              arguments: call.arguments || "{}",
+              arguments: coalesceToolArguments(call.arguments),
             },
           };
         }

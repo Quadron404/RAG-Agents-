@@ -12,6 +12,7 @@
  */
 import type { Env } from "./env";
 import { createConnectorApproval } from "./connector-approvals";
+import { ProviderError } from "./chat/types";
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const ROUTINE_MODEL = "openai/gpt-oss-20b";
@@ -143,7 +144,12 @@ export async function executeRoutine(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(`Groq API error ${response.status}${errorText ? ": " + errorText.slice(0, 300) : ""}`);
+    const retryable = response.status === 429 || response.status >= 500;
+    throw new ProviderError(
+      `Groq API error ${response.status}${errorText ? ": " + errorText.slice(0, 300) : ""}`,
+      response.status,
+      retryable,
+    );
   }
 
   const payload = (await response.json()) as GroqResponse;

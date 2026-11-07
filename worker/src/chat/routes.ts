@@ -67,6 +67,16 @@ import {
   type ProviderSelection,
   type ToolCall,
 } from "./types";
+import { validateToolArguments } from "./tool-schema";
+
+/** Map of tool name to its JSON Schema parameters, used for strict runtime
+ * argument validation before any tool is executed. */
+const TOOL_SCHEMAS: Record<string, Record<string, unknown> | null> = {
+  [HISTORY_TOOL.name]: HISTORY_TOOL.parameters,
+  [MAIL_TOOL_CALL_TOOL.name]: MAIL_TOOL_CALL_TOOL.parameters,
+  ...Object.fromEntries(CONNECTOR_TOOLS.map((t) => [t.name, t.parameters])),
+  ...Object.fromEntries(ROUTINE_TOOLS.map((t) => [t.name, t.parameters])),
+};
 
 export const FIRST_TURN_INSTRUCTION =
   "You are Chief, RAG Agents' central AI commander. Introduce yourself to the user and guide other AI agents in completing tasks.\n\n" +
@@ -697,7 +707,15 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
         let resultCount = 0;
         let searched = false;
 
-        if (isRoutineTool(call.name)) {
+        // Strict runtime validation of tool arguments against the declared JSON Schema.
+        const schema = TOOL_SCHEMAS[call.name];
+        const validated = validateToolArguments(call, schema);
+        if (!validated.ok) {
+          output = validated.error;
+          errorCode = "invalid_arguments";
+        } else {
+          (call as { arguments: string }).arguments = JSON.stringify(validated.args);
+          if (isRoutineTool(call.name)) {
           // Routine tools are Worker-native and run on D1 directly.
           const result = await executeRoutineTool(
             env,
@@ -732,6 +750,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
             resultCount = result.resultCount;
             searched = result.searched;
           }
+        }
         }
         await insertHiddenToolResult(env, {
           conversationId: conversation.id,

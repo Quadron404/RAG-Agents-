@@ -221,7 +221,16 @@ describe("chat summaries", () => {
     const testEnv = withEnv({
       AI_SEARCH: search.namespace,
       AI_SEARCH_INSTANCE: search.instanceName,
+      GROQ_API_KEY: "test-key",
     });
+    fetchMock
+      .get("https://api.groq.com")
+      .intercept({ path: "/openai/v1/chat/completions", method: "POST" })
+      .reply(
+        200,
+        ['data: {"choices":[{"delta":{"content":"Owner-only content."}}]}', "", "data: [DONE]", ""].join("\n"),
+        { headers: { "content-type": "text/event-stream" } },
+      );
     const owner = await createConversation(env, "search-owner", "user-1", "Owner note");
     const foreign = await createConversation(env, "other-owner", "user-2", "Foreign note");
     const deleted = await createConversation(env, "search-owner", "user-1", "Deleted note");

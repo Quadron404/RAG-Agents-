@@ -238,10 +238,11 @@ describe("daily summary generation", () => {
   it("throws when no summary provider is configured", async () => {
     const user = await makeOwner(env);
     const conv = await createConversation(env, user.google_sub, user.id, "no provider channel");
+    const testEnv = withEnv({ GROQ_API_KEY: "", OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "", MISTRAL_API_KEY: "", OPENROUTER_API_KEY: "" });
 
     const date = "2026-10-24";
     await expect(
-      generateDailySummary(env, user.google_sub, conv.id, date, Date.now()),
+      generateDailySummary(testEnv, user.google_sub, conv.id, date, Date.now()),
     ).rejects.toThrow(/no summary model is configured/);
   });
 });

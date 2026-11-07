@@ -20,6 +20,7 @@ export default defineWorkersConfig(async () => {
               RAG_INTERNAL_TOKEN: "test-internal-token",
               BACKEND_ORIGIN: "https://backend.test",
               SESSION_TTL_SECONDS: "3600",
+              GROQ_API_KEY: "test-groq-key",
             },
           },
         },

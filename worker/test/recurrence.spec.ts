@@ -39,6 +39,38 @@ describe("validateSchedule", () => {
     const result = validateSchedule("monthly", { time: "09:00", day: 32 }, "UTC");
     expect(result.ok).toBe(false);
   });
+
+  it("accepts an interval with a positive millisecond value", () => {
+    const result = validateSchedule("interval", { every_ms: 5 * 60 * 60 * 1000 }, "UTC");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.schedule).toEqual({ type: "interval", everyMs: 5 * 60 * 60 * 1000 });
+  });
+
+  it("accepts alternative interval field names", () => {
+    const result = validateSchedule("interval", { everyMs: 90 * 60 * 1000 }, "UTC");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.schedule).toEqual({ type: "interval", everyMs: 90 * 60 * 1000 });
+  });
+
+  it("rejects a zero interval", () => {
+    const result = validateSchedule("interval", { every_ms: 0 }, "UTC");
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a negative interval", () => {
+    const result = validateSchedule("interval", { every_ms: -300_000 }, "UTC");
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects an interval over 365 days", () => {
+    const result = validateSchedule("interval", { every_ms: 366 * 24 * 60 * 60 * 1000 }, "UTC");
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a non-integer interval", () => {
+    const result = validateSchedule("interval", { every_ms: 1000.5 }, "UTC");
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("nextOccurrence", () => {
@@ -87,10 +119,46 @@ describe("nextOccurrence", () => {
   });
 });
 
+describe("nextOccurrence > interval", () => {
+  it("adds the interval to the from instant in absolute milliseconds", () => {
+    const schedule: RoutineSchedule = { type: "interval", everyMs: 5 * 60 * 60 * 1000 }; // 5 hours
+    const from = Date.parse("2024-03-10T08:00:00Z");
+    expect(iso(next(schedule, "UTC", "2024-03-10T08:00:00Z"))).toBe(
+      new Date(from + 5 * 60 * 60 * 1000).toISOString(),
+    );
+  });
+
+  it("is DST-insensitive: absolute milliseconds, not wall-clock hours", () => {
+    // A 24-hour interval from just before a DST spring-forward adds exactly
+    // 24 hours of wall time, not 23 or 25.
+    const schedule: RoutineSchedule = { type: "interval", everyMs: 24 * 60 * 60 * 1000 };
+    const from = Date.parse("2024-03-09T06:00:00Z"); // just before NY springs forward
+    expect(iso(next(schedule, "America/New_York", "2024-03-09T06:00:00Z"))).toBe(
+      new Date(from + 24 * 60 * 60 * 1000).toISOString(),
+    );
+  });
+
+  it("strictly after: interval from the fire instant gives the next fire, not itself", () => {
+    const schedule: RoutineSchedule = { type: "interval", everyMs: 60 * 60 * 1000 }; // 1 hour
+    const from = Date.parse("2024-01-01T00:00:00Z");
+    expect(iso(next(schedule, "UTC", "2024-01-01T00:00:00Z"))).toBe(
+      new Date(from + 60 * 60 * 1000).toISOString(),
+    );
+  });
+});
+
 describe("describeSchedule", () => {
   it("describes a weekly schedule in words", () => {
     expect(describeSchedule({ type: "weekly", time: "09:00", weekdays: [1, 3] }, "Europe/Paris")).toBe(
       "every Mon, Wed at 09:00 (Europe/Paris)",
     );
+  });
+
+  it("describes a 5-hour interval", () => {
+    expect(describeSchedule({ type: "interval", everyMs: 5 * 60 * 60 * 1000 }, "UTC")).toBe("every 5 hours");
+  });
+
+  it("describes a 90-minute interval", () => {
+    expect(describeSchedule({ type: "interval", everyMs: 90 * 60 * 1000 }, "UTC")).toBe("every 1 hour 30 minutes");
   });
 });

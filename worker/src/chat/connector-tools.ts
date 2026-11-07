@@ -84,7 +84,7 @@ export async function executeConnectorTool(
     return { ok: false, output: "", error: "email content is required." };
   }
 
-  if (!env.GMAIL_SENDER_EMAIL || !env.GMAIL_SENDER_REFRESH_TOKEN) {
+  if (!(env.GMAIL_SENDER_ALIAS ?? env.GMAIL_SENDER_EMAIL) || !env.GMAIL_SENDER_REFRESH_TOKEN) {
     return {
       ok: false,
       output: "",
@@ -93,12 +93,13 @@ export async function executeConnectorTool(
   }
 
   try {
+    const senderEmail = env.GMAIL_SENDER_ALIAS ?? env.GMAIL_SENDER_EMAIL;
     const approval = await createConnectorApproval(env, {
       user_id: ownerId,
       owner_sub: ownerSub,
       connector: "gmail",
       action: "send_email",
-      arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
+      arguments: { content, sender_email: senderEmail },
     });
     return {
       ok: true,
@@ -109,7 +110,7 @@ export async function executeConnectorTool(
         approval_id: approval.approval_id,
         connector: "gmail",
         action: "send_email",
-        arguments: { content, sender_email: env.GMAIL_SENDER_EMAIL },
+        arguments: { content, sender_email: senderEmail },
         expires_at: approval.expires_at,
       },
     };
