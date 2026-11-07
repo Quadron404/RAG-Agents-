@@ -269,6 +269,13 @@ interface ChatTestReport {
   consoleErrors: Array<{ text: string; url?: string }>;
   failedNetworkRequests: Array<{ url: string; method?: string; status?: number; failure?: string }>;
   screenshots: { input?: string | null; response?: string | null; persistence?: string | null };
+  schedulerResult: {
+    ok: boolean | null;
+    routineCreated: boolean;
+    routineExecuted: boolean;
+    routineResponse: string | null;
+    executionResult: { hasSchedulerText?: boolean; agentMsgCount?: number; error?: string } | null;
+  } | null;
 }
 
 // --- End-to-end chat test ----------------------------------------------------
@@ -291,6 +298,7 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
     consoleErrors: [],
     failedNetworkRequests: [],
     screenshots: {},
+    schedulerResult: null,
   };
 
   const qaAuthTarget = env.QA_AUTH_TARGET;
@@ -593,6 +601,115 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
     report.screenshots.persistence = await captureScreenshot(page, "persistence");
     report.stage = "persistence_done";
 
+    // --- Step 9: Create a routine and verify scheduler execution -----------
+    report.stage = "scheduler_test";
+
+    let routineResponse: string | null = null;
+    let routineCreated = false;
+    let routineId = null;
+    let schedulerResult = null;
+
+    try {
+      // Ask Chief to create a one-time routine that runs ~30 seconds from now.
+      // This gives the cron (every minute) at least one tick after the scheduled time.
+      const runAt = new Date(Date.now() + 30000).toISOString();
+      const routineMsg = `Create a routine that runs once at ${runAt} UTC. The task is: reply with exactly the text "SCHEDULER_TEST_OK". Schedule type: once.`;
+
+      const routineInput = await waitForSelector(page, ".composer__ta", 10000);
+      await routineInput.fill("");
+      await routineInput.type(routineMsg, { delay: 10 });
+
+      const routineSend = await waitForSelector(page, "button.composer__send:not(.composer__stop)", 10000);
+      await routineSend.click();
+      report.submissionResult.sent = true;
+
+      // Wait for Chief's response about routine creation.
+      await waitForSelector(page, ".msg--agent, .step-card, .runbanner", RESPONSE_TIMEOUT_MS);
+      await new Promise((resolve) => {
+        const check = async () => {
+          try {
+            const busy = await page.evaluate(() => {
+              const run = document.querySelector(".runbanner");
+              const stepCard = document.querySelector(".step-card--busy");
+              return !run && !stepCard;
+            });
+            if (busy) resolve(null);
+            else setTimeout(check, 1000);
+          } catch { setTimeout(check, 1000); }
+        };
+        check();
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+
+      const routineResponse = await page.evaluate(() => {
+        const agentMsgs = Array.from(document.querySelectorAll(".msg--agent .bubble, .step-card__report"));
+        if (agentMsgs.length === 0) return null;
+        const last = agentMsgs[agentMsgs.length - 1];
+        return last.textContent ? last.textContent.trim() : null;
+      });
+
+      // Check if Chief confirmed routine creation.
+      routineCreated = Boolean(routineResponse) && (
+        routineResponse.toLowerCase().includes("routine") ||
+        routineResponse.toLowerCase().includes("schedule") ||
+        routineResponse.toLowerCase().includes("created")
+      );
+
+      report.stage = "routine_created";
+    } catch (err: any) {
+      report.schedulerResult = {
+        ok: false,
+        routineCreated: false,
+        routineExecuted: false,
+        routineResponse: null,
+        executionResult: { error: `Routine creation failed: ${err?.message ?? String(err)}` },
+      };
+      report.stage = "routine_creation_failed";
+    }
+
+    // --- Step 10: Wait for cron tick and check routine execution -----------
+    report.stage = "scheduler_wait";
+
+    let routineExecuted = false;
+    let executionResult = null;
+
+    try {
+      // Wait for the cron to fire (up to 90 seconds).  Poll the page for
+      // evidence that the routine executed (e.g. Chief's response appears).
+      const deadline = Date.now() + 90000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        try {
+          const execCheck = await page.evaluate(() => {
+            const agentMsgs = Array.from(document.querySelectorAll(".msg--agent .bubble, .step-card__report"));
+            const combined = agentMsgs.map((m) => m.textContent ? m.textContent.trim() : "").join("\n");
+            return {
+              hasSchedulerText: combined.includes("SCHEDULER_TEST_OK"),
+              agentMsgCount: agentMsgs.length,
+            };
+          });
+          if (execCheck.hasSchedulerText) {
+            routineExecuted = true;
+            executionResult = execCheck;
+            break;
+          }
+        } catch {
+          /* keep polling */
+        }
+      }
+    } catch (err: any) {
+      executionResult = { error: err?.message ?? String(err) };
+    }
+
+    report.schedulerResult = {
+      ok: routineCreated && routineExecuted,
+      routineCreated,
+      routineExecuted,
+      routineResponse: routineResponse ?? null,
+      executionResult,
+    };
+    report.stage = "scheduler_done";
+
     // --- Overall pass/fail ------------------------------------------------
     const allOk =
       report.loginResult.ok &&
@@ -601,7 +718,8 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
       report.submissionResult.sent &&
       report.responseValidation.ok &&
       report.persistenceResult.ok &&
-      report.aiResponseText !== null;
+      report.aiResponseText !== null &&
+      report.schedulerResult?.ok === true;
 
     report.ok = allOk;
     report.passed = allOk;
