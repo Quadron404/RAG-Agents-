@@ -10,8 +10,8 @@
   },
   "vars": {
     "QA_SERVICE_NAME": "rag-agents-browser-qa",
-    "DEFAULT_QA_TARGET": "https://rag-agents-qa.pratyakshrawat768.workers.dev/",
-    "QA_AUTH_TARGET": "https://rag-agents-qa.pratyakshrawat768.workers.dev"
+    "DEFAULT_QA_TARGET": "https://rag-agents.pratyakshrawat768.workers.dev/",
+    "QA_AUTH_TARGET": "https://rag-agents.pratyakshrawat768.workers.dev"
   },
   "observability": {
     "enabled": true

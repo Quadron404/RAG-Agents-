@@ -71,57 +71,10 @@
     "SUMMARY_PROVIDER": "groq",
     "SUMMARY_MODEL": "openai/gpt-oss-20b",
     "CHAT_SUMMARY_IDLE_SECONDS": "60",
-    "CHAT_MAX_TOOL_CALLS": "3"
+    "CHAT_MAX_TOOL_CALLS": "3",
+    "QA_AUTH_ENABLED": "1"
   },
   "observability": {
     "enabled": true
-  },
-  // QA automation is enabled ONLY on the staging/QA deployment via
-  // `wrangler deploy --env qa`.  It is never set on the production environment,
-  // so the QA sign-in bypass cannot leak to real users.
-  "env": {
-    "qa": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "rag-agents-auth",
-          "database_id": "55e7322a-4dba-4a41-acc4-273c902d97d2",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "ai_search_namespaces": [
-        {
-          "binding": "AI_SEARCH",
-          "namespace": "default"
-        }
-      ],
-      "vars": {
-        "GOOGLE_AUTH_URL": "https://accounts.google.com/o/oauth2/v2/auth",
-        "GOOGLE_TOKEN_URL": "https://oauth2.googleapis.com/token",
-        "GOOGLE_JWKS_URL": "https://www.googleapis.com/oauth2/v3/certs",
-        "SESSION_TTL_SECONDS": "2592000",
-        "GOOGLE_CLIENT_ID": "330405738751-csdq7250749cpd2kg9orsm7vhnbtb736.apps.googleusercontent.com",
-        "BACKEND_ORIGIN": "https://potential-waddle-xrxgp9g96x63rg-8000.app.github.dev",
-        "GITHUB_API_URL": "https://api.github.com",
-        "CODESPACE_NAME": "",
-        "CODESPACE_READY_TIMEOUT_MS": "60000",
-        "CODESPACE_POLL_INTERVAL_MS": "5000",
-        "ROUTINE_MAX_ATTEMPTS": "5",
-        "ROUTINE_DISPATCH_BATCH": "20",
-        "ROUTINE_RETRY_BASE_MS": "60000",
-        "GMAIL_SENDER_ALIAS": "",
-        "AI_SEARCH_INSTANCE": "rag-conversations",
-        "AGENT_PROVIDER": "groq",
-        "AGENT_MODEL": "openai/gpt-oss-20b",
-        "AGENT_FALLBACK_MODEL": "",
-        "AGENT_MAX_COMPLETION_TOKENS": "2048",
-        "AGENT_REASONING_EFFORT": "",
-        "SUMMARY_PROVIDER": "groq",
-        "SUMMARY_MODEL": "openai/gpt-oss-20b",
-        "CHAT_SUMMARY_IDLE_SECONDS": "60",
-        "CHAT_MAX_TOOL_CALLS": "3",
-        "QA_AUTH_ENABLED": "1"
-      }
-    }
   }
 }

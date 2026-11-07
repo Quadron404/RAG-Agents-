@@ -55,7 +55,7 @@ function SignIn({ qaAuthEnabled, qaLogin }: { qaAuthEnabled: boolean; qaLogin: (
               cursor: "pointer",
             }}
           >
-            Skip Sign In — QA Mode
+            Skip Sign In — AI Testing
           </button>
         )}
         <a
@@ -90,17 +90,18 @@ export function App() {
 
   async function qaLogin() {
     try {
-      const res = await fetch("/auth/qa-login", {
-        method: "POST",
+      const res = await fetch("/auth/qa-login-quick?next=/", {
+        method: "GET",
         credentials: "include",
+        redirect: "follow",
       });
       if (!res.ok) {
-        useUi.getState().toast("QA sign-in failed.", "err");
+        useUi.getState().toast("AI testing sign-in failed.", "err");
         return;
       }
       await useAuth.getState().bootstrap();
     } catch {
-      useUi.getState().toast("QA sign-in failed.", "err");
+      useUi.getState().toast("AI testing sign-in failed.", "err");
     }
   }
 
