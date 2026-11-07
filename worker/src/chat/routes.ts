@@ -12,6 +12,7 @@ import { timingSafeEqual } from "../encoding";
 import { json } from "../http";
 import { resolvePrincipal, type Principal } from "../principal";
 import { localDay } from "../timezone";
+import { isQaUser } from "../store";
 import { selectChatProvider, providerStatus } from "./providers";
 import {
   autoTitle,
@@ -591,6 +592,14 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       ? rows.filter((r) => r.seq > summarizedThrough)
       : rows;
     const llm = llmMessagesFrom(unsummarizedRows, assistantMessage.id, context.firstTurn);
+
+    // QA sessions are read-only chat test accounts: they may not invoke mail,
+    // connector, or any external-integration tools.  Routine and history tools
+    // are Worker-native and safe to allow against isolated QA data.
+    const chatToolsList = isQaUser(principal.user)
+      ? [...ROUTINE_TOOLS, HISTORY_TOOL]
+      : [...ROUTINE_TOOLS, HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, ...CONNECTOR_TOOLS];
+
     const usedCallIds = new Set<string>();
     let finalText = "";
 
@@ -599,9 +608,7 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
       const calls: ToolCall[] = [];
       let stopReason = "";
       try {
-        const chatTools = toolsAllowed
-          ? [...ROUTINE_TOOLS, HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, ...CONNECTOR_TOOLS]
-          : [];
+        const chatTools = toolsAllowed ? chatToolsList : [];
         for await (const event of provider.provider.stream(
           llm,
           chatTools,

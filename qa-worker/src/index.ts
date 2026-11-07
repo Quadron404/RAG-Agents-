@@ -1,9 +1,10 @@
 /**
- * rag-agents-qa Worker
+ * rag-agents-browser-qa Worker
  *
- * Dedicated, read-only browser QA Worker for the RAG Agents deployment.
- * Runs entirely inside Cloudflare via the @cloudflare/playwright Browser Run
- * binding. Does not touch the rag-agents Worker, its D1, or its assets.
+ * Dedicated browser QA Worker that controls a remote Chromium instance via
+ * Cloudflare Browser Run.  It authenticates against the main Worker's QA auth
+ * bypass (POST /auth/qa-login) and then runs read-only end-to-end chat tests
+ * against the RAG Agents deployment.
  *
  * Endpoints:
  *   GET  /qa/health        - service health (no auth)
@@ -11,10 +12,10 @@
  *   POST /qa/chat-test     - end-to-end RAG Agents chat test (QA_SECRET bearer auth)
  *
  * Security:
- *   - QA_SECRET, QA_TEST_EMAIL, QA_TEST_PASSWORD are Worker secrets, never logged or returned.
+ *   - QA_SECRET is a Worker secret, never logged or returned.
  *   - Constant-time token comparison.
  *   - Test targets restricted to an explicit allowlist; arbitrary URLs rejected.
- *   - Dedicated QA test account only; never a personal account.
+ *   - QA auth bypass is used for authentication (no Google OAuth).
  *   - No destructive actions, no emails, no purchases, no external actions.
  *   - Browser closed in `finally` on every code path.
  */
@@ -24,12 +25,12 @@ import type { Env } from "./env";
 
 // --- Authorised test targets -------------------------------------------------
 // Only these origins may be tested. Arbitrary URLs are rejected.
-// Add explicitly approved preview origins here as needed.
 const APPROVED_TARGETS = new Set([
   "https://rag-agents.pratyakshrawat768.workers.dev",
+  "https://rag-agents-qa.pratyakshrawat768.workers.dev",
 ]);
 
-const DEFAULT_TARGET = "https://rag-agents.pratyakshrawat768.workers.dev/";
+const DEFAULT_TARGET = "https://rag-agents-qa.pratyakshrawat768.workers.dev/";
 
 // --- Timeouts (ms) -----------------------------------------------------------
 const NAVIGATE_TIMEOUT_MS = 30000;
@@ -293,8 +294,16 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
     screenshots: {},
   };
 
-  if (!env.QA_TEST_EMAIL || !env.QA_TEST_PASSWORD) {
-    report.error = "QA_TEST_EMAIL or QA_TEST_PASSWORD Worker secret is not configured. A dedicated QA test account is required.";
+  const qaAuthTarget = env.QA_AUTH_TARGET;
+  const qaSecret = env.QA_SECRET;
+
+  if (!qaAuthTarget) {
+    report.error = "QA_AUTH_TARGET is not configured on the QA Worker.";
+    report.stage = "configuration";
+    return report;
+  }
+  if (!qaSecret) {
+    report.error = "QA_SECRET is not configured on the QA Worker.";
     report.stage = "configuration";
     return report;
   }
@@ -310,11 +319,14 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
     const context = browser.contexts()[0] ?? (await browser.newContext());
     let page = context.pages()[0] ?? (await context.newPage());
 
+    // Collect console errors (read-only).
     page.on("console", (msg: any) => {
       if (msg.type() === "error") {
         report.consoleErrors.push({ text: msg.text(), url: msg.location?.url });
       }
     });
+
+    // Collect failed network requests / HTTP error responses (read-only).
     page.on("requestfailed", (req: any) => {
       report.failedNetworkRequests.push({
         url: req.url(),
@@ -332,81 +344,51 @@ async function runChatTest(browserBinding: BrowserWorker, target: string, env: E
       }
     });
 
-    // --- Step 1: Navigate to the app --------------------------------------
-    report.stage = "navigating";
-    const response = await page.goto(target, {
-      waitUntil: "domcontentloaded",
-      timeout: NAVIGATE_TIMEOUT_MS,
-      signal: abortController.signal,
-    });
-    report.finalUrl = page.url();
-    report.pageTitle = await page.title();
-
-    // --- Step 2: Authenticate via Google OAuth ----------------------------
+    // --- Step 1: Authenticate via QA auth bypass --------------------------
     report.stage = "authenticating";
 
-    let authenticated = false;
+    // Navigate the browser to the QA login-quick endpoint on the main Worker
+    // QA deployment.  It sets the session cookie (domain-shared so it is sent
+    // to the app origin) and redirects to the target app.  This avoids CORS
+    // and subrequest restrictions that affect fetch() from within the Worker.
+    let loginOk = false;
     try {
-      const sessionCheck = await page.evaluate(() => {
-        const signIn = document.querySelector("a[href*='/auth/login']");
-        const chatView = document.querySelector(".thread, .composer__ta, .chatlist");
-        return {
-          hasSignInGate: !!signIn,
-          hasChatView: !!chatView,
-        };
+      const loginUrl = new URL(`${qaAuthTarget}/auth/qa-login-quick`);
+      loginUrl.searchParams.set("next", target);
+      const loginRes = await page.goto(loginUrl.toString(), {
+        waitUntil: "domcontentloaded",
+        timeout: NAVIGATE_TIMEOUT_MS,
+        signal: abortController.signal,
       });
-      authenticated = sessionCheck.hasChatView && !sessionCheck.hasSignInGate;
-    } catch {
-      /* proceed to auth flow */
+      if (loginRes && loginRes.ok()) {
+        loginOk = true;
+      } else {
+        report.loginResult.error = `QA login-quick returned HTTP ${loginRes?.status ?? "unknown"}`;
+      }
+    } catch (err: any) {
+      report.loginResult.error = `QA login-quick navigation failed: ${err?.message ?? String(err)}`;
     }
 
-    if (!authenticated) {
-      try {
-        await clickWhenVisible(page, "a[href*='/auth/login'], text='Continue with Google'", 10000);
-      } catch {
-        try {
-          await clickWhenVisible(page, "text=Continue with Google", 5000);
-        } catch {
-          /* may already be on the OAuth page */
-        }
-      }
-
-      // --- Google OAuth: email step ---------------------------------------
-      try {
-        await waitForSelector(page, 'input[type="email"], input#identifierId', AUTH_TIMEOUT_MS);
-        await page.fill('input[type="email"], input#identifierId', env.QA_TEST_EMAIL);
-        await clickWhenVisible(page, "button#identifierNext, text=Next, text=Continue", 10000);
-      } catch (err: any) {
-        report.loginResult.error = `Google email step failed: ${err?.message ?? String(err)}`;
-        report.stage = "auth_failed";
-        throw new Error(report.loginResult.error);
-      }
-
-      // --- Google OAuth: password step ------------------------------------
-      try {
-        await waitForSelector(page, 'input[type="password"], input#password', AUTH_TIMEOUT_MS);
-        await page.fill('input[type="password"], input#password', env.QA_TEST_PASSWORD);
-        await clickWhenVisible(page, "button#passwordNext, text=Next, text=Continue, text=Sign in", 10000);
-      } catch (err: any) {
-        report.loginResult.error = `Google password step failed: ${err?.message ?? String(err)}`;
-        report.stage = "auth_failed";
-        throw new Error(report.loginResult.error);
-      }
-
-      // --- Wait for redirect back to app ----------------------------------
-      try {
-        await waitForSelector(page, ".thread, .composer__ta, .chatlist", AUTH_TIMEOUT_MS);
-        authenticated = true;
-      } catch (err: any) {
-        report.loginResult.error = `Post-auth redirect to app failed: ${err?.message ?? String(err)}`;
-        report.stage = "auth_failed";
-        throw new Error(report.loginResult.error);
-      }
+    if (!loginOk) {
+      report.stage = "auth_failed";
+      throw new Error(report.loginResult.error ?? "QA login failed");
     }
 
     report.loginResult.ok = true;
-    report.loginResult.authenticated = authenticated;
+    report.loginResult.authenticated = true;
     report.stage = "authenticated";
+
+    report.finalUrl = page.url();
+    report.pageTitle = await page.title();
+
+    // Verify we're in the chat view (not the sign-in gate).
+    try {
+      await waitForSelector(page, ".thread, .composer__ta, .chatlist", AUTH_TIMEOUT_MS);
+    } catch (err: any) {
+      report.loginResult.error = `App did not load after QA auth: ${err?.message ?? String(err)}`;
+      report.stage = "app_not_loaded";
+      throw new Error(report.loginResult.error);
+    }
 
     // --- Step 3: Open a new conversation ----------------------------------
     report.stage = "new_conversation";
@@ -622,7 +604,7 @@ export default {
     if (path === "/qa/health" && request.method === "GET") {
       return json({
         ok: true,
-        service: "rag-agents-qa",
+        service: "rag-agents-browser-qa",
         timestamp: new Date().toISOString(),
       });
     }

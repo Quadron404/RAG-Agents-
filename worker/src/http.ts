@@ -22,6 +22,7 @@ export function sessionTokenFromRequest(request: Request): string {
 export interface CookieOptions {
   maxAge?: number;
   secure?: boolean;
+  domain?: string;
 }
 
 export function serializeSessionCookie(token: string, options: CookieOptions = {}): string {
@@ -33,6 +34,9 @@ export function serializeSessionCookie(token: string, options: CookieOptions = {
   ];
   if (options.secure) {
     parts.push("Secure");
+  }
+  if (options.domain) {
+    parts.push(`Domain=${options.domain}`);
   }
   if (options.maxAge !== undefined) {
     parts.push(`Max-Age=${Math.floor(options.maxAge)}`);

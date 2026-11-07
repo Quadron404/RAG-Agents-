@@ -42,8 +42,10 @@ import {
   createOauthState,
   createSession,
   getDeveloperMode,
+  getOrCreateQaUser,
   getUserTimezone,
   hashSessionToken,
+  isQaUser,
   revokeSession,
   setDeveloperMode,
   setUserTimezone,
@@ -160,10 +162,16 @@ async function authCallback(request: Request, env: Env, url: URL): Promise<Respo
 async function authSession(request: Request, env: Env): Promise<Response> {
   const principal = await resolvePrincipal(env, request);
   if (!principal) {
-    return json({ authenticated: false, user: null, gmail: { connected: false, status: "unknown" } });
+    return json({
+      authenticated: false,
+      user: null,
+      gmail: { connected: false, status: "unknown" },
+      qaAuthEnabled: env.QA_AUTH_ENABLED === "1",
+    });
   }
   return json({
     authenticated: true,
+    qaAuthEnabled: env.QA_AUTH_ENABLED === "1",
     csrf: principal.session.csrf,
     user: {
       id: principal.user.id,
@@ -292,6 +300,147 @@ async function authResetAccount(request: Request, env: Env): Promise<Response> {
   return response;
 }
 
+/**
+ * QA session guard: returns a 403 response when the principal is the synthetic
+ * QA identity and the requested operation is restricted (admin, connectors,
+ * Gmail, external integrations, destructive account operations).  Returns null
+ * when the operation is allowed.
+ *
+ * QA users are deliberately limited to read/write chat conversations they own
+ * and nothing else.
+ */
+function qaRestrictedResponse(principal: Principal, path: string, method: string): Response | null {
+  if (!isQaUser(principal.user)) return null;
+
+  // Destructive account operations are never allowed for QA sessions.
+  if (path === "/auth/settings/reset" && method === "POST") {
+    return json({ error: "QA sessions cannot reset accounts" }, 403);
+  }
+
+  // Developer mode / history generation are admin-adjacent features.
+  if (path === "/auth/settings/developer-mode" && method === "POST") {
+    return json({ error: "QA sessions cannot change developer mode" }, 403);
+  }
+
+  // Connector approvals involve external integrations.
+  if (path.startsWith("/routines/connectors/approvals")) {
+    return json({ error: "QA sessions cannot access connector approvals" }, 403);
+  }
+
+  // The Gmail grant/status flow is an external integration.
+  if (path.startsWith("/auth/gmail")) {
+    return json({ error: "QA sessions cannot access Gmail" }, 403);
+  }
+
+  return null;
+}
+
+/**
+ * QA sign-in bypass.  Creates a session for the synthetic QA identity using the
+ * existing session infrastructure.  Only available when QA_AUTH_ENABLED="1" on
+ * this deployment and the caller presents a valid QA_SECRET bearer token.
+ */
+async function authQaLogin(request: Request, env: Env): Promise<Response> {
+  try {
+    if (env.QA_AUTH_ENABLED !== "1") {
+      return json({ error: "QA mode is not enabled on this deployment" }, 403);
+    }
+
+    const authHeader = request.headers.get("authorization") ?? "";
+    const supplied = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
+
+    if (supplied) {
+      if (!env.QA_SECRET || !timingSafeEqual(supplied, env.QA_SECRET)) {
+        return json({ error: "authentication required" }, 401);
+      }
+    }
+
+    const user = await getOrCreateQaUser(env);
+    const session = await createSession(env, user.id);
+
+    const response = json({
+      authenticated: true,
+      qaMode: true,
+      csrf: session.csrf,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        timezone: user.timezone,
+        developer_mode: user.developer_mode,
+      },
+      gmail: { connected: false, status: "unknown" },
+    });
+
+    response.headers.append(
+      "Set-Cookie",
+      serializeSessionCookie(session.token, {
+        maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+        secure: true,
+      }),
+    );
+
+    await auditLogin(env, user.google_sub, user.id, "qa_login");
+
+    return response;
+  } catch (err: any) {
+    return json({ error: `qa-login internal error: ${err?.message ?? String(err)}` }, 500);
+  }
+}
+
+/**
+ * QA sign-in bypass via browser navigation (no bearer token required).
+ *
+ * Gated by QA_AUTH_ENABLED="1" so it only exists on the QA staging deployment.
+ * Sets the session cookie with a domain that covers the app origin so the
+ * browser is authenticated when it navigates to the RAG Agents app.
+ */
+async function authQaLoginQuick(request: Request, env: Env, url: URL): Promise<Response> {
+  if (env.QA_AUTH_ENABLED !== "1") {
+    return json({ error: "QA mode is not enabled on this deployment" }, 403);
+  }
+
+  const user = await getOrCreateQaUser(env);
+  const session = await createSession(env, user.id);
+
+  // Derive a shared parent domain from the QA Worker's own hostname so the
+  // session cookie is sent to the app origin as well as the QA origin.
+  // e.g. rag-agents-qa.pratyakshrawat768.workers.dev -> .pratyakshrawat768.workers.dev
+  const qaHost = new URL(request.url).hostname;
+  const qaParts = qaHost.split(".");
+  const sharedDomain = qaParts.length > 2 ? `.${qaParts.slice(1).join(".")}` : undefined;
+
+  const next = url.searchParams.get("next");
+  // QA login-quick is allowed to cross-origin redirect to the authorised app
+  // origin (deployment is the security boundary, not same-origin check).
+  let redirectTo = "/";
+  if (next) {
+    try {
+      const nextUrl = new URL(next);
+      if (nextUrl.protocol === "https:") {
+        redirectTo = next;
+      }
+    } catch {
+      /* fall back to "/" */
+    }
+  }
+
+  const response = redirect(redirectTo);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+      secure: true,
+      domain: sharedDomain,
+    }),
+  );
+
+  await auditLogin(env, user.google_sub, user.id, "qa_login_quick");
+
+  return response;
+}
+
 async function proxyApi(
   request: Request,
   env: Env,
@@ -317,8 +466,15 @@ async function proxyApi(
       const failure = await requireCsrf(request, principal);
       if (failure) return failure;
     }
+    const qaBlock = qaRestrictedResponse(principal, url.pathname, request.method);
+    if (qaBlock) return qaBlock;
   }
-  const upstream = buildUpstreamRequest(request, env, url, principal);
+  let upstream: Request;
+  if (requireAuth) {
+    upstream = buildUpstreamRequest(request, env, url, principal);
+  } else {
+    upstream = buildUpstreamRequest(request, env, url, null);
+  }
   return fetch(upstream);
 }
 
@@ -331,6 +487,8 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+    if (path === "/auth/qa-login") return authQaLogin(request, env);
+    if (path === "/auth/qa-login-quick") return authQaLoginQuick(request, env, url);
 
     if (path === "/auth/settings/timezone") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -370,6 +528,9 @@ export default {
       const principal = await resolvePrincipal(env, request);
       if (!principal) {
         return json({ error: "authentication required" }, 401);
+      }
+      if (isQaUser(principal.user)) {
+        return json({ error: "QA sessions cannot access connector approvals" }, 403);
       }
       const userId = principal.user.id;
 

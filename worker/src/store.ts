@@ -272,3 +272,45 @@ export async function setDeveloperMode(env: Env, userId: string, enabled: boolea
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
+
+/**
+ * QA automation identity.
+ *
+ * Returns (creating if necessary) a synthetic, isolated user used only for
+ * automated browser testing on the QA deployment.  The identity is keyed on a
+ * fixed google_sub that no real Google account can ever have, so all QA data
+ * (conversations, messages, sessions) is naturally partitioned by owner_sub and
+ * can never overlap with real users.
+ *
+ * The QA user is created with developer_mode = 0 so no admin/developer features
+ * are available to QA sessions.
+ */
+export async function getOrCreateQaUser(env: Env): Promise<UserRow> {
+  const QA_USER_ID = "qa-automation-user-00000000-0000-0000-0000-000000000001";
+  const QA_GOOGLE_SUB = "qa-automation@rag-agents.test";
+  const now = Date.now();
+
+  const existing = await env.DB.prepare(
+    `SELECT ${USER_COLUMNS} FROM users WHERE google_sub = ?1`,
+  )
+    .bind(QA_GOOGLE_SUB)
+    .first<UserRow>();
+  if (existing) return existing;
+
+  const row = await env.DB.prepare(
+    `INSERT INTO users (id, google_sub, email, email_verified, name, picture, timezone, developer_mode, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'UTC', 0, ?7, ?7)
+     RETURNING ${USER_COLUMNS}`,
+  )
+    .bind(QA_USER_ID, QA_GOOGLE_SUB, QA_GOOGLE_SUB, 1, "QA Automation", "", now)
+    .first<UserRow>();
+  if (!row) {
+    throw new Error("QA user creation returned no row");
+  }
+  return row;
+}
+
+/** True when the given user is the synthetic QA automation identity. */
+export function isQaUser(user: UserRow): boolean {
+  return user.google_sub === "qa-automation@rag-agents.test";
+}

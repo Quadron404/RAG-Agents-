@@ -49,6 +49,8 @@ interface AuthState {
   user: AuthUser | null;
   csrf: string;
   gmail: GmailStatus;
+  /** True only when the deployment runs QA mode (QA_AUTH_ENABLED="1"). */
+  qaAuthEnabled: boolean;
   bootstrap: () => Promise<void>;
   logout: () => Promise<void>;
   refreshGmail: () => Promise<void>;
@@ -75,10 +77,12 @@ export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   csrf: "",
   gmail: { ...DISCONNECTED },
+  qaAuthEnabled: false,
   async bootstrap() {
+    let data: { authenticated?: unknown; user?: unknown; csrf?: unknown; qaAuthEnabled?: unknown } | null = null;
     try {
       const res = await fetch("/auth/session", { credentials: "include" });
-      const data = await res.json();
+      data = await res.json();
       if (data && data.authenticated) {
         const user = data.user as AuthUser;
         set({
@@ -86,6 +90,7 @@ export const useAuth = create<AuthState>((set, get) => ({
           authenticated: true,
           user,
           csrf: String(data.csrf || ""),
+          qaAuthEnabled: Boolean(data.qaAuthEnabled),
         });
         // Replace the server's UTC fallback with the browser's real IANA
         // timezone on first sign-in, so daily summaries use local calendar days.
@@ -97,7 +102,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     } catch {
       /* treated as signed out below */
     }
-    set({ ready: true, authenticated: false, user: null, csrf: "", gmail: { ...DISCONNECTED } });
+    set({ ready: true, authenticated: false, user: null, csrf: "", gmail: { ...DISCONNECTED }, qaAuthEnabled: Boolean(data?.qaAuthEnabled) });
   },
 
   async refreshGmail() {

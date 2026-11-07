@@ -67,6 +67,12 @@ export interface Env {
   SESSION_SECRET: string;
   SESSION_TTL_SECONDS?: string;
 
+  // --- QA automation (staging/QA deployments only) --------------------------
+  /** Set to "1" only on the QA/staging deployment to enable QA sign-in bypass. Never set on production. */
+  QA_AUTH_ENABLED?: string;
+  /** Shared secret validating QA login requests. Set with `wrangler secret put QA_SECRET`. */
+  QA_SECRET?: string;
+
   /** Public origin of the Codespace backend the Worker proxies to. */
   BACKEND_ORIGIN: string;
   /** The stable workers.dev origin; derived from the request when empty. */

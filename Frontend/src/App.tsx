@@ -32,7 +32,7 @@ function Splash() {
   );
 }
 
-function SignIn() {
+function SignIn({ qaAuthEnabled, qaLogin }: { qaAuthEnabled: boolean; qaLogin: () => Promise<void> }) {
   return (
     <div style={gateStyle}>
       <div style={{ maxWidth: 360 }}>
@@ -40,6 +40,24 @@ function SignIn() {
         <p style={{ opacity: 0.75, margin: "0 0 20px" }}>
           Sign in with Google to reach your workforce and your private computer.
         </p>
+        {qaAuthEnabled && (
+          <button
+            onClick={() => void qaLogin()}
+            style={{
+              display: "block",
+              margin: "0 auto 12px",
+              padding: "10px 18px",
+              borderRadius: 10,
+              border: "1px solid rgba(127,127,127,.35)",
+              background: "rgba(255,255,255,.06)",
+              color: "inherit",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Skip Sign In — QA Mode
+          </button>
+        )}
         <a
           href={loginHref()}
           style={{
@@ -67,7 +85,24 @@ export function App() {
 
   const ready = useAuth((s) => s.ready);
   const authenticated = useAuth((s) => s.authenticated);
+  const qaAuthEnabled = useAuth((s) => s.qaAuthEnabled);
   const bootstrap = useAuth((s) => s.bootstrap);
+
+  async function qaLogin() {
+    try {
+      const res = await fetch("/auth/qa-login", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        useUi.getState().toast("QA sign-in failed.", "err");
+        return;
+      }
+      await useAuth.getState().bootstrap();
+    } catch {
+      useUi.getState().toast("QA sign-in failed.", "err");
+    }
+  }
 
   useEffect(() => {
     bootstrap();
@@ -110,7 +145,7 @@ export function App() {
   }, [authenticated, connect]);
 
   if (!ready) return <Splash />;
-  if (!authenticated) return <SignIn />;
+  if (!authenticated) return <SignIn qaAuthEnabled={qaAuthEnabled} qaLogin={qaLogin} />;
 
   return (
     <div className={`app${view === "chat" && convOpen ? " app--list-open" : ""}`}>
