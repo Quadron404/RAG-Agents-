@@ -10,6 +10,8 @@ import {
   isSpeaking,
   speechSupported,
   ttsReady,
+  ensureVoices,
+  ttsFailureCount,
 } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 
@@ -31,10 +33,12 @@ function CallUI() {
   const [listeningUI, setListeningUI] = useState(false);
   const [speakingUI, setSpeakingUI] = useState(false);
   const [ttsVoice, setTtsVoice] = useState<string | null>(null);
+  const [ttsFailures, setTtsFailures] = useState(0);
   const dictRef = useRef<{ stop: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const durationRef = useRef(callDuration);
   const lastSpoken = useRef<string | null>(null);
+  const lastSeenDelta = useRef<string | null>(null);
   const lastUserText = useRef<string | null>(null);
   const startListeningRef = useRef<(() => void) | null>(null);
 
@@ -72,23 +76,45 @@ function CallUI() {
     return `${m}:${String(r).padStart(2, "0")}`;
   };
 
+  // When a call starts (user gesture), ensure TTS voices are loaded so speak()
+  // works immediately.  Track TTS failure count for diagnostics.
+  useEffect(() => {
+    if (!callActive) return;
+    ensureVoices();
+    const v = window.speechSynthesis;
+    if (v && v.onvoiceschanged) {
+      const handler = () => {
+        ensureVoices();
+        setTtsVoice((() => {
+          try {
+            const voice = v.getVoices().find((v) => v.lang.startsWith("en"));
+            return voice?.name ?? "default";
+          } catch {
+            return "default";
+          }
+        })());
+      };
+      v.onvoiceschanged = handler;
+      return () => { v.onvoiceschanged = null; };
+    }
+  }, [callActive]);
+
   // Announce the TTS voice once it is known.
   useEffect(() => {
     if (ttsReady() && !ttsVoice) {
-      const name = (() => {
-        try {
-          if (typeof window !== "undefined" && window.speechSynthesis) {
-            const v = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("en"));
-            return v?.name ?? "default";
-          }
-        } catch {
-          /* ignore */
-        }
-        return "default";
-      })();
-      setTtsVoice(name);
+      try {
+        const voice = window.speechSynthesis?.getVoices().find((v) => v.lang.startsWith("en"));
+        setTtsVoice(voice?.name ?? "default");
+      } catch {
+        setTtsVoice("default");
+      }
     }
   }, [ttsVoice]);
+
+  // Track TTS failures.
+  useEffect(() => {
+    setTtsFailures(ttsFailureCount());
+  }, [ttsFailureCount]);
 
   const clearListening = useCallback(() => {
     dictRef.current?.stop();
@@ -154,23 +180,28 @@ function CallUI() {
 
   startListeningRef.current = doStartListening;
 
-  // Speak the assistant's finished response while a call is active.  Trigger on
-  // any change to `run` so the commanderDelta is spoken as soon as it lands,
-  // resetting the spoken guard when the user sends a new message.
+  // Capture the latest non-empty commanderDelta as the assistant streams.
+  useEffect(() => {
+    const delta = run?.commanderDelta?.trim();
+    if (delta) lastSeenDelta.current = delta;
+  }, [run]);
+
+  // When the run completes, speak the last captured assistant delta.
+  // core.ts clears commanderDelta to "" when phase becomes "done", so we must
+  // read it from lastSeenDelta (populated above) rather than run.commanderDelta.
   useEffect(() => {
     if (!callActive || !speechSynthesisSupported()) return;
-    const delta = run?.commanderDelta?.trim();
-    if (!delta || delta === lastSpoken.current) return;
-    // Only speak assistant text that follows a user message we actually sent.
-    if (lastUserText.current === null) return;
     if (!run || run.phase !== "done") return;
+    const delta = lastSeenDelta.current;
+    if (!delta || delta === lastSpoken.current) return;
     lastSpoken.current = delta;
+    lastSeenDelta.current = null;
     addCallMessage({ id: "c-" + Date.now(), role: "assistant", content: delta, created_at: Date.now() / 1000 });
     setCallState("speaking");
     setSpeakingUI(true);
     setListeningUI(false);
     speak(delta);
-  }, [callActive, run, addCallMessage, setCallState]);
+  }, [callActive, run, run?.phase, addCallMessage, setCallState]);
 
   // When TTS finishes, resume listening.
   useEffect(() => {
@@ -236,6 +267,7 @@ function CallUI() {
                     ? "Chief is replying"
                     : "Tap to speak"}
             {ttsVoice ? ` · ${ttsVoice}` : ""}
+            {ttsFailures > 0 ? ` · TTS errors: ${ttsFailures}` : ""}
           </div>
         </div>
 

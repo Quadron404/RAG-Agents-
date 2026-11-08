@@ -90,24 +90,20 @@ export function speechSynthesisSupported(): boolean {
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let voicesReady = false;
 let voices: SpeechSynthesisVoice[] = [];
+let speakFailures = 0;
 
-function loadVoices(): void {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
+function loadVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === "undefined" || !window.speechSynthesis) return voices;
   const v = window.speechSynthesis.getVoices();
   if (v && v.length) {
     voices = v;
     voicesReady = true;
   }
-}
-
-// Some browsers populate voices asynchronously.  Listen for the
-// voiceschanged event and re-load so a voice can be selected.
-if (typeof window !== "undefined" && window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = () => loadVoices();
-  loadVoices();
+  return voices;
 }
 
 function pickVoice(): SpeechSynthesisVoice | undefined {
+  if (voices.length === 0) return undefined;
   // Prefer a clear English female voice; fall back to any English voice,
   // then to the first available voice.
   const prefer = (lang: string) =>
@@ -130,20 +126,29 @@ export function speak(text: string): void {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
   stopSpeech();
   loadVoices();
+
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "en-US";
   u.rate = 1;
   u.pitch = 1;
   u.volume = 1;
+
   const voice = pickVoice();
   if (voice) u.voice = voice;
+
+  let resolved = false;
+  u.onstart = () => {
+    resolved = true;
+    speakFailures = 0;
+  };
   u.onend = () => {
     if (currentUtterance === u) currentUtterance = null;
   };
   u.onerror = () => {
     if (currentUtterance === u) currentUtterance = null;
-    // A voice-selection failure is not fatal; retry with the default voice.
-    if (!voice) {
+    speakFailures++;
+    // Retry once without a specific voice (let the browser pick the default).
+    if (!resolved && u.voice) {
       u.voice = null;
       try {
         window.speechSynthesis.speak(u);
@@ -152,11 +157,13 @@ export function speak(text: string): void {
       }
     }
   };
+
   currentUtterance = u;
   try {
     window.speechSynthesis.speak(u);
   } catch {
     currentUtterance = null;
+    speakFailures++;
   }
 }
 
@@ -180,4 +187,14 @@ export function ttsReady(): boolean {
 /** The name of the currently selected TTS voice, or "default". */
 export function ttsVoiceName(): string {
   return pickVoice()?.name ?? "default";
+}
+
+/** Number of consecutive TTS failures (for diagnostics). */
+export function ttsFailureCount(): number {
+  return speakFailures;
+}
+
+/** Ensure voices are loaded; call after a user gesture. */
+export function ensureVoices(): void {
+  loadVoices();
 }
