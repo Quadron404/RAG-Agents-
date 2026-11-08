@@ -191,6 +191,15 @@ export interface ReplyTo {
   text: string;
 }
 
+export interface CallMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+}
+
+export type CallState = "idle" | "ringing" | "connected" | "listening" | "speaking";
+
 function loadIgnores(): { archived: string[]; pinnedConv: string | null } {
   try {
     const d = JSON.parse(localStorage.getItem("rag.ignores.v1") || "{}");
@@ -250,6 +259,10 @@ interface UiState {
   replyTo: ReplyTo | null;
   pinnedConv: string | null;
   archived: string[];
+  callActive: boolean;
+  callState: CallState;
+  callDuration: number;
+  callTranscript: CallMessage[];
   setView: (v: ViewId) => void;
   setConvOpen: (v: boolean) => void;
   setBot: (b: UiState["bot"]) => void;
@@ -265,6 +278,12 @@ interface UiState {
   clearReplyTo: () => void;
   setPinnedConv: (id: string | null) => void;
   archiveConv: (id: string) => void;
+  startCall: () => void;
+  endCall: () => void;
+  setCallState: (s: CallState) => void;
+  setCallDuration: (d: number) => void;
+  addCallMessage: (m: CallMessage) => void;
+  clearCallTranscript: () => void;
 }
 
 let toastId = 0;
@@ -281,6 +300,10 @@ export const useUi = create<UiState>((set, get) => ({
   replyTo: null,
   pinnedConv: loadIgnores().pinnedConv,
   archived: loadIgnores().archived,
+  callActive: false,
+  callState: "idle",
+  callDuration: 0,
+  callTranscript: [],
   setView: (view) => set({ view, convOpen: false }),
   setConvOpen: (convOpen) => set({ convOpen }),
   setBot: (bot) => set({ bot }),
@@ -307,6 +330,18 @@ export const useUi = create<UiState>((set, get) => ({
     set({ archived });
     saveIgnores(archived, get().pinnedConv);
   },
+  startCall: () => {
+    set({ callActive: true, callState: "ringing", callDuration: 0, callTranscript: [] });
+    setTimeout(() => get().setCallState("connected"), 700);
+    setTimeout(() => get().setCallState("listening"), 1400);
+  },
+  endCall: () => {
+    set({ callActive: false, callState: "idle", callDuration: 0 });
+  },
+  setCallState: (s: CallState) => set({ callState: s }),
+  setCallDuration: (d: number) => set({ callDuration: d }),
+  addCallMessage: (m: CallMessage) => set({ callTranscript: [...get().callTranscript, m] }),
+  clearCallTranscript: () => set({ callTranscript: [] }),
 }));
 
 /* ============================================================================

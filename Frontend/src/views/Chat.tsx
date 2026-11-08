@@ -29,9 +29,10 @@ import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
-import { speechSupported, startDictation, speak, stopSpeech, speechSynthesisSupported } from "../lib/voice";
+import { speechSupported, startDictation, stopSpeech, speechSynthesisSupported } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
+import CallUI from "../components/CallUI";
 import { ApprovalsList } from "../components/ApprovalCard";
 import {
   fetchConnectorApprovals,
@@ -667,7 +668,6 @@ function Composer() {
   const [attaches, setAttaches] = useState<Attach[]>([]);
   const [focus, setFocus] = useState(false);
   const [listening, setListening] = useState(false);
-  const [calling, setCalling] = useState(false);
   const status = useCore((s) => s.status);
   const send = useCore((s) => s.send);
   const stopRun = useCore((s) => s.stopRun);
@@ -675,12 +675,14 @@ function Composer() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const replyTo = useUi((s) => s.replyTo);
   const clearReplyTo = useUi((s) => s.clearReplyTo);
+  const startCall = useUi((s) => s.startCall);
+  const endCall = useUi((s) => s.endCall);
+  const callActive = useUi((s) => s.callActive);
   const toast = useUi((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
   const synth = speechSynthesisSupported();
-  const lastSpoken = useRef<string | null>(null);
 
   const busy = Boolean(
     run &&
@@ -697,17 +699,6 @@ function Composer() {
   }, []);
 
   useEffect(autoGrow, [text, autoGrow]);
-
-  // While a call is active, speak the assistant's finished response so the
-  // session is genuinely two-way: STT in, TTS out.
-  useEffect(() => {
-    if (!calling || !synth) return;
-    if (run?.phase !== "done" || !run?.commanderDelta) return;
-    const text = run.commanderDelta.trim();
-    if (!text || text === lastSpoken.current) return;
-    lastSpoken.current = text;
-    speak(text);
-  }, [run, calling, synth]);
 
   const commit = () => {
     const base = text.trim();
@@ -757,33 +748,20 @@ function Composer() {
   };
 
   const toggleCall = () => {
-    if (calling) {
+    if (callActive) {
+      endCall();
       stopSpeech();
       dict.current?.stop();
-      setCalling(false);
-      setListening(false);
-      lastSpoken.current = null;
+      dict.current = null;
+      haptic("heavy");
       return;
     }
     if (!speechSupported()) {
-      toast("Voice input isn't supported here", "info");
+      toast("Voice calls aren't supported here", "info");
       return;
     }
     haptic("medium");
-    setCalling(true);
-    setListening(true);
-    dict.current = startDictation({
-      onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
-      onFinal: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
-      onEnd: () => {
-        if (calling) setListening(false);
-      },
-      onError: (msg) => {
-        toast(msg, "err");
-        setCalling(false);
-        setListening(false);
-      },
-    });
+    startCall();
   };
 
   const addFiles = (list: FileList | null) => {
@@ -875,10 +853,10 @@ function Composer() {
           ) : null}
           {synth ? (
             <button
-              className={`composer__btn${calling ? " composer__btn--call-active" : ""}`}
+              className={`composer__btn${callActive ? " composer__btn--call-active" : ""}`}
               onClick={toggleCall}
-              title={calling ? "End call" : "Start voice call (listen + speak)"}
-              aria-label={calling ? "End call" : "Start voice call"}
+              title={callActive ? "End call" : "Start voice call (listen + speak)"}
+              aria-label={callActive ? "End call" : "Start voice call"}
             >
               <Phone size={18} />
             </button>
@@ -1024,6 +1002,7 @@ export function ChatView() {
         )}
         <MessageList />
         <Composer />
+        <CallUI />
         {developerMode && (
           <div className="dev-history-panel">
             <div className="dev-history-panel__head">
