@@ -29,7 +29,7 @@ import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
-import { speechSupported, startDictation, stopSpeech, speechSynthesisSupported } from "../lib/voice";
+import { speechSupported, startDictation, stopSpeech } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
 import CallUI from "../components/CallUI";
@@ -682,7 +682,6 @@ function Composer() {
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
-  const synth = speechSynthesisSupported();
 
   const busy = Boolean(
     run &&
@@ -851,7 +850,7 @@ function Composer() {
               )}
             </button>
           ) : null}
-          {synth ? (
+          {true ? (
             <button
               className={`composer__btn${callActive ? " composer__btn--call-active" : ""}`}
               onClick={toggleCall}

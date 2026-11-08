@@ -237,6 +237,76 @@ async function authSkipSignin(request: Request, env: Env, url: URL): Promise<Res
   }
 }
 
+async function tts(request: Request, env: Env): Promise<Response> {
+  if (!env.AI) {
+    return json({ error: "TTS is not configured on this worker" }, 503);
+  }
+  let body: { text?: unknown; prompt?: unknown; voice?: unknown } = {};
+  try {
+    body = (await request.json()) ?? {};
+  } catch {
+    /* ignore */
+  }
+  const text = typeof body.text === "string" ? body.text : typeof body.prompt === "string" ? body.prompt : "";
+  if (!text.trim()) {
+    return json({ error: "text is required" }, 400);
+  }
+  const voice = typeof body.voice === "string" ? body.voice : "alloy";
+  try {
+    const result = await env.AI.run(
+      "@cf/myshell-ai/melotts",
+      { prompt: text, voice },
+    );
+    // Workers AI returns an object; the audio may be a base64 string or a Uint8Array.
+    const audio = await audioFromAiResult(result);
+    if (!audio) {
+      return json({ error: "TTS produced no audio" }, 502);
+    }
+    return new Response(audio, {
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  } catch (error) {
+    return json({ error: "TTS failed", detail: String(error) }, 502);
+  }
+}
+
+/** Normalize the Workers AI TTS result into a Uint8Array of MP3 bytes. */
+async function audioFromAiResult(result: unknown): Promise<Uint8Array | null> {
+  try {
+    if (result === null || result === undefined) return null;
+    // Already a Uint8Array.
+    if (result instanceof Uint8Array) return result;
+    // An ArrayBuffer.
+    if (result instanceof ArrayBuffer) return new Uint8Array(result);
+    // An object with an audio property.
+    if (typeof result === "object") {
+      const obj = result as Record<string, unknown>;
+      if (obj.audio instanceof Uint8Array) return obj.audio;
+      if (obj.audio instanceof ArrayBuffer) return new Uint8Array(obj.audio);
+      if (typeof obj.audio === "string") {
+        return base64ToBytes(String(obj.audio));
+      }
+      if (obj.data instanceof Uint8Array) return obj.data;
+      if (obj.data instanceof ArrayBuffer) return new Uint8Array(obj.data);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function base64ToBytes(input: string): Uint8Array {
+  const bin = atob(input);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
 async function requireSettingsCsrf(request: Request, principal: Principal): Promise<Response | null> {
   const supplied = request.headers.get(CSRF_HEADER) ?? "";
   const expected = principal.session.csrf ?? "";
@@ -375,6 +445,10 @@ export default {
     if (path === "/auth/skip-signin") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
       return authSkipSignin(request, env, url);
+    }
+    if (path === "/tts") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return tts(request, env);
     }
 
     if (path === "/auth/settings/timezone") {

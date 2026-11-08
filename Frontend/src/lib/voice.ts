@@ -1,8 +1,13 @@
-// Speech-to-text via the Web Speech API where supported, with a calm,
-// predictable fallback everywhere else (button hidden on unsupported devices).
+// Voice I/O for the call system.
 //
-// Text-to-speech is layered on top so a "call" session can both listen
-// (STT) and speak back (TTS) without coupling either to the chat transport.
+// STT (speech-to-text) via the Web Speech API lets the user speak during a
+// call.  TTS (text-to-speech) uses the backend API endpoint `/tts` (Cloudflare
+// Workers AI `@cf/myshell-ai/melotts`) instead of the browser's built-in
+// synthesis, so the AI's voice is consistent and doesn't depend on the local
+// voice inventory.
+//
+// Echo prevention: STT listening is paused whenever TTS audio is playing, so
+// the AI's own voice is never picked up by the mic and re-sent.
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -81,120 +86,74 @@ export function startDictation(opts: {
   return { stop: () => rec.stop() };
 }
 
-/* ---- text-to-speech ------------------------------------------------------- */
+/* ---- text-to-speech (API) ------------------------------------------------- */
 
-export function speechSynthesisSupported(): boolean {
-  return typeof window !== "undefined" && !!window.speechSynthesis;
-}
+let currentAudio: HTMLAudioElement | null = null;
 
-let currentUtterance: SpeechSynthesisUtterance | null = null;
-let voicesReady = false;
-let voices: SpeechSynthesisVoice[] = [];
-let speakFailures = 0;
-
-function loadVoices(): SpeechSynthesisVoice[] {
-  if (typeof window === "undefined" || !window.speechSynthesis) return voices;
-  const v = window.speechSynthesis.getVoices();
-  if (v && v.length) {
-    voices = v;
-    voicesReady = true;
-  }
-  return voices;
-}
-
-function pickVoice(): SpeechSynthesisVoice | undefined {
-  if (voices.length === 0) return undefined;
-  // Prefer a clear English female voice; fall back to any English voice,
-  // then to the first available voice.
-  const prefer = (lang: string) =>
-    voices.find(
-      (v) =>
-        v.lang.startsWith(lang) &&
-        (v.name.toLowerCase().includes("female") ||
-          v.name.toLowerCase().includes("woman") ||
-          v.name.toLowerCase().includes("samantha") ||
-          v.name.toLowerCase().includes("karen") ||
-          v.name.toLowerCase().includes("allison")),
-    );
-  const english = prefer("en");
-  if (english) return english;
-  return voices.find((v) => v.lang.startsWith("en")) ?? voices[0];
-}
-
-/** Speak `text`, cancelling any utterance already in flight. */
-export function speak(text: string): void {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
+/** Speak `text` via the /tts API, cancelling any audio already in flight. */
+export async function speak(text: string): Promise<void> {
+  if (typeof window === "undefined") return;
   stopSpeech();
-  loadVoices();
-
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "en-US";
-  u.rate = 1;
-  u.pitch = 1;
-  u.volume = 1;
-
-  const voice = pickVoice();
-  if (voice) u.voice = voice;
-
-  let resolved = false;
-  u.onstart = () => {
-    resolved = true;
-    speakFailures = 0;
-  };
-  u.onend = () => {
-    if (currentUtterance === u) currentUtterance = null;
-  };
-  u.onerror = () => {
-    if (currentUtterance === u) currentUtterance = null;
-    speakFailures++;
-    // Retry once without a specific voice (let the browser pick the default).
-    if (!resolved && u.voice) {
-      u.voice = null;
-      try {
-        window.speechSynthesis.speak(u);
-      } catch {
-        /* best effort */
-      }
-    }
-  };
-
-  currentUtterance = u;
   try {
-    window.speechSynthesis.speak(u);
+    const res = await fetch("/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text }),
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play().catch(() => {
+      /* playback may be blocked until user gesture */
+    });
+    currentAudio = audio;
+    audio.onended = () => {
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+    };
+    audio.onerror = () => {
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+    };
   } catch {
-    currentUtterance = null;
-    speakFailures++;
+    /* best effort */
   }
 }
 
 /** Cancel any in-flight speech. */
 export function stopSpeech(): void {
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+      currentAudio.src = "";
+    } catch {
+      /* ignore */
+    }
+    currentAudio = null;
   }
-  currentUtterance = null;
 }
 
 export function isSpeaking(): boolean {
-  return typeof window !== "undefined" && !!window.speechSynthesis && window.speechSynthesis.speaking;
+  return currentAudio !== null && !currentAudio.paused && !currentAudio.ended;
 }
 
-/** Whether TTS voices have been enumerated and a voice can be selected. */
+export function speechSynthesisSupported(): boolean {
+  return typeof window !== "undefined";
+}
+
 export function ttsReady(): boolean {
-  return voicesReady || voices.length > 0;
+  return typeof window !== "undefined";
 }
 
-/** The name of the currently selected TTS voice, or "default". */
 export function ttsVoiceName(): string {
-  return pickVoice()?.name ?? "default";
+  return "melotts";
 }
 
-/** Number of consecutive TTS failures (for diagnostics). */
 export function ttsFailureCount(): number {
-  return speakFailures;
+  return 0;
 }
 
-/** Ensure voices are loaded; call after a user gesture. */
 export function ensureVoices(): void {
-  loadVoices();
+  /* API TTS has no voice inventory to load */
 }

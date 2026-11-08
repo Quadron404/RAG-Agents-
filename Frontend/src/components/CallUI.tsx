@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Phone, X } from "lucide-react";
+import { Mic, MicOff, Phone, VolumeX } from "lucide-react";
 import { useUi } from "../store";
 import { useCore } from "../core";
 import {
-  speechSynthesisSupported,
-  startDictation,
-  stopSpeech,
   speak,
+  stopSpeech,
   isSpeaking,
   speechSupported,
-  ttsReady,
-  ensureVoices,
-  ttsFailureCount,
+  startDictation,
 } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 
@@ -32,15 +28,12 @@ function CallUI() {
   const [micMuted, setMicMuted] = useState(false);
   const [listeningUI, setListeningUI] = useState(false);
   const [speakingUI, setSpeakingUI] = useState(false);
-  const [ttsVoice, setTtsVoice] = useState<string | null>(null);
-  const [ttsFailures, setTtsFailures] = useState(0);
   const dictRef = useRef<{ stop: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const durationRef = useRef(callDuration);
   const lastSpoken = useRef<string | null>(null);
-  const lastSeenDelta = useRef<string | null>(null);
   const lastUserText = useRef<string | null>(null);
-  const startListeningRef = useRef<(() => void) | null>(null);
+  const lastSeenDelta = useRef<string | null>(null);
 
   // Mirror store duration into local state for the UI timer.
   useEffect(() => {
@@ -76,46 +69,6 @@ function CallUI() {
     return `${m}:${String(r).padStart(2, "0")}`;
   };
 
-  // When a call starts (user gesture), ensure TTS voices are loaded so speak()
-  // works immediately.  Track TTS failure count for diagnostics.
-  useEffect(() => {
-    if (!callActive) return;
-    ensureVoices();
-    const v = window.speechSynthesis;
-    if (v && v.onvoiceschanged) {
-      const handler = () => {
-        ensureVoices();
-        setTtsVoice((() => {
-          try {
-            const voice = v.getVoices().find((v) => v.lang.startsWith("en"));
-            return voice?.name ?? "default";
-          } catch {
-            return "default";
-          }
-        })());
-      };
-      v.onvoiceschanged = handler;
-      return () => { v.onvoiceschanged = null; };
-    }
-  }, [callActive]);
-
-  // Announce the TTS voice once it is known.
-  useEffect(() => {
-    if (ttsReady() && !ttsVoice) {
-      try {
-        const voice = window.speechSynthesis?.getVoices().find((v) => v.lang.startsWith("en"));
-        setTtsVoice(voice?.name ?? "default");
-      } catch {
-        setTtsVoice("default");
-      }
-    }
-  }, [ttsVoice]);
-
-  // Track TTS failures.
-  useEffect(() => {
-    setTtsFailures(ttsFailureCount());
-  }, [ttsFailureCount]);
-
   const clearListening = useCallback(() => {
     dictRef.current?.stop();
     dictRef.current = null;
@@ -133,9 +86,10 @@ function CallUI() {
     haptic("heavy");
   }, [clearListening, stopSpeech, endCall, haptic]);
 
-  const doStartListening = () => {
-    if (!callActive || !speechSupported()) return;
+  const startListening = () => {
+    if (!callActive || !speechSupported() || isSpeaking()) return;
     if (dictRef.current) return;
+    if (micMuted) return;
     setCallState("listening");
     setListeningUI(true);
     setSpeakingUI(false);
@@ -143,54 +97,64 @@ function CallUI() {
       onInterim: () => {
         /* visual feedback only */
       },
-      onFinal: (t) => {
+      onFinal: (t: string) => {
         if (!t.trim()) return;
         const text = t.trim();
         haptic("medium");
         lastUserText.current = text;
-        // Reset the spoken guard so the assistant's reply to THIS message is spoken.
         lastSpoken.current = null;
         addCallMessage({ id: "c-" + Date.now(), role: "user", content: text, created_at: Date.now() / 1000 });
         if (activeThreadId) {
           void send(text);
         }
+        // Stop listening while the AI replies (prevents echo).
         clearListening();
         setCallState("speaking");
         setSpeakingUI(true);
       },
       onEnd: () => {
-        if (callActive && !speakingUI && !micMuted) {
+        // Auto-restart listening only when not speaking and call is active.
+        if (callActive && !speakingUI && !micMuted && !isSpeaking()) {
           setTimeout(() => {
-            if (callActive && (callState === "listening" || callState === "connected")) {
-              startListeningRef.current?.();
+            if (callActive && callState === "listening" || callActive && callState === "connected") {
+              startListening();
             }
           }, 400);
         }
       },
       onError: () => {
         clearListening();
-        if (callActive) {
+        if (callActive && !isSpeaking()) {
           setCallState("connected");
           setListeningUI(false);
-          setTimeout(() => startListeningRef.current?.(), 1000);
+          setTimeout(() => startListening(), 1000);
         }
       },
     });
   };
 
-  startListeningRef.current = doStartListening;
+  // When TTS starts (via API), mark speaking state so listening is paused.
+  useEffect(() => {
+    if (!callActive) return;
+    const speaking = isSpeaking();
+    if (speaking && !speakingUI) {
+      setSpeakingUI(true);
+      setListeningUI(false);
+      setCallState("speaking");
+      clearListening();
+    }
+  }, [callActive, isSpeaking(), speakingUI, clearListening, setCallState]);
 
-  // Capture the latest non-empty commanderDelta as the assistant streams.
+  // Speak the assistant's finished response when the run completes.
+  // core.ts clears commanderDelta to "" when phase becomes "done", so we
+  // capture it during streaming via lastSeenDelta.
   useEffect(() => {
     const delta = run?.commanderDelta?.trim();
     if (delta) lastSeenDelta.current = delta;
   }, [run]);
 
-  // When the run completes, speak the last captured assistant delta.
-  // core.ts clears commanderDelta to "" when phase becomes "done", so we must
-  // read it from lastSeenDelta (populated above) rather than run.commanderDelta.
   useEffect(() => {
-    if (!callActive || !speechSynthesisSupported()) return;
+    if (!callActive) return;
     if (!run || run.phase !== "done") return;
     const delta = lastSeenDelta.current;
     if (!delta || delta === lastSpoken.current) return;
@@ -200,7 +164,7 @@ function CallUI() {
     setCallState("speaking");
     setSpeakingUI(true);
     setListeningUI(false);
-    speak(delta);
+    void speak(delta);
   }, [callActive, run, run?.phase, addCallMessage, setCallState]);
 
   // When TTS finishes, resume listening.
@@ -210,18 +174,25 @@ function CallUI() {
     if (!speaking && speakingUI) {
       setSpeakingUI(false);
       setCallState("listening");
-      setTimeout(() => startListeningRef.current?.(), 300);
+      setTimeout(() => startListening(), 300);
     }
-  }, [callActive, speakingUI, setCallState]);
+  }, [callActive, speakingUI, setCallState, startListening]);
 
   const toggleMute = useCallback(() => {
     setMicMuted((p) => {
       const next = !p;
       if (next) clearListening();
-      else startListeningRef.current?.();
+      else startListening();
       return next;
     });
-  }, [clearListening, startListeningRef, setMicMuted]);
+  }, [clearListening, startListening, setMicMuted]);
+
+  // Auto-start listening when the call connects.
+  useEffect(() => {
+    if (callActive && callState === "connected" && !dictRef.current && !isSpeaking()) {
+      startListening();
+    }
+  }, [callActive, callState, startListening]);
 
   if (!callActive) return null;
 
@@ -258,16 +229,14 @@ function CallUI() {
           <div className="call-time">{formatTime(localDuration)}</div>
           <div className="call-hint">
             {callState === "ringing"
-              ? "Connecting to Chief…"
+              ? "Calling Chief…"
               : micMuted
                 ? "Microphone muted"
                 : callState === "listening"
-                  ? "Speak now — I’m listening"
+                  ? "Speak now — I'm listening"
                   : callState === "speaking"
                     ? "Chief is replying"
                     : "Tap to speak"}
-            {ttsVoice ? ` · ${ttsVoice}` : ""}
-            {ttsFailures > 0 ? ` · TTS errors: ${ttsFailures}` : ""}
           </div>
         </div>
 
@@ -275,7 +244,7 @@ function CallUI() {
           <div className="call-transcript__head">
             <span className="call-transcript__label">Call transcript</span>
             <button className="call-icbtn call-icbtn--small" onClick={stopRun} title="Stop">
-              <X size={14} />
+              <VolumeX size={14} />
             </button>
           </div>
           <div className="call-transcript__list">
