@@ -46,6 +46,7 @@ import {
 import { generateIncrementalHistory } from "./history";
 import { removeSummaryDoc, searchConfigured } from "./search";
 import { executeHistoryTool, HISTORY_TOOL } from "./tools";
+import { describeImage } from "./cv";
 import {
   executeRoutineTool,
   isRoutineTool,
@@ -418,7 +419,12 @@ async function startTurn(
 ): Promise<Response> {
   const body = await readJson(request);
   const content = typeof body?.content === "string" ? body.content : "";
-  if (!content.trim()) return json({ error: "a message is required" }, 400);
+  const rawAttachments = (body && typeof body === "object" && Array.isArray((body as Record<string, unknown>).attachments)
+    ? (body as Record<string, unknown>).attachments
+    : []) as any[];
+  if (!content.trim() && !rawAttachments.length) {
+    return json({ error: "a message is required" }, 400);
+  }
   if (content.length > MAX_CONTENT_CHARS) {
     return json({ error: "the message is too long" }, 413);
   }
@@ -428,6 +434,25 @@ async function startTurn(
   }
   const requestId = provided ?? `req-${newId()}`;
   const now = nowMs();
+
+  // Process attached images through the CV model so Chief can see them.
+  let imageContext = "";
+  const attachments = Array.isArray(rawAttachments) ? rawAttachments : [];
+  for (const att of attachments) {
+    if (!att || typeof att !== "object") continue;
+    const a = att as Record<string, unknown>;
+    if (a.kind === "image" && typeof a.data === "string" && a.data.startsWith("data:")) {
+      try {
+        const desc = await describeImage(env, a.data);
+        const name = typeof a.name === "string" ? a.name : "image";
+        imageContext += `\n[Attached image "${name}": ${desc}]`;
+      } catch (error) {
+        const name = typeof a.name === "string" ? a.name : "image";
+        imageContext += `\n[Attached image "${name}": (could not describe: ${(error as Error).message})]`;
+      }
+    }
+  }
+  const fullContent = content + imageContext;
 
   const existing = await getRequest(env, requestId);
   if (existing) {
@@ -517,7 +542,7 @@ async function startTurn(
       requestId,
       userMessageId,
       assistantMessageId,
-      content,
+      fullContent,
     );
     await setTitleIfDefault(env, principal.user.google_sub, conversation.id, autoTitle(content), now);
     await touchConversation(env, principal.user.google_sub, conversation.id, now);

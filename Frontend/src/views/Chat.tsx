@@ -28,7 +28,7 @@ import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
-import { speechSupported, startDictation } from "../lib/voice";
+import { speechSupported, startDictation, speakText } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
 import { ApprovalsList } from "../components/ApprovalCard";
@@ -405,9 +405,9 @@ function renderAttachChips(data: string) {
   try {
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed.attachments)) {
-      return parsed.attachments.map((a: { name?: string }, i: number) => (
+      return parsed.attachments.map((a: { name?: string; kind?: string; data?: string }, i: number) => (
         <span key={i} className="attach-chip">
-          <FileText size={13} />
+          {a.kind === "image" && a.data ? <img src={a.data} alt="" className="attach-img" /> : <FileText size={13} />}
           {a.name}
         </span>
       ));
@@ -698,16 +698,8 @@ function Composer() {
     const base = text.trim();
     if (busy) return;
     if (!base && !attaches.length) return;
-    const attachLine = attaches.length
-      ? `\n\n[attached: ${attaches.map((a) => a.name).join(", ")}]`
-      : "";
-    const finalText = base + attachLine;
     haptic("heavy");
-    // send() reports the reason and returns false when it could not dispatch --
-    // the socket is down, or a run is already in flight.  Clearing the draft
-    // regardless is what made clicking Send while offline look like it worked
-    // and throw the message away.
-    if (!send(finalText)) return;
+    if (!send(base, attaches)) return;
     setText("");
     setAttaches([]);
     autoGrow();
@@ -893,6 +885,20 @@ export function ChatView() {
     const [pendingApprovals, setPendingApprovals] = useState<ConnectorApproval[]>([]);
 
     const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
+
+    const messages = useCore((s) => (s.activeThreadId ? s.messages[s.activeThreadId] : []));
+    const lastSpokenRef = useRef<string | null>(null);
+
+    // Speak Chief's latest assistant message aloud via Groq TTS when a turn ends.
+    useEffect(() => {
+      if (run?.phase === "done" && activeThreadId) {
+        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.id !== lastSpokenRef.current);
+        if (lastAssistant && lastAssistant.content.trim()) {
+          lastSpokenRef.current = lastAssistant.id;
+          void speakText(lastAssistant.content);
+        }
+      }
+    }, [run?.phase, activeThreadId, messages]);
 
     // Poll pending connector approvals so Allow/Deny cards appear inline in chat.
     useEffect(() => {

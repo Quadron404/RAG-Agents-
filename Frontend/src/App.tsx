@@ -12,6 +12,7 @@ import { BotsView } from "./views/Bots";
 import { TasksView } from "./views/Tasks";
 import { ComputerView } from "./views/Computer";
 import { FilesView } from "./views/Files";
+import { MakeView } from "./views/Make";
 import { SettingsSheet } from "./views/Settings";
 
 const gateStyle: CSSProperties = {
@@ -124,6 +125,7 @@ export function App() {
         {view === "tasks" ? <TasksView /> : null}
         {view === "computer" ? <ComputerView /> : null}
         {view === "files" ? <FilesView /> : null}
+        {view === "make" ? <MakeView /> : null}
       </div>
       <TabBar />
       <SettingsSheet />

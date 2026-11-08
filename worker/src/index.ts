@@ -34,6 +34,7 @@ import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
 import { TokenError, verifyIdToken } from "./idtoken";
 import { validateTimezone } from "./timezone";
+import { speechToText, textToSpeech } from "./voice";
 import {
   createRoutine,
   deleteRoutine,
@@ -369,6 +370,15 @@ async function proxyApi(
   return fetch(upstream);
 }
 
+async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const value = await request.json();
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -534,6 +544,39 @@ export default {
           return json({ ok: true });
         }
         return json({ ok: false, error: "method not allowed" }, 405);
+      }
+    }
+
+    // Worker-native voice I/O via Groq (same API key as Chief's model).
+    // STT:  POST /voice/stt   with multipart audio -> text
+    // TTS:  POST /voice/tts   with JSON { text }   -> base64 WAV audio
+    if (path === "/voice/stt" && request.method === "POST") {
+      try {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const form = await request.formData();
+        const audio = form.get("audio");
+        if (audio === null || typeof audio === "string") {
+          return json({ error: "audio blob is required" }, 400);
+        }
+        const text = await speechToText(env, audio as unknown as Blob);
+        return json({ ok: true, text });
+      } catch (error) {
+        return json({ error: `voice STT failed: ${(error as Error).message}` }, 500);
+      }
+    }
+
+    if (path === "/voice/tts" && request.method === "POST") {
+      try {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const body = await readJson(request);
+        const text = typeof body?.text === "string" ? body.text : "";
+        if (!text.trim()) return json({ error: "text is required" }, 400);
+        const { audioBase64, contentType } = await textToSpeech(env, text);
+        return json({ ok: true, audioBase64, contentType });
+      } catch (error) {
+        return json({ error: `voice TTS failed: ${(error as Error).message}` }, 500);
       }
     }
 
