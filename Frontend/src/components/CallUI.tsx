@@ -115,9 +115,7 @@ function CallUI() {
         if (last && text.toLowerCase() === last.toLowerCase()) return;
         lastSpoken.current = null;
         addCallMessage({ id: "c-" + Date.now(), role: "user", content: text, created_at: Date.now() / 1000 });
-        if (activeThreadId) {
-          void send(text);
-        }
+        void send(text);
         // Stop listening while the AI replies (prevents echo).
         // Set speaking state BEFORE stopping dictation so onEnd cannot restart.
         setSpeakingUI(true);
