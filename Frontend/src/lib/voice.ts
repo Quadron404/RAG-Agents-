@@ -1,5 +1,8 @@
 // Speech-to-text via the Web Speech API where supported, with a calm,
 // predictable fallback everywhere else (button hidden on unsupported devices).
+//
+// Text-to-speech is layered on top so a "call" session can both listen
+// (STT) and speak back (TTS) without coupling either to the chat transport.
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -76,4 +79,41 @@ export function startDictation(opts: {
     return null;
   }
   return { stop: () => rec.stop() };
+}
+
+/* ---- text-to-speech ------------------------------------------------------- */
+
+export function speechSynthesisSupported(): boolean {
+  return typeof window !== "undefined" && !!window.speechSynthesis;
+}
+
+let currentUtterance: SpeechSynthesisUtterance | null = null;
+
+/** Speak `text`, cancelling any utterance already in flight. */
+export function speak(text: string): void {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  stopSpeech();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US";
+  u.rate = 1;
+  u.onend = () => {
+    if (currentUtterance === u) currentUtterance = null;
+  };
+  u.onerror = () => {
+    if (currentUtterance === u) currentUtterance = null;
+  };
+  currentUtterance = u;
+  window.speechSynthesis.speak(u);
+}
+
+/** Cancel any in-flight speech. */
+export function stopSpeech(): void {
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  currentUtterance = null;
+}
+
+export function isSpeaking(): boolean {
+  return typeof window !== "undefined" && !!window.speechSynthesis && window.speechSynthesis.speaking;
 }

@@ -15,6 +15,7 @@ import {
   Monitor,
   MoreHorizontal,
   Paperclip,
+  Phone,
   Plus,
   Quote,
   Search,
@@ -28,7 +29,7 @@ import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
-import { speechSupported, startDictation } from "../lib/voice";
+import { speechSupported, startDictation, speak, stopSpeech, speechSynthesisSupported } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
 import { ApprovalsList } from "../components/ApprovalCard";
@@ -666,6 +667,7 @@ function Composer() {
   const [attaches, setAttaches] = useState<Attach[]>([]);
   const [focus, setFocus] = useState(false);
   const [listening, setListening] = useState(false);
+  const [calling, setCalling] = useState(false);
   const status = useCore((s) => s.status);
   const send = useCore((s) => s.send);
   const stopRun = useCore((s) => s.stopRun);
@@ -677,6 +679,8 @@ function Composer() {
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
+  const synth = speechSynthesisSupported();
+  const lastSpoken = useRef<string | null>(null);
 
   const busy = Boolean(
     run &&
@@ -693,6 +697,17 @@ function Composer() {
   }, []);
 
   useEffect(autoGrow, [text, autoGrow]);
+
+  // While a call is active, speak the assistant's finished response so the
+  // session is genuinely two-way: STT in, TTS out.
+  useEffect(() => {
+    if (!calling || !synth) return;
+    if (run?.phase !== "done" || !run?.commanderDelta) return;
+    const text = run.commanderDelta.trim();
+    if (!text || text === lastSpoken.current) return;
+    lastSpoken.current = text;
+    speak(text);
+  }, [run, calling, synth]);
 
   const commit = () => {
     const base = text.trim();
@@ -738,6 +753,36 @@ function Composer() {
       onFinal: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
       onEnd: () => setListening(false),
       onError: (msg) => toast(msg, "err"),
+    });
+  };
+
+  const toggleCall = () => {
+    if (calling) {
+      stopSpeech();
+      dict.current?.stop();
+      setCalling(false);
+      setListening(false);
+      lastSpoken.current = null;
+      return;
+    }
+    if (!speechSupported()) {
+      toast("Voice input isn't supported here", "info");
+      return;
+    }
+    haptic("medium");
+    setCalling(true);
+    setListening(true);
+    dict.current = startDictation({
+      onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
+      onFinal: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
+      onEnd: () => {
+        if (calling) setListening(false);
+      },
+      onError: (msg) => {
+        toast(msg, "err");
+        setCalling(false);
+        setListening(false);
+      },
     });
   };
 
@@ -826,6 +871,16 @@ function Composer() {
               ) : (
                 <MicIcon />
               )}
+            </button>
+          ) : null}
+          {synth ? (
+            <button
+              className={`composer__btn${calling ? " composer__btn--call-active" : ""}`}
+              onClick={toggleCall}
+              title={calling ? "End call" : "Start voice call (listen + speak)"}
+              aria-label={calling ? "End call" : "Start voice call"}
+            >
+              <Phone size={18} />
             </button>
           ) : null}
           {busy ? (
