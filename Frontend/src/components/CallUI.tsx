@@ -34,6 +34,7 @@ function CallUI() {
   const lastSpoken = useRef<string | null>(null);
   const lastUserText = useRef<string | null>(null);
   const lastSeenDelta = useRef<string | null>(null);
+  const speakingRef = useRef(isSpeaking());
 
   // Mirror store duration into local state for the UI timer.
   useEffect(() => {
@@ -86,7 +87,7 @@ function CallUI() {
     haptic("heavy");
   }, [clearListening, stopSpeech, endCall, haptic]);
 
-  const startListening = () => {
+  const startListening = useCallback(() => {
     if (!callActive || !speechSupported() || isSpeaking()) return;
     if (dictRef.current) return;
     if (micMuted) return;
@@ -116,8 +117,8 @@ function CallUI() {
         // Auto-restart listening only when not speaking and call is active.
         if (callActive && !speakingUI && !micMuted && !isSpeaking()) {
           setTimeout(() => {
-            if (callActive && callState === "listening" || callActive && callState === "connected") {
-              startListening();
+            if (callActive && (callState === "listening" || callState === "connected")) {
+              startListeningRef.current();
             }
           }, 400);
         }
@@ -127,23 +128,27 @@ function CallUI() {
         if (callActive && !isSpeaking()) {
           setCallState("connected");
           setListeningUI(false);
-          setTimeout(() => startListening(), 1000);
+          setTimeout(() => startListeningRef.current(), 1000);
         }
       },
     });
-  };
+  }, [callActive, speechSupported, isSpeaking, dictRef, micMuted, setCallState, setListeningUI, setSpeakingUI, addCallMessage, activeThreadId, send, clearListening]);
+
+  const startListeningRef = useRef(startListening);
+  startListeningRef.current = startListening;
 
   // When TTS starts (via API), mark speaking state so listening is paused.
   useEffect(() => {
     if (!callActive) return;
     const speaking = isSpeaking();
+    speakingRef.current = speaking;
     if (speaking && !speakingUI) {
       setSpeakingUI(true);
       setListeningUI(false);
       setCallState("speaking");
       clearListening();
     }
-  }, [callActive, isSpeaking(), speakingUI, clearListening, setCallState]);
+  }, [callActive, speakingUI, clearListening, setCallState]);
 
   // Speak the assistant's finished response when the run completes.
   // core.ts clears commanderDelta to "" when phase becomes "done", so we
@@ -171,6 +176,7 @@ function CallUI() {
   useEffect(() => {
     if (!callActive) return;
     const speaking = isSpeaking();
+    speakingRef.current = speaking;
     if (!speaking && speakingUI) {
       setSpeakingUI(false);
       setCallState("listening");
