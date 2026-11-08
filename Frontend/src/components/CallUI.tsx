@@ -34,9 +34,11 @@ function CallUI() {
   const lastSpoken = useRef<string | null>(null);
   const lastSeenDelta = useRef<string | null>(null);
   const speakingRef = useRef(isSpeaking());
-  // suppressSTT is a ref (synchronous) so it guards against race conditions
+  // suppressSTT is a synchronous ref so it guards against race conditions
   // where onEnd fires before React state updates take effect.
   const suppressSTT = useRef(false);
+  // ttsRef tracks whether TTS audio is actively playing (set before fetch starts).
+  const ttsRef = useRef(false);
 
   // Mirror store duration into local state for the UI timer.
   useEffect(() => {
@@ -83,6 +85,7 @@ function CallUI() {
     stopSpeech();
     lastSpoken.current = null;
     suppressSTT.current = false;
+    ttsRef.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     endCall();
@@ -90,20 +93,21 @@ function CallUI() {
   }, [clearListening, stopSpeech, endCall, haptic]);
 
   const startListening = useCallback(() => {
-    if (!callActive || !speechSupported() || isSpeaking() || suppressSTT.current) return;
+    if (!callActive || !speechSupported() || isSpeaking() || suppressSTT.current || ttsRef.current) return;
     if (dictRef.current) return;
     if (micMuted) return;
     setCallState("listening");
     setListeningUI(true);
     setSpeakingUI(false);
     suppressSTT.current = false;
+    ttsRef.current = false;
     dictRef.current = startDictation({
       onInterim: () => {
         /* visual feedback only */
       },
       onFinal: (t: string) => {
         // Safety net: ignore results while Chief is speaking or STT is suppressed.
-        if (suppressSTT.current || isSpeaking()) return;
+        if (suppressSTT.current || isSpeaking() || ttsRef.current) return;
         if (!t.trim()) return;
         const text = t.trim();
         // Reject near-identical echoes of what Chief just said.
@@ -125,9 +129,9 @@ function CallUI() {
       onEnd: () => {
         // Auto-restart listening only when not speaking and call is active.
         // suppressSTT is checked first (synchronous ref) to prevent races.
-        if (!suppressSTT.current && callActive && !speakingUI && !micMuted && !isSpeaking()) {
+        if (!suppressSTT.current && callActive && !speakingUI && !micMuted && !isSpeaking() && !ttsRef.current) {
           setTimeout(() => {
-            if (!suppressSTT.current && callActive && (callState === "listening" || callState === "connected") && !isSpeaking()) {
+            if (!suppressSTT.current && callActive && (callState === "listening" || callState === "connected") && !isSpeaking() && !ttsRef.current) {
               startListeningRef.current();
             }
           }, 400);
@@ -135,7 +139,7 @@ function CallUI() {
       },
       onError: () => {
         clearListening();
-        if (!suppressSTT.current && callActive && !isSpeaking()) {
+        if (!suppressSTT.current && callActive && !isSpeaking() && !ttsRef.current) {
           setCallState("connected");
           setListeningUI(false);
           setTimeout(() => startListeningRef.current(), 1000);
@@ -147,27 +151,14 @@ function CallUI() {
   const startListeningRef = useRef(startListening);
   startListeningRef.current = startListening;
 
-  // When TTS starts (via API), mark speaking state so listening is paused.
-  useEffect(() => {
-    if (!callActive) return;
-    const speaking = isSpeaking();
-    speakingRef.current = speaking;
-    if (speaking && !speakingUI) {
-      suppressSTT.current = true;
-      clearListening();
-      setSpeakingUI(true);
-      setListeningUI(false);
-      setCallState("speaking");
-    }
-  }, [callActive, speakingUI, clearListening, setCallState]);
-
-  // Capture commanderDelta during streaming for TTS when run completes.
+  // Speak the assistant's finished response when the run completes.
+  // core.ts clears commanderDelta to "" when phase becomes "done", so we
+  // capture it during streaming via lastSeenDelta.
   useEffect(() => {
     const delta = run?.commanderDelta?.trim();
     if (delta) lastSeenDelta.current = delta;
   }, [run]);
 
-  // Speak the assistant's finished response when the run completes.
   useEffect(() => {
     if (!callActive) return;
     if (!run || run.phase !== "done") return;
@@ -177,19 +168,14 @@ function CallUI() {
     lastSeenDelta.current = null;
     addCallMessage({ id: "c-" + Date.now(), role: "assistant", content: delta, created_at: Date.now() / 1000 });
     suppressSTT.current = true;
+    ttsRef.current = true;
     clearListening();
     setCallState("speaking");
     setSpeakingUI(true);
     setListeningUI(false);
-    void speak(delta);
-  }, [callActive, run, run?.phase, addCallMessage, setCallState]);
-
-  // When TTS finishes, wait cooldown then resume listening.
-  useEffect(() => {
-    if (!callActive) return;
-    const speaking = isSpeaking();
-    speakingRef.current = speaking;
-    if (!speaking && speakingUI) {
+    void speak(delta, () => {
+      ttsRef.current = false;
+      speakingRef.current = false;
       setSpeakingUI(false);
       // Cooldown so speaker audio has faded before mic re-opens.
       setTimeout(() => {
@@ -197,17 +183,19 @@ function CallUI() {
         setCallState("listening");
         if (callActive) startListeningRef.current();
       }, 1000);
-    }
-  }, [callActive, speakingUI, setCallState]);
+    });
+  }, [callActive, run, run?.phase, addCallMessage, setCallState]);
 
   const toggleMute = useCallback(() => {
     setMicMuted((p) => {
       const next = !p;
       if (next) {
         suppressSTT.current = true;
+        ttsRef.current = true;
         clearListening();
       } else {
         suppressSTT.current = false;
+        ttsRef.current = false;
         startListeningRef.current();
       }
       return next;
@@ -216,7 +204,7 @@ function CallUI() {
 
   // Auto-start listening when the call connects.
   useEffect(() => {
-    if (callActive && callState === "connected" && !dictRef.current && !isSpeaking() && !suppressSTT.current) {
+    if (callActive && callState === "connected" && !dictRef.current && !isSpeaking() && !suppressSTT.current && !ttsRef.current) {
       startListeningRef.current();
     }
   }, [callActive, callState]);

@@ -91,7 +91,7 @@ export function startDictation(opts: {
 let currentAudio: HTMLAudioElement | null = null;
 
 /** Speak `text` via the /tts API, cancelling any audio already in flight. */
-export async function speak(text: string): Promise<void> {
+export async function speak(text: string, onEnd?: () => void): Promise<void> {
   if (typeof window === "undefined") return;
   stopSpeech();
   try {
@@ -100,24 +100,31 @@ export async function speak(text: string): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: text }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      onEnd?.();
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.play().catch(() => {
       /* playback may be blocked until user gesture */
+      onEnd?.();
     });
     currentAudio = audio;
     audio.onended = () => {
       if (currentAudio === audio) currentAudio = null;
       URL.revokeObjectURL(url);
+      onEnd?.();
     };
     audio.onerror = () => {
       if (currentAudio === audio) currentAudio = null;
       URL.revokeObjectURL(url);
+      onEnd?.();
     };
   } catch {
     /* best effort */
+    onEnd?.();
   }
 }
 
