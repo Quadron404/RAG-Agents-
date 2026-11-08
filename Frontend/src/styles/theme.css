@@ -2119,9 +2119,16 @@ textarea {
 }
 
 .composer__btn--voice-off {
+  background: var(--bg3);
   color: var(--text-3);
-  opacity: 0.45;
+  border: 1px solid var(--line);
+  opacity: 1;
   cursor: not-allowed;
+}
+
+.composer__btn--voice-off:hover {
+  background: var(--bg3);
+  color: var(--text-3);
 }
 
 .composer__btn svg {

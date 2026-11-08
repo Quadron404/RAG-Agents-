@@ -814,7 +814,7 @@ function Composer() {
           />
           <input ref={fileRef} type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.sh,.docx" onChange={(e) => addFiles(e.target.files)} />
           <button
-            className={`composer__btn${!voiceSupported && !listening ? " composer__btn--voice-off" : ""}${listening ? " composer__btn--voice-active" : ""}`}
+            className={`composer__btn${!voiceSupported ? " composer__btn--voice-off" : ""}${listening ? " composer__btn--voice-active" : ""}`}
             disabled={!voiceSupported && !listening}
             onClick={toggleVoice}
             title={listening ? "Stop voice input" : voiceSupported ? "Voice input" : "Voice input not supported in this browser"}
