@@ -7,6 +7,7 @@ import { setHapticsEnabled } from "./lib/haptics";
 import { Rail, TabBar } from "./components/Shell";
 import { TopBar } from "./components/TopBar";
 import { ContextMenuHost, ActionSheetHost, ToastHost } from "./components/ui";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ChatView, ChatListPane } from "./views/Chat";
 import { BotsView } from "./views/Bots";
 import { TasksView } from "./views/Tasks";
@@ -120,12 +121,36 @@ export function App() {
       {view === "chat" ? <ChatListPane /> : null}
       <div className="main">
         {view === "chat" ? null : <TopBar />}
-        {view === "chat" ? <ChatView /> : null}
-        {view === "bots" ? <BotsView /> : null}
-        {view === "tasks" ? <TasksView /> : null}
-        {view === "computer" ? <ComputerView /> : null}
-        {view === "files" ? <FilesView /> : null}
-        {view === "make" ? <MakeView /> : null}
+        {view === "chat" ? (
+          <ErrorBoundary>
+            <ChatView />
+          </ErrorBoundary>
+        ) : null}
+        {view === "bots" ? (
+          <ErrorBoundary>
+            <BotsView />
+          </ErrorBoundary>
+        ) : null}
+        {view === "tasks" ? (
+          <ErrorBoundary>
+            <TasksView />
+          </ErrorBoundary>
+        ) : null}
+        {view === "computer" ? (
+          <ErrorBoundary>
+            <ComputerView />
+          </ErrorBoundary>
+        ) : null}
+        {view === "files" ? (
+          <ErrorBoundary>
+            <FilesView />
+          </ErrorBoundary>
+        ) : null}
+        {view === "make" ? (
+          <ErrorBoundary>
+            <MakeView />
+          </ErrorBoundary>
+        ) : null}
       </div>
       <TabBar />
       <SettingsSheet />
