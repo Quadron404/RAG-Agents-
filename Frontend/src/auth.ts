@@ -230,3 +230,13 @@ export function loginHref(): string {
   const next = encodeURIComponent(location.pathname + location.search);
   return `/auth/login?next=${next}`;
 }
+
+/** Skip Sign-In: create an anonymous session without Google authentication. */
+export async function skipSignIn(): Promise<void> {
+  const res = await fetch("/auth/skip-signin", {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`skip sign-in failed: ${res.status}`);
+  location.assign("/");
+}

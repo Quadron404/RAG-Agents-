@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePrefs, useUi } from "./store";
 import { useCore } from "./core";
-import { useAuth, loginHref } from "./auth";
+import { useAuth, loginHref, skipSignIn } from "./auth";
 import { setHapticsEnabled } from "./lib/haptics";
 import { Rail, TabBar } from "./components/Shell";
 import { TopBar } from "./components/TopBar";
@@ -33,6 +33,8 @@ function Splash() {
 }
 
 function SignIn() {
+  const [skipLoading, setSkipLoading] = useState(false);
+
   return (
     <div style={gateStyle}>
       <div style={{ maxWidth: 360 }}>
@@ -50,10 +52,38 @@ function SignIn() {
             textDecoration: "none",
             color: "inherit",
             fontWeight: 600,
+            marginBottom: 12,
           }}
         >
           Continue with Google
         </a>
+        <button
+          onClick={async () => {
+            setSkipLoading(true);
+            try {
+              await skipSignIn();
+            } finally {
+              setSkipLoading(false);
+            }
+          }}
+          disabled={skipLoading}
+          style={{
+            display: "block",
+            width: "100%",
+            padding: "10px 18px",
+            borderRadius: 10,
+            border: "1px solid rgba(127,127,127,.25)",
+            background: "rgba(0,0,0,.03)",
+            textDecoration: "none",
+            color: "inherit",
+            fontWeight: 600,
+            cursor: "pointer",
+            fontSize: 14,
+            textAlign: "center",
+          }}
+        >
+          {skipLoading ? "Signing in…" : "Skip Sign In"}
+        </button>
       </div>
     </div>
   );

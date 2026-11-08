@@ -26,6 +26,7 @@ import {
   sessionTokenFromRequest,
 } from "./http";
 import { OAuthError, buildAuthorizationUrl, exchangeCode, fetchJwks, newCodeVerifier, newNonce, newState } from "./google";
+import { randomToken } from "./encoding";
 import { handleInternal } from "./internal";
 import { handleChatRoutes, isChatPath } from "./chat/routes";
 import { removeSummaryDoc } from "./chat/search";
@@ -262,6 +263,33 @@ async function authLogout(request: Request, env: Env, url: URL): Promise<Respons
   return response;
 }
 
+/** Skip Sign-In: creates an anonymous user and session without Google auth. */
+async function skipSignIn(request: Request, env: Env, url: URL): Promise<Response> {
+  const userId = randomToken(32);
+  const skipSub = `skip-${userId}`;
+  const now = Date.now();
+
+  const user = await upsertUser(env, {
+    sub: skipSub,
+    email: "skip@rag-agents.local",
+    email_verified: 0,
+    name: "Skip User",
+    picture: "",
+  });
+
+  const session = await createSession(env, user.id);
+  const next = safeNext(url.searchParams.get("next"));
+  const response = redirect(`${publicBaseUrl(env, url)}${next}`);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - now) / 1000),
+      secure: isSecureRequest(env, url),
+    }),
+  );
+  return response;
+}
+
 async function requireSettingsCsrf(request: Request, principal: Principal): Promise<Response | null> {
   const supplied = request.headers.get(CSRF_HEADER) ?? "";
   const expected = principal.session.csrf ?? "";
@@ -397,6 +425,11 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+
+    if (path === "/auth/skip-signin") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return skipSignIn(request, env, url);
+    }
 
     if (path === "/tts") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
