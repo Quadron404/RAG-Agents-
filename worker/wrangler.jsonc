@@ -29,6 +29,10 @@
       "namespace": "default"
     }
   ],
+  // Cloudflare Workers AI binding for API-based TTS (@cf/myshell-ai/melotts).
+  "ai": {
+    "binding": "AI"
+  },
   // The single durable scheduler.  Every minute the Worker materialises due
   // routines into D1 and dispatches what it can; that is why a routine can fire
   // while the Codespace is stopped.  A Cron Trigger is always-on and costs

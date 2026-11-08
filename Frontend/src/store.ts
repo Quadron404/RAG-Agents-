@@ -54,6 +54,15 @@ export interface Step {
 
 export type Phase = "idle" | "planning" | "working" | "synthesizing" | "done";
 
+export type CallState = "idle" | "ringing" | "connected" | "listening" | "speaking";
+
+export interface CallMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+}
+
 export interface Run {
   threadId: string;
   phase: Phase;
@@ -252,6 +261,16 @@ interface UiState {
   archived: string[];
   calling: boolean;
   setCalling: (v: boolean) => void;
+  callActive: boolean;
+  callState: CallState;
+  callTranscript: CallMessage[];
+  callDuration: number;
+  startCall: () => void;
+  endCall: () => void;
+  setCallState: (s: CallState) => void;
+  setCallDuration: (n: number) => void;
+  addCallMessage: (m: CallMessage) => void;
+  clearCallTranscript: () => void;
   setView: (v: ViewId) => void;
   setConvOpen: (v: boolean) => void;
   setBot: (b: UiState["bot"]) => void;
@@ -311,6 +330,16 @@ export const useUi = create<UiState>((set, get) => ({
   },
   calling: false,
   setCalling: (v) => set({ calling: v }),
+  callActive: false,
+  callState: "idle",
+  callTranscript: [],
+  callDuration: 0,
+  startCall: () => set({ callActive: true, callState: "ringing", callDuration: 0, callTranscript: [] }),
+  endCall: () => set({ callActive: false, callState: "idle", callDuration: 0, callTranscript: [] }),
+  setCallState: (s: CallState) => set({ callState: s }),
+  setCallDuration: (n) => set({ callDuration: n }),
+  addCallMessage: (m: CallMessage) => set({ callTranscript: [...get().callTranscript, m] }),
+  clearCallTranscript: () => set({ callTranscript: [] }),
 }));
 
 /* ============================================================================

@@ -28,10 +28,11 @@ import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
-import { speechSupported, startDictation, speak, stopSpeaking, isSpeaking, ttsSupported } from "../lib/voice";
+import { speechSupported, startDictation } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
 import { ApprovalsList } from "../components/ApprovalCard";
+import CallUI from "../components/CallUI";
 import {
   fetchConnectorApprovals,
   type ConnectorApproval,
@@ -40,9 +41,6 @@ import {
 /* ============================ utilities =================================== */
 
 const stripTools = (t: string) => t.replace(/\[TOOL\s+\w+\s+\{.*?\}\]\s*/g, "");
-
-/* Shared handle so ChatView can ask Composer to restart dictation after TTS ends. */
-const callHandle = { restart: null as (() => void) | null };
 
 const EMPTY_MSGS: Message[] = [];
 
@@ -676,13 +674,10 @@ function Composer() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const replyTo = useUi((s) => s.replyTo);
   const clearReplyTo = useUi((s) => s.clearReplyTo);
-  const calling = useUi((s) => s.calling);
-  const setCalling = useUi((s) => s.setCalling);
   const toast = useUi((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
-  const suppressRestart = useRef(false);
 
   const busy = Boolean(
     run &&
@@ -702,11 +697,8 @@ function Composer() {
 
   // Stop dictation the moment Chief starts responding so the mic can't
   // re-record the assistant's own reply and feed it back (echo loop).
-  // During a call, suppress auto-restart on onEnd so the mic stays off
-  // while Chief is speaking; ChatView restarts it after TTS finishes.
   useEffect(() => {
     if (busy && dict.current) {
-      suppressRestart.current = true;
       dict.current.stop();
       dict.current = null;
       setListening(false);
@@ -756,64 +748,6 @@ function Composer() {
       onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
       onFinal: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
       onEnd: () => setListening(false),
-      onError: (msg) => toast(msg, "err"),
-    });
-  };
-
-  const toggleCall = () => {
-    if (!ttsSupported() || !speechSupported()) {
-      toast("Voice calling isn't supported here", "info");
-      return;
-    }
-    if (calling) {
-      setCalling(false);
-      stopSpeaking();
-      if (dict.current) {
-        suppressRestart.current = true;
-        dict.current.stop();
-        dict.current = null;
-      }
-      setListening(false);
-      haptic("medium");
-      return;
-    }
-    haptic("medium");
-    setCalling(true);
-    setListening(true);
-    dict.current = startDictation({
-      onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
-      onFinal: async (t) => {
-        setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t));
-        if (!busy) {
-          const ok = send(t);
-          if (!ok) setText("");
-        }
-      },
-      onEnd: () => {
-        if (suppressRestart.current) {
-          suppressRestart.current = false;
-          return;
-        }
-        if (calling) setListening(true);
-        if (dict.current) dict.current = startDictation({
-          onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
-          onFinal: async (t) => {
-            setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t));
-            if (!busy) {
-              const ok = send(t);
-              if (!ok) setText("");
-            }
-          },
-          onEnd: () => {
-            if (suppressRestart.current) {
-              suppressRestart.current = false;
-              return;
-            }
-            if (calling) setListening(true);
-          },
-          onError: (msg) => toast(msg, "err"),
-        });
-      },
       onError: (msg) => toast(msg, "err"),
     });
   };
@@ -906,14 +840,6 @@ function Composer() {
                   <MicIcon />
                 )}
               </button>
-              <button
-                className={`composer__btn${calling ? " composer__btn--voice-active" : ""}`}
-                onClick={toggleCall}
-                title={calling ? "Hang up call" : "Start voice call with Chief"}
-                aria-label={calling ? "Hang up call" : "Start voice call with Chief"}
-              >
-                <CallIcon />
-              </button>
             </>
           ) : null}
           {busy ? (
@@ -945,51 +871,14 @@ function Composer() {
       </div>
     </div>
   );
-
-  function restartDictation() {
-    if (!calling || !speechSupported() || dict.current) return;
-    suppressRestart.current = false;
-    setListening(true);
-    dict.current = startDictation({
-      onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
-      onFinal: async (t) => {
-        setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t));
-        if (!busy) {
-          const ok = send(t);
-          if (!ok) setText("");
-        }
-      },
-      onEnd: () => {
-        if (suppressRestart.current) {
-          suppressRestart.current = false;
-          return;
-        }
-        if (calling) setListening(true);
-      },
-      onError: (msg) => toast(msg, "err"),
-    });
   }
 
-  useEffect(() => {
-    callHandle.restart = restartDictation;
-    return () => { callHandle.restart = null; };
-  }, [calling, speechSupported, dict, suppressRestart, setListening, startDictation, setText, busy, send, toast]);
-}
-
-function MicIcon() {
+  function MicIcon() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="2" width="6" height="12" rx="3" />
       <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
       <line x1="12" y1="18" x2="12" y2="22" />
-    </svg>
-  );
-}
-
-function CallIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
     </svg>
   );
 }
@@ -1019,33 +908,7 @@ export function ChatView() {
 
     const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
 
-    const calling = useUi((s) => s.calling);
-    const spokenRef = useRef<number>(0);
-    const lastMsgSeq = useMemo(() => {
-      const msgs = useCore.getState().messages;
-      const thread = activeThreadId ? msgs[activeThreadId] : null;
-      return thread?.[thread.length - 1]?.seq ?? 0;
-    }, [activeThreadId]);
-
-    // Speak Chief's replies aloud during a voice call.
-    useEffect(() => {
-      if (!calling || !ttsSupported() || isSpeaking()) return;
-      const msgs = useCore.getState().messages;
-      const thread = activeThreadId ? msgs[activeThreadId] : null;
-      if (!thread) return;
-      const last = thread[thread.length - 1];
-      if (last && last.role === "assistant" && last.seq > spokenRef.current && last.content.trim()) {
-        spokenRef.current = last.seq;
-        const plain = last.content
-          .replace(/\[TOOL\s+\w+\s+\{.*?\}\]\s*/g, "")
-          .replace(/\[attached:[^\]]*\]/g, "")
-          .replace(/\*\*/g, "")
-          .replace(/`/g, "")
-          .replace(/#+\s/g, "")
-          .trim();
-        if (plain) speak(plain, { onEnd: () => callHandle.restart?.() });
-      }
-    }, [calling, activeThreadId, lastMsgSeq]);
+    const callActive = useUi((s) => s.callActive);
 
     // Poll pending connector approvals so Allow/Deny cards appear inline in chat.
     useEffect(() => {
@@ -1122,6 +985,7 @@ export function ChatView() {
         )}
         <MessageList />
         <Composer />
+        {callActive && <CallUI />}
         {developerMode && (
           <div className="dev-history-panel">
             <div className="dev-history-panel__head">

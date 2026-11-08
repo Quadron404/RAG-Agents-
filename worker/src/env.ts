@@ -40,10 +40,21 @@ export interface AiSearchNamespace {
   create(options: Record<string, unknown>): Promise<AiSearchInstance>;
 }
 
+/** Cloudflare Workers AI binding (for API-based TTS). */
+export interface Ai {
+  run(
+    model: string,
+    input: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
+}
+
 export interface Env {
   DB: D1Database;
   /** Static asset binding for the built frontend. Absent when only APIs run. */
   ASSETS?: Fetcher;
+  /** Cloudflare Workers AI binding (for API-based TTS). */
+  AI?: Ai;
   /** AI Search namespace binding used for conversation summaries. */
   AI_SEARCH?: AiSearchNamespace;
   /** Instance inside AI_SEARCH that stores conversation summaries. */
