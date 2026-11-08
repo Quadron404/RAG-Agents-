@@ -1,5 +1,6 @@
-// Speech-to-text via the Web Speech API where supported, with a calm,
-// predictable fallback everywhere else (button hidden on unsupported devices).
+// Voice I/O via the Web Speech API: speech-to-text (dictation) and
+// text-to-speech (say).  With a calm, predictable fallback everywhere else
+// (buttons hidden on unsupported devices).
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -76,4 +77,43 @@ export function startDictation(opts: {
     return null;
   }
   return { stop: () => rec.stop() };
+}
+
+/* ---- text-to-speech --------------------------------------------------------- */
+
+export function ttsSupported(): boolean {
+  return typeof window !== "undefined" && !!window.speechSynthesis;
+}
+
+let currentUtterance: SpeechSynthesisUtterance | null = null;
+
+export function speak(text: string, opts?: { onEnd?: () => void; onStart?: () => void }): void {
+  if (!ttsSupported()) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US";
+  u.rate = 1.05;
+  u.pitch = 1;
+  u.onstart = () => {
+    opts?.onStart?.();
+  };
+  u.onend = () => {
+    currentUtterance = null;
+    opts?.onEnd?.();
+  };
+  u.onerror = () => {
+    currentUtterance = null;
+  };
+  currentUtterance = u;
+  window.speechSynthesis.speak(u);
+}
+
+export function stopSpeaking(): void {
+  if (!ttsSupported()) return;
+  window.speechSynthesis.cancel();
+  currentUtterance = null;
+}
+
+export function isSpeaking(): boolean {
+  return currentUtterance !== null || (ttsSupported() && window.speechSynthesis.speaking);
 }

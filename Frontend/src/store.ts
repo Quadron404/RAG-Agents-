@@ -250,6 +250,8 @@ interface UiState {
   replyTo: ReplyTo | null;
   pinnedConv: string | null;
   archived: string[];
+  calling: boolean;
+  setCalling: (v: boolean) => void;
   setView: (v: ViewId) => void;
   setConvOpen: (v: boolean) => void;
   setBot: (b: UiState["bot"]) => void;
@@ -307,6 +309,8 @@ export const useUi = create<UiState>((set, get) => ({
     set({ archived });
     saveIgnores(archived, get().pinnedConv);
   },
+  calling: false,
+  setCalling: (v) => set({ calling: v }),
 }));
 
 /* ============================================================================
