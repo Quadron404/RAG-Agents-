@@ -35,6 +35,7 @@ function CallUI() {
   const lastUserText = useRef<string | null>(null);
   const lastSeenDelta = useRef<string | null>(null);
   const speakingRef = useRef(isSpeaking());
+  const suppressSTT = useRef(false);
 
   // Mirror store duration into local state for the UI timer.
   useEffect(() => {
@@ -81,6 +82,7 @@ function CallUI() {
     stopSpeech();
     lastSpoken.current = null;
     lastUserText.current = null;
+    suppressSTT.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     endCall();
@@ -88,7 +90,7 @@ function CallUI() {
   }, [clearListening, stopSpeech, endCall, haptic]);
 
   const startListening = useCallback(() => {
-    if (!callActive || !speechSupported() || isSpeaking()) return;
+    if (!callActive || !speechSupported() || isSpeaking() || suppressSTT.current) return;
     if (dictRef.current) return;
     if (micMuted) return;
     setCallState("listening");
@@ -99,9 +101,13 @@ function CallUI() {
         /* visual feedback only */
       },
       onFinal: (t: string) => {
+        // Layer 1: ignore any result while Chief is speaking or STT is suppressed.
+        if (suppressSTT.current || isSpeaking()) return;
         if (!t.trim()) return;
         const text = t.trim();
-        haptic("medium");
+        // Layer 5: reject near-identical echoes of what Chief just said.
+        const last = lastSpoken.current;
+        if (last && text.toLowerCase() === last.toLowerCase()) return;
         lastUserText.current = text;
         lastSpoken.current = null;
         addCallMessage({ id: "c-" + Date.now(), role: "user", content: text, created_at: Date.now() / 1000 });
@@ -115,9 +121,9 @@ function CallUI() {
       },
       onEnd: () => {
         // Auto-restart listening only when not speaking and call is active.
-        if (callActive && !speakingUI && !micMuted && !isSpeaking()) {
+        if (callActive && !speakingUI && !micMuted && !isSpeaking() && !suppressSTT.current) {
           setTimeout(() => {
-            if (callActive && (callState === "listening" || callState === "connected")) {
+            if (callActive && (callState === "listening" || callState === "connected") && !suppressSTT.current) {
               startListeningRef.current();
             }
           }, 400);
@@ -125,7 +131,7 @@ function CallUI() {
       },
       onError: () => {
         clearListening();
-        if (callActive && !isSpeaking()) {
+        if (callActive && !isSpeaking() && !suppressSTT.current) {
           setCallState("connected");
           setListeningUI(false);
           setTimeout(() => startListeningRef.current(), 1000);
@@ -143,10 +149,11 @@ function CallUI() {
     const speaking = isSpeaking();
     speakingRef.current = speaking;
     if (speaking && !speakingUI) {
+      suppressSTT.current = true;
+      clearListening();
       setSpeakingUI(true);
       setListeningUI(false);
       setCallState("speaking");
-      clearListening();
     }
   }, [callActive, speakingUI, clearListening, setCallState]);
 
@@ -166,39 +173,45 @@ function CallUI() {
     lastSpoken.current = delta;
     lastSeenDelta.current = null;
     addCallMessage({ id: "c-" + Date.now(), role: "assistant", content: delta, created_at: Date.now() / 1000 });
+    suppressSTT.current = true;
+    clearListening();
     setCallState("speaking");
     setSpeakingUI(true);
     setListeningUI(false);
     void speak(delta);
   }, [callActive, run, run?.phase, addCallMessage, setCallState]);
 
-  // When TTS finishes, resume listening.
+  // When TTS finishes, wait cooldown then resume listening.
   useEffect(() => {
     if (!callActive) return;
     const speaking = isSpeaking();
     speakingRef.current = speaking;
     if (!speaking && speakingUI) {
       setSpeakingUI(false);
-      setCallState("listening");
-      setTimeout(() => startListening(), 300);
+      // Layer 3: cooldown so speaker audio has faded before mic re-opens.
+      setTimeout(() => {
+        suppressSTT.current = false;
+        setCallState("listening");
+        if (callActive) startListeningRef.current();
+      }, 800);
     }
-  }, [callActive, speakingUI, setCallState, startListening]);
+  }, [callActive, speakingUI, setCallState]);
 
   const toggleMute = useCallback(() => {
     setMicMuted((p) => {
       const next = !p;
       if (next) clearListening();
-      else startListening();
+      else startListeningRef.current();
       return next;
     });
-  }, [clearListening, startListening, setMicMuted]);
+  }, [clearListening, setMicMuted]);
 
   // Auto-start listening when the call connects.
   useEffect(() => {
-    if (callActive && callState === "connected" && !dictRef.current && !isSpeaking()) {
-      startListening();
+    if (callActive && callState === "connected" && !dictRef.current && !isSpeaking() && !suppressSTT.current) {
+      startListeningRef.current();
     }
-  }, [callActive, callState, startListening]);
+  }, [callActive, callState]);
 
   if (!callActive) return null;
 
