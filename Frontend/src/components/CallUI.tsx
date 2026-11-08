@@ -32,9 +32,10 @@ function CallUI() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const durationRef = useRef(callDuration);
   const lastSpoken = useRef<string | null>(null);
-  const lastUserText = useRef<string | null>(null);
   const lastSeenDelta = useRef<string | null>(null);
   const speakingRef = useRef(isSpeaking());
+  // suppressSTT is a ref (synchronous) so it guards against race conditions
+  // where onEnd fires before React state updates take effect.
   const suppressSTT = useRef(false);
 
   // Mirror store duration into local state for the UI timer.
@@ -81,7 +82,6 @@ function CallUI() {
     clearListening();
     stopSpeech();
     lastSpoken.current = null;
-    lastUserText.current = null;
     suppressSTT.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
@@ -96,34 +96,38 @@ function CallUI() {
     setCallState("listening");
     setListeningUI(true);
     setSpeakingUI(false);
+    suppressSTT.current = false;
     dictRef.current = startDictation({
       onInterim: () => {
         /* visual feedback only */
       },
       onFinal: (t: string) => {
-        // Layer 1: ignore any result while Chief is speaking or STT is suppressed.
+        // Safety net: ignore results while Chief is speaking or STT is suppressed.
         if (suppressSTT.current || isSpeaking()) return;
         if (!t.trim()) return;
         const text = t.trim();
-        // Layer 5: reject near-identical echoes of what Chief just said.
+        // Reject near-identical echoes of what Chief just said.
         const last = lastSpoken.current;
         if (last && text.toLowerCase() === last.toLowerCase()) return;
-        lastUserText.current = text;
         lastSpoken.current = null;
         addCallMessage({ id: "c-" + Date.now(), role: "user", content: text, created_at: Date.now() / 1000 });
         if (activeThreadId) {
           void send(text);
         }
         // Stop listening while the AI replies (prevents echo).
-        clearListening();
-        setCallState("speaking");
+        // Set speaking state BEFORE stopping dictation so onEnd cannot restart.
         setSpeakingUI(true);
+        setCallState("speaking");
+        suppressSTT.current = true;
+        clearListening();
+        setListeningUI(false);
       },
       onEnd: () => {
         // Auto-restart listening only when not speaking and call is active.
-        if (callActive && !speakingUI && !micMuted && !isSpeaking() && !suppressSTT.current) {
+        // suppressSTT is checked first (synchronous ref) to prevent races.
+        if (!suppressSTT.current && callActive && !speakingUI && !micMuted && !isSpeaking()) {
           setTimeout(() => {
-            if (callActive && (callState === "listening" || callState === "connected") && !suppressSTT.current) {
+            if (!suppressSTT.current && callActive && (callState === "listening" || callState === "connected") && !isSpeaking()) {
               startListeningRef.current();
             }
           }, 400);
@@ -131,7 +135,7 @@ function CallUI() {
       },
       onError: () => {
         clearListening();
-        if (callActive && !isSpeaking() && !suppressSTT.current) {
+        if (!suppressSTT.current && callActive && !isSpeaking()) {
           setCallState("connected");
           setListeningUI(false);
           setTimeout(() => startListeningRef.current(), 1000);
@@ -157,14 +161,13 @@ function CallUI() {
     }
   }, [callActive, speakingUI, clearListening, setCallState]);
 
-  // Speak the assistant's finished response when the run completes.
-  // core.ts clears commanderDelta to "" when phase becomes "done", so we
-  // capture it during streaming via lastSeenDelta.
+  // Capture commanderDelta during streaming for TTS when run completes.
   useEffect(() => {
     const delta = run?.commanderDelta?.trim();
     if (delta) lastSeenDelta.current = delta;
   }, [run]);
 
+  // Speak the assistant's finished response when the run completes.
   useEffect(() => {
     if (!callActive) return;
     if (!run || run.phase !== "done") return;
@@ -188,20 +191,25 @@ function CallUI() {
     speakingRef.current = speaking;
     if (!speaking && speakingUI) {
       setSpeakingUI(false);
-      // Layer 3: cooldown so speaker audio has faded before mic re-opens.
+      // Cooldown so speaker audio has faded before mic re-opens.
       setTimeout(() => {
         suppressSTT.current = false;
         setCallState("listening");
         if (callActive) startListeningRef.current();
-      }, 800);
+      }, 1000);
     }
   }, [callActive, speakingUI, setCallState]);
 
   const toggleMute = useCallback(() => {
     setMicMuted((p) => {
       const next = !p;
-      if (next) clearListening();
-      else startListeningRef.current();
+      if (next) {
+        suppressSTT.current = true;
+        clearListening();
+      } else {
+        suppressSTT.current = false;
+        startListeningRef.current();
+      }
       return next;
     });
   }, [clearListening, setMicMuted]);
