@@ -228,17 +228,17 @@ export async function executeRoutineTool(
   call: ToolCall,
 ): Promise<ToolResult> {
   if (!TOOL_NAMES.has(call.name)) {
-    return { ok: false, error: "The requested routine tool is not available." };
+    return { ok: false, output: "", error: "The requested routine tool is not available." };
   }
 
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(call.arguments || "{}");
   } catch {
-    return { ok: false, error: "The routine tool arguments were malformed." };
+    return { ok: false, output: "", error: "The routine tool arguments were malformed." };
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, error: "The routine tool arguments were malformed." };
+    return { ok: false, output: "", error: "The routine tool arguments were malformed." };
   }
   const args = parsed as Record<string, unknown>;
 
@@ -248,13 +248,13 @@ export async function executeRoutineTool(
       if (!rows.length) return { ok: true, output: "No routines are scheduled yet." };
       return { ok: true, output: rows.map(routineText).join("\n") };
     } catch (error) {
-      return { ok: false, error: `Could not list routines: ${(error as Error).message}` };
+      return { ok: false, output: "", error: `Could not list routines: ${(error as Error).message}` };
     }
   }
 
   const routineId = str(args.routine_id);
   if ((call.name === "get_routine" || call.name === "pause_routine" || call.name === "resume_routine" || call.name === "delete_routine") && !routineId) {
-    return { ok: false, error: "routine_id is required." };
+    return { ok: false, output: "", error: "routine_id is required." };
   }
 
   try {
@@ -262,11 +262,11 @@ export async function executeRoutineTool(
       const name = str(args.name).trim() || "Routine";
       const taskPrompt = str(args.task_prompt).trim();
       if (!taskPrompt) {
-        return { ok: false, error: "task_prompt is required — describe what the routine should do." };
+        return { ok: false, output: "", error: "task_prompt is required — describe what the routine should do." };
       }
       const schedule = scheduleFromArgs(args);
       if (schedule.error) {
-        return { ok: false, error: schedule.error };
+        return { ok: false, output: "", error: schedule.error };
       }
       const timezone = str(args.timezone) || ownerTimezone || "UTC";
       const created = await createRoutine(env, {
@@ -280,7 +280,7 @@ export async function executeRoutineTool(
         timezone,
       }, nowMs());
       if (!created.ok) {
-        return { ok: false, error: created.error };
+        return { ok: false, output: "", error: created.error };
       }
       return {
         ok: true,
@@ -291,8 +291,8 @@ export async function executeRoutineTool(
 
     if (call.name === "get_routine") {
       const row = await getRoutine(env, routineId);
-      if (!row) return { ok: false, error: "No such routine." };
-      if (row.owner_sub !== ownerSub) return { ok: false, error: "No such routine." };
+      if (!row) return { ok: false, output: "", error: "No such routine." };
+      if (row.owner_sub !== ownerSub) return { ok: false, output: "", error: "No such routine." };
       return {
         ok: true,
         output: `${routineText(row)}\n\nInstructions:\n${row.task_prompt}`,
@@ -302,26 +302,26 @@ export async function executeRoutineTool(
 
     if (call.name === "pause_routine" || call.name === "resume_routine") {
       const row = await getRoutine(env, routineId);
-      if (!row) return { ok: false, error: "No such routine." };
-      if (row.owner_sub !== ownerSub) return { ok: false, error: "No such routine." };
+      if (!row) return { ok: false, output: "", error: "No such routine." };
+      if (row.owner_sub !== ownerSub) return { ok: false, output: "", error: "No such routine." };
       const enabled = call.name === "resume_routine";
       const updated = await setRoutineEnabled(env, routineId, enabled, nowMs());
-      if (!updated) return { ok: false, error: "Could not change the routine." };
+      if (!updated) return { ok: false, output: "", error: "Could not change the routine." };
       return { ok: true, output: `${enabled ? "Resumed" : "Paused"}: ${routineText(updated)}`, routine: updated };
     }
 
     if (call.name === "delete_routine") {
       const row = await getRoutine(env, routineId);
-      if (!row) return { ok: false, error: "No such routine." };
-      if (row.owner_sub !== ownerSub) return { ok: false, error: "No such routine." };
+      if (!row) return { ok: false, output: "", error: "No such routine." };
+      if (row.owner_sub !== ownerSub) return { ok: false, output: "", error: "No such routine." };
       const removed = await deleteRoutine(env, routineId, nowMs());
-      if (!removed) return { ok: false, error: "Could not delete the routine." };
+      if (!removed) return { ok: false, output: "", error: "Could not delete the routine." };
       return { ok: true, output: `Deleted routine ${routineId}.` };
     }
 
-    return { ok: false, error: `Unknown routine tool ${call.name}.` };
+    return { ok: false, output: "", error: `Unknown routine tool ${call.name}.` };
   } catch (error) {
-    return { ok: false, error: `The routine service failed: ${(error as Error).message}` };
+    return { ok: false, output: "", error: `The routine service failed: ${(error as Error).message}` };
   }
 }
 

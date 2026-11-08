@@ -20,7 +20,7 @@
  * Routines never depend on the Codespace backend being awake.
  */
 import type { Env } from "./env";
-import { runSummaryTick } from "./chat/summaries";
+import { runSummaryTick, type SummaryTickResult } from "./chat/summaries";
 import { runDailyScheduleTick, runDailySummaryTick, type DailySummaryTickResult, type ScheduleTickResult } from "./chat/daily-schedule";
 import { runRollupScheduleTick, type RollupTickResult } from "./chat/rollup-schedule";
 import { runRollupSummaryTick } from "./chat/daily-rollup";
@@ -69,6 +69,12 @@ function intFrom(value: string | undefined, fallback: number): number {
 //: short enough that a Worker that dies mid-execution has its run retried.
 const LEASE_MS = 5 * 60 * 1000;
 
+function summariesOutcome(tick: SummaryTickResult): "ran" | "skipped" | "failed" {
+  if (tick.failed > 0) return "failed";
+  if (tick.eligible > 0 || tick.summarized > 0) return "ran";
+  return "skipped";
+}
+
 export async function runScheduler(
   env: Env,
   nowMs: number,
@@ -105,7 +111,7 @@ export async function runScheduler(
   const runs = await dispatchableRuns(env, nowMs, batch);
   if (runs.length === 0) {
     // Only passive work could be pending.  Never wake the Codespace for it.
-    result.summaries = await runSummaries(env, nowMs);
+    result.summaries = await summariesOutcome(await runSummaryTick(env, nowMs));
     result.dailySchedule = await runDailyScheduleTick(env, nowMs);
     result.dailySummary = await runDailySummaryTick(env, nowMs);
     result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
@@ -145,7 +151,7 @@ export async function runScheduler(
   }
 
   // 4. Summaries are Worker-native and do not depend on the Codespace.
-  result.summaries = await runSummaries(env, nowMs);
+  result.summaries = await summariesOutcome(await runSummaryTick(env, nowMs));
   result.dailySchedule = await runDailyScheduleTick(env, nowMs);
   result.dailySummary = await runDailySummaryTick(env, nowMs);
   result.rollupSchedule = await runRollupScheduleTick(env, nowMs);
