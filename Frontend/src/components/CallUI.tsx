@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Phone, X } from "lucide-react";
 import { useUi } from "../store";
 import { useCore } from "../core";
-import { speechSynthesisSupported, startDictation, stopSpeech, speak, isSpeaking, speechSupported } from "../lib/voice";
+import {
+  speechSynthesisSupported,
+  startDictation,
+  stopSpeech,
+  speak,
+  isSpeaking,
+  speechSupported,
+  ttsReady,
+} from "../lib/voice";
 import { haptic } from "../lib/haptics";
 
 function CallUI() {
@@ -22,10 +30,12 @@ function CallUI() {
   const [micMuted, setMicMuted] = useState(false);
   const [listeningUI, setListeningUI] = useState(false);
   const [speakingUI, setSpeakingUI] = useState(false);
+  const [ttsVoice, setTtsVoice] = useState<string | null>(null);
   const dictRef = useRef<{ stop: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const durationRef = useRef(callDuration);
   const lastSpoken = useRef<string | null>(null);
+  const lastUserText = useRef<string | null>(null);
   const startListeningRef = useRef<(() => void) | null>(null);
 
   // Mirror store duration into local state for the UI timer.
@@ -62,6 +72,24 @@ function CallUI() {
     return `${m}:${String(r).padStart(2, "0")}`;
   };
 
+  // Announce the TTS voice once it is known.
+  useEffect(() => {
+    if (ttsReady() && !ttsVoice) {
+      const name = (() => {
+        try {
+          if (typeof window !== "undefined" && window.speechSynthesis) {
+            const v = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("en"));
+            return v?.name ?? "default";
+          }
+        } catch {
+          /* ignore */
+        }
+        return "default";
+      })();
+      setTtsVoice(name);
+    }
+  }, [ttsVoice]);
+
   const clearListening = useCallback(() => {
     dictRef.current?.stop();
     dictRef.current = null;
@@ -71,6 +99,8 @@ function CallUI() {
   const endCallHandler = useCallback(() => {
     clearListening();
     stopSpeech();
+    lastSpoken.current = null;
+    lastUserText.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     endCall();
@@ -91,6 +121,9 @@ function CallUI() {
         if (!t.trim()) return;
         const text = t.trim();
         haptic("medium");
+        lastUserText.current = text;
+        // Reset the spoken guard so the assistant's reply to THIS message is spoken.
+        lastSpoken.current = null;
         addCallMessage({ id: "c-" + Date.now(), role: "user", content: text, created_at: Date.now() / 1000 });
         if (activeThreadId) {
           void send(text);
@@ -121,12 +154,16 @@ function CallUI() {
 
   startListeningRef.current = doStartListening;
 
-  // Speak the assistant's finished response while a call is active, storing it
-  // to the hidden transcript (part of the conversation, not shown in main UI).
+  // Speak the assistant's finished response while a call is active.  Trigger on
+  // any change to `run` so the commanderDelta is spoken as soon as it lands,
+  // resetting the spoken guard when the user sends a new message.
   useEffect(() => {
     if (!callActive || !speechSynthesisSupported()) return;
     const delta = run?.commanderDelta?.trim();
-    if (!delta || delta === lastSpoken.current || run?.phase !== "done") return;
+    if (!delta || delta === lastSpoken.current) return;
+    // Only speak assistant text that follows a user message we actually sent.
+    if (lastUserText.current === null) return;
+    if (!run || run.phase !== "done") return;
     lastSpoken.current = delta;
     addCallMessage({ id: "c-" + Date.now(), role: "assistant", content: delta, created_at: Date.now() / 1000 });
     setCallState("speaking");
@@ -166,7 +203,13 @@ function CallUI() {
             <Phone size={20} />
           </button>
           <span className="call-status">
-            {callState === "ringing" ? "Calling" : callState === "listening" ? "Listening" : callState === "speaking" ? "Chief is speaking" : "Connected"}
+            {callState === "ringing"
+              ? "Calling"
+              : callState === "listening"
+                ? "Listening"
+                : callState === "speaking"
+                  ? "Chief is speaking"
+                  : "Connected"}
           </span>
           <button className="call-icbtn" onClick={toggleMute} aria-label={micMuted ? "Unmute" : "Mute"} title={micMuted ? "Unmute mic" : "Mute mic"}>
             {micMuted ? <MicOff size={18} /> : <Mic size={18} />}
@@ -192,6 +235,7 @@ function CallUI() {
                   : callState === "speaking"
                     ? "Chief is replying"
                     : "Tap to speak"}
+            {ttsVoice ? ` · ${ttsVoice}` : ""}
           </div>
         </div>
 

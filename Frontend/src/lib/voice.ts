@@ -88,22 +88,76 @@ export function speechSynthesisSupported(): boolean {
 }
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
+let voicesReady = false;
+let voices: SpeechSynthesisVoice[] = [];
+
+function loadVoices(): void {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  const v = window.speechSynthesis.getVoices();
+  if (v && v.length) {
+    voices = v;
+    voicesReady = true;
+  }
+}
+
+// Some browsers populate voices asynchronously.  Listen for the
+// voiceschanged event and re-load so a voice can be selected.
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => loadVoices();
+  loadVoices();
+}
+
+function pickVoice(): SpeechSynthesisVoice | undefined {
+  // Prefer a clear English female voice; fall back to any English voice,
+  // then to the first available voice.
+  const prefer = (lang: string) =>
+    voices.find(
+      (v) =>
+        v.lang.startsWith(lang) &&
+        (v.name.toLowerCase().includes("female") ||
+          v.name.toLowerCase().includes("woman") ||
+          v.name.toLowerCase().includes("samantha") ||
+          v.name.toLowerCase().includes("karen") ||
+          v.name.toLowerCase().includes("allison")),
+    );
+  const english = prefer("en");
+  if (english) return english;
+  return voices.find((v) => v.lang.startsWith("en")) ?? voices[0];
+}
 
 /** Speak `text`, cancelling any utterance already in flight. */
 export function speak(text: string): void {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
   stopSpeech();
+  loadVoices();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "en-US";
   u.rate = 1;
+  u.pitch = 1;
+  u.volume = 1;
+  const voice = pickVoice();
+  if (voice) u.voice = voice;
   u.onend = () => {
     if (currentUtterance === u) currentUtterance = null;
   };
   u.onerror = () => {
     if (currentUtterance === u) currentUtterance = null;
+    // A voice-selection failure is not fatal; retry with the default voice.
+    if (!voice) {
+      u.voice = null;
+      try {
+        window.speechSynthesis.speak(u);
+      } catch {
+        /* best effort */
+      }
+    }
   };
   currentUtterance = u;
-  window.speechSynthesis.speak(u);
+  try {
+    window.speechSynthesis.speak(u);
+  } catch {
+    currentUtterance = null;
+  }
 }
 
 /** Cancel any in-flight speech. */
@@ -116,4 +170,14 @@ export function stopSpeech(): void {
 
 export function isSpeaking(): boolean {
   return typeof window !== "undefined" && !!window.speechSynthesis && window.speechSynthesis.speaking;
+}
+
+/** Whether TTS voices have been enumerated and a voice can be selected. */
+export function ttsReady(): boolean {
+  return voicesReady || voices.length > 0;
+}
+
+/** The name of the currently selected TTS voice, or "default". */
+export function ttsVoiceName(): string {
+  return pickVoice()?.name ?? "default";
 }

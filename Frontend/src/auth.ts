@@ -55,6 +55,7 @@ interface AuthState {
   connectGmail: () => void;
   disconnectGmail: () => Promise<void>;
   setDeveloperMode: (enabled: boolean) => Promise<void>;
+  skipSignIn: () => Promise<void>;
 }
 
 function normalizeGmail(raw: unknown): GmailStatus {
@@ -154,6 +155,31 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
     set({ authenticated: false, user: null, csrf: "", gmail: { ...DISCONNECTED } });
     location.assign("/");
+  },
+
+  async skipSignIn() {
+    try {
+      const res = await fetch("/auth/skip-signin", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      if (data && data.authenticated && data.user) {
+        const user = data.user as AuthUser;
+        set({
+          ready: true,
+          authenticated: true,
+          user,
+          csrf: String(data.csrf || ""),
+        });
+        await get().refreshGmail();
+        return;
+      }
+    } catch {
+      /* fall through to signed-out state */
+    }
+    set({ ready: true, authenticated: false, user: null, csrf: "", gmail: { ...DISCONNECTED } });
   },
 
   async setDeveloperMode(enabled: boolean) {

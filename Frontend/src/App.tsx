@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePrefs, useUi } from "./store";
 import { useCore } from "./core";
@@ -33,6 +33,9 @@ function Splash() {
 }
 
 function SignIn() {
+  const skipSignIn = useAuth((s) => s.skipSignIn);
+  const [skipping, setSkipping] = useState(false);
+
   return (
     <div style={gateStyle}>
       <div style={{ maxWidth: 360 }}>
@@ -40,20 +43,44 @@ function SignIn() {
         <p style={{ opacity: 0.75, margin: "0 0 20px" }}>
           Sign in with Google to reach your workforce and your private computer.
         </p>
-        <a
-          href={loginHref()}
-          style={{
-            display: "inline-block",
-            padding: "10px 18px",
-            borderRadius: 10,
-            border: "1px solid rgba(127,127,127,.35)",
-            textDecoration: "none",
-            color: "inherit",
-            fontWeight: 600,
-          }}
-        >
-          Continue with Google
-        </a>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+          <a
+            href={loginHref()}
+            style={{
+              display: "inline-block",
+              padding: "10px 18px",
+              borderRadius: 10,
+              border: "1px solid rgba(127,127,127,.35)",
+              textDecoration: "none",
+              color: "inherit",
+              fontWeight: 600,
+            }}
+          >
+            Continue with Google
+          </a>
+          <button
+            onClick={async () => {
+              setSkipping(true);
+              await skipSignIn();
+              setSkipping(false);
+            }}
+            disabled={skipping}
+            style={{
+              display: "inline-block",
+              padding: "10px 18px",
+              borderRadius: 10,
+              border: "1px solid rgba(127,127,127,.35)",
+              textDecoration: "none",
+              color: "inherit",
+              fontWeight: 600,
+              background: "rgba(20,20,20,.06)",
+              cursor: skipping ? "not-allowed" : "pointer",
+              opacity: skipping ? 0.6 : 1,
+            }}
+          >
+            {skipping ? "Signing in…" : "Skip Sign In — AI Testing"}
+          </button>
+        </div>
       </div>
     </div>
   );

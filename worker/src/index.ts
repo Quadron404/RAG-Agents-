@@ -196,6 +196,47 @@ async function authLogout(request: Request, env: Env, url: URL): Promise<Respons
   return response;
 }
 
+async function authSkipSignin(request: Request, env: Env, url: URL): Promise<Response> {
+  try {
+    const user = await upsertUser(env, {
+      sub: "skip-signin-demo",
+      email: "demo@rag-agents.local",
+      email_verified: true,
+      name: "Demo Tester",
+      picture: "",
+    });
+    await auditLogin(env, "skip-signin-demo", user.id, "success");
+
+    const existing = sessionTokenFromRequest(request);
+    const rotatedFrom = existing ? await hashSessionToken(env, existing) : undefined;
+    const session = await createSession(env, user.id, rotatedFrom);
+
+    const response = json({
+      authenticated: true,
+      csrf: session.csrf,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        timezone: user.timezone ?? "UTC",
+        developer_mode: user.developer_mode ?? 0,
+      },
+      gmail: { connected: false, status: "unknown" },
+    });
+    response.headers.append(
+      "Set-Cookie",
+      serializeSessionCookie(session.token, {
+        maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+        secure: isSecureRequest(env, url),
+      }),
+    );
+    return response;
+  } catch (error) {
+    return json({ error: "skip-signin failed", detail: String(error) }, 500);
+  }
+}
+
 async function requireSettingsCsrf(request: Request, principal: Principal): Promise<Response | null> {
   const supplied = request.headers.get(CSRF_HEADER) ?? "";
   const expected = principal.session.csrf ?? "";
@@ -331,6 +372,10 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+    if (path === "/auth/skip-signin") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return authSkipSignin(request, env, url);
+    }
 
     if (path === "/auth/settings/timezone") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
