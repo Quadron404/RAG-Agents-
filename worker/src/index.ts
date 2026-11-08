@@ -26,6 +26,7 @@ import {
   sessionTokenFromRequest,
 } from "./http";
 import { OAuthError, buildAuthorizationUrl, exchangeCode, fetchJwks, newCodeVerifier, newNonce, newState } from "./google";
+import { randomToken } from "./encoding";
 import { handleInternal } from "./internal";
 import { handleChatRoutes, isChatPath } from "./chat/routes";
 import { removeSummaryDoc } from "./chat/search";
@@ -65,6 +66,72 @@ async function requireCsrf(request: Request, principal: Principal): Promise<Resp
     return json({ error: "invalid CSRF token" }, 403);
   }
   return null;
+}
+
+async function tts(request: Request, env: Env): Promise<Response> {
+  if (!env.AI) {
+    return json({ error: "TTS is not configured on this worker" }, 503);
+  }
+  let body: { text?: unknown; prompt?: unknown; voice?: unknown } = {};
+  try {
+    body = (await request.json()) ?? {};
+  } catch {
+    /* ignore */
+  }
+  const text = typeof body.text === "string" ? body.text : typeof body.prompt === "string" ? body.prompt : "";
+  if (!text.trim()) {
+    return json({ error: "text is required" }, 400);
+  }
+  const voice = typeof body.voice === "string" ? body.voice : "alloy";
+  try {
+    const result = await env.AI.run(
+      "@cf/myshell-ai/melotts",
+      { prompt: text, voice },
+    );
+    const audio = await audioFromAiResult(result);
+    if (!audio) {
+      return json({ error: "TTS produced no audio" }, 502);
+    }
+    return new Response(audio, {
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  } catch (error) {
+    return json({ error: "TTS failed", detail: String(error) }, 502);
+  }
+}
+
+/** Normalize the Workers AI TTS result into a Uint8Array of MP3 bytes. */
+async function audioFromAiResult(result: unknown): Promise<Uint8Array | null> {
+  try {
+    if (result === null || result === undefined) return null;
+    if (result instanceof Uint8Array) return result;
+    if (result instanceof ArrayBuffer) return new Uint8Array(result);
+    if (typeof result === "object") {
+      const obj = result as Record<string, unknown>;
+      if (obj.audio instanceof Uint8Array) return obj.audio;
+      if (obj.audio instanceof ArrayBuffer) return new Uint8Array(obj.audio);
+      if (typeof obj.audio === "string") {
+        return base64ToBytes(String(obj.audio));
+      }
+      if (obj.data instanceof Uint8Array) return obj.data;
+      if (obj.data instanceof ArrayBuffer) return new Uint8Array(obj.data);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function base64ToBytes(input: string): Uint8Array {
+  const bin = atob(input);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
 }
 
 async function authLogin(request: Request, env: Env, url: URL): Promise<Response> {
@@ -192,6 +259,33 @@ async function authLogout(request: Request, env: Env, url: URL): Promise<Respons
   response.headers.append(
     "Set-Cookie",
     clearSessionCookie({ secure: isSecureRequest(env, url) }),
+  );
+  return response;
+}
+
+/** Skip Sign-In: creates an anonymous user and session without Google auth. */
+async function skipSignIn(request: Request, env: Env, url: URL): Promise<Response> {
+  const userId = randomToken(32);
+  const skipSub = `skip-${userId}`;
+  const now = Date.now();
+
+  const user = await upsertUser(env, {
+    sub: skipSub,
+    email: "skip@rag-agents.local",
+    email_verified: 0,
+    name: "Skip User",
+    picture: "",
+  });
+
+  const session = await createSession(env, user.id);
+  const next = safeNext(url.searchParams.get("next"));
+  const response = redirect(`${publicBaseUrl(env, url)}${next}`);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - now) / 1000),
+      secure: isSecureRequest(env, url),
+    }),
   );
   return response;
 }
@@ -331,6 +425,16 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+
+    if (path === "/auth/skip-signin") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return skipSignIn(request, env, url);
+    }
+
+    if (path === "/tts") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return tts(request, env);
+    }
 
     if (path === "/auth/settings/timezone") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);

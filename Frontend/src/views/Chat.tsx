@@ -15,6 +15,7 @@ import {
   Monitor,
   MoreHorizontal,
   Paperclip,
+  Phone,
   Plus,
   Quote,
   Search,
@@ -32,6 +33,7 @@ import { speechSupported, startDictation } from "../lib/voice";
 import { haptic } from "../lib/haptics";
 import { IconButton } from "../components/ui";
 import { ApprovalsList } from "../components/ApprovalCard";
+import CallUI from "../components/CallUI";
 import {
   fetchConnectorApprovals,
   type ConnectorApproval,
@@ -673,6 +675,9 @@ function Composer() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const replyTo = useUi((s) => s.replyTo);
   const clearReplyTo = useUi((s) => s.clearReplyTo);
+  const callActive = useUi((s) => s.callActive);
+  const startCall = useUi((s) => s.startCall);
+  const endCall = useUi((s) => s.endCall);
   const toast = useUi((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -693,6 +698,16 @@ function Composer() {
   }, []);
 
   useEffect(autoGrow, [text, autoGrow]);
+
+  // Stop dictation the moment Chief starts responding so the mic can't
+  // re-record the assistant's own reply and feed it back (echo loop).
+  useEffect(() => {
+    if (busy && dict.current) {
+      dict.current.stop();
+      dict.current = null;
+      setListening(false);
+    }
+  }, [busy]);
 
   const commit = () => {
     const base = text.trim();
@@ -739,6 +754,16 @@ function Composer() {
       onEnd: () => setListening(false),
       onError: (msg) => toast(msg, "err"),
     });
+  };
+
+  const toggleCall = () => {
+    if (callActive) {
+      endCall();
+      haptic("medium");
+      return;
+    }
+    haptic("medium");
+    startCall();
   };
 
   const addFiles = (list: FileList | null) => {
@@ -813,19 +838,32 @@ function Composer() {
           />
           <input ref={fileRef} type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.sh,.docx" onChange={(e) => addFiles(e.target.files)} />
           {speechSupported() ? (
+            <>
+              <button
+                className={`composer__btn${listening ? " composer__btn--voice-active" : ""}`}
+                disabled={busy}
+                onClick={toggleVoice}
+                title={busy ? "Chief is responding" : listening ? "Stop voice input" : "Voice input"}
+                aria-label={busy ? "Chief is responding" : listening ? "Stop voice input" : "Voice input"}
+              >
+                {listening ? (
+                  <span className="voice-meter">
+                    <i /><i /><i /><i /><i /><i />
+                  </span>
+                ) : (
+                  <MicIcon />
+                )}
+              </button>
+            </>
+          ) : null}
+          {speechSupported() ? (
             <button
-              className={`composer__btn${listening ? " composer__btn--voice-active" : ""}`}
-              onClick={toggleVoice}
-              title={listening ? "Stop voice input" : "Voice input"}
-              aria-label={listening ? "Stop voice input" : "Voice input"}
+              className={`composer__btn${callActive ? " composer__btn--voice-active" : ""}`}
+              onClick={toggleCall}
+              title={callActive ? "End call" : "Start voice call with Chief"}
+              aria-label={callActive ? "End call" : "Start voice call with Chief"}
             >
-              {listening ? (
-                <span className="voice-meter">
-                  <i /><i /><i /><i /><i /><i />
-                </span>
-              ) : (
-                <MicIcon />
-              )}
+              <Phone size={17} />
             </button>
           ) : null}
           {busy ? (
@@ -857,9 +895,9 @@ function Composer() {
       </div>
     </div>
   );
-}
+  }
 
-function MicIcon() {
+  function MicIcon() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -893,6 +931,8 @@ export function ChatView() {
     const [pendingApprovals, setPendingApprovals] = useState<ConnectorApproval[]>([]);
 
     const running = !!run && run.threadId === activeThreadId && run.phase !== "done" && run.phase !== "idle";
+
+    const callActive = useUi((s) => s.callActive);
 
     // Poll pending connector approvals so Allow/Deny cards appear inline in chat.
     useEffect(() => {
@@ -969,6 +1009,7 @@ export function ChatView() {
         )}
         <MessageList />
         <Composer />
+        {callActive && <CallUI />}
         {developerMode && (
           <div className="dev-history-panel">
             <div className="dev-history-panel__head">

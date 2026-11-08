@@ -1,5 +1,13 @@
-// Speech-to-text via the Web Speech API where supported, with a calm,
-// predictable fallback everywhere else (button hidden on unsupported devices).
+// Voice I/O for the call system.
+//
+// STT (speech-to-text) via the Web Speech API lets the user speak during a
+// call.  TTS (text-to-speech) uses the backend API endpoint `/tts` (Cloudflare
+// Workers AI `@cf/myshell-ai/melotts`) instead of the browser's built-in
+// synthesis, so the AI's voice is consistent and doesn't depend on the local
+// voice inventory.
+//
+// Echo prevention: STT listening is paused whenever TTS audio is playing, so
+// the AI's own voice is never picked up by the mic and re-sent.
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -76,4 +84,83 @@ export function startDictation(opts: {
     return null;
   }
   return { stop: () => rec.stop() };
+}
+
+/* ---- text-to-speech (API) ------------------------------------------------- */
+
+let currentAudio: HTMLAudioElement | null = null;
+
+/** Speak `text` via the /tts API, cancelling any audio already in flight. */
+export async function speak(text: string, onEnd?: () => void): Promise<void> {
+  if (typeof window === "undefined") return;
+  stopSpeech();
+  try {
+    const res = await fetch("/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text }),
+    });
+    if (!res.ok) {
+      onEnd?.();
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play().catch(() => {
+      /* playback may be blocked until user gesture */
+      onEnd?.();
+    });
+    currentAudio = audio;
+    audio.onended = () => {
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+      onEnd?.();
+    };
+    audio.onerror = () => {
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+      onEnd?.();
+    };
+  } catch {
+    /* best effort */
+    onEnd?.();
+  }
+}
+
+/** Cancel any in-flight speech. */
+export function stopSpeech(): void {
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+      currentAudio.src = "";
+    } catch {
+      /* ignore */
+    }
+    currentAudio = null;
+  }
+}
+
+export function isSpeaking(): boolean {
+  return currentAudio !== null && !currentAudio.paused && !currentAudio.ended;
+}
+
+export function speechSynthesisSupported(): boolean {
+  return typeof window !== "undefined";
+}
+
+export function ttsReady(): boolean {
+  return typeof window !== "undefined";
+}
+
+export function ttsVoiceName(): string {
+  return "melotts";
+}
+
+export function ttsFailureCount(): number {
+  return 0;
+}
+
+export function ensureVoices(): void {
+  /* API TTS has no voice inventory to load */
 }
