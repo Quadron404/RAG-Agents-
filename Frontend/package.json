@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
-    "@swc/core": "^1.16.22",
+    "@swc/core": "^1.7.0",
     "@swc/core-linux-x64-gnu": "^1.16.22",
+    "@swc/wasm": "^1.7.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "lucide-react": "^0.469.0",
     "mammoth": "^1.13.0",
     "react": "^18.3.1",
