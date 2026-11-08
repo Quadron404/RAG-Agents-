@@ -44,7 +44,7 @@ export function startDictation(opts: {
   if (!Ctor) return null;
   const rec = new Ctor();
   rec.lang = "en-US";
-  rec.continuous = true;
+  rec.continuous = false;
   rec.interimResults = true;
   rec.maxAlternatives = 1;
 

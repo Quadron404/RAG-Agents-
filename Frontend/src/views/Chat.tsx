@@ -694,6 +694,16 @@ function Composer() {
 
   useEffect(autoGrow, [text, autoGrow]);
 
+  // Stop dictation the moment Chief starts responding so the mic can't
+  // re-record the assistant's own reply and feed it back (echo loop).
+  useEffect(() => {
+    if (busy && dict.current) {
+      dict.current.stop();
+      setListening(false);
+      dict.current = null;
+    }
+  }, [busy]);
+
   const commit = () => {
     const base = text.trim();
     if (busy) return;
@@ -815,9 +825,10 @@ function Composer() {
           {speechSupported() ? (
             <button
               className={`composer__btn${listening ? " composer__btn--voice-active" : ""}`}
+              disabled={busy}
               onClick={toggleVoice}
-              title={listening ? "Stop voice input" : "Voice input"}
-              aria-label={listening ? "Stop voice input" : "Voice input"}
+              title={busy ? "Chief is responding" : listening ? "Stop voice input" : "Voice input"}
+              aria-label={busy ? "Chief is responding" : listening ? "Stop voice input" : "Voice input"}
             >
               {listening ? (
                 <span className="voice-meter">
