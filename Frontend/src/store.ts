@@ -334,7 +334,11 @@ export const useUi = create<UiState>((set, get) => ({
   callState: "idle",
   callTranscript: [],
   callDuration: 0,
-  startCall: () => set({ callActive: true, callState: "ringing", callDuration: 0, callTranscript: [] }),
+  startCall: () => {
+    set({ callActive: true, callState: "ringing", callDuration: 0, callTranscript: [] });
+    setTimeout(() => get().setCallState("connected"), 700);
+    setTimeout(() => get().setCallState("listening"), 1400);
+  },
   endCall: () => set({ callActive: false, callState: "idle", callDuration: 0, callTranscript: [] }),
   setCallState: (s: CallState) => set({ callState: s }),
   setCallDuration: (n) => set({ callDuration: n }),
