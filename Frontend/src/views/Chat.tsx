@@ -15,6 +15,7 @@ import {
   Monitor,
   MoreHorizontal,
   Paperclip,
+  Phone,
   Plus,
   Quote,
   Search,
@@ -674,6 +675,9 @@ function Composer() {
   const activeThreadId = useCore((s) => s.activeThreadId);
   const replyTo = useUi((s) => s.replyTo);
   const clearReplyTo = useUi((s) => s.clearReplyTo);
+  const callActive = useUi((s) => s.callActive);
+  const startCall = useUi((s) => s.startCall);
+  const endCall = useUi((s) => s.endCall);
   const toast = useUi((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -750,6 +754,16 @@ function Composer() {
       onEnd: () => setListening(false),
       onError: (msg) => toast(msg, "err"),
     });
+  };
+
+  const toggleCall = () => {
+    if (callActive) {
+      endCall();
+      haptic("medium");
+      return;
+    }
+    haptic("medium");
+    startCall();
   };
 
   const addFiles = (list: FileList | null) => {
@@ -841,6 +855,16 @@ function Composer() {
                 )}
               </button>
             </>
+          ) : null}
+          {speechSupported() ? (
+            <button
+              className={`composer__btn${callActive ? " composer__btn--voice-active" : ""}`}
+              onClick={toggleCall}
+              title={callActive ? "End call" : "Start voice call with Chief"}
+              aria-label={callActive ? "End call" : "Start voice call with Chief"}
+            >
+              <Phone size={17} />
+            </button>
           ) : null}
           {busy ? (
             <button className="composer__send composer__stop" onClick={stopRun} title="Stop" aria-label="Stop">
