@@ -2118,6 +2118,12 @@ textarea {
   animation: pulse 1.6s ease infinite;
 }
 
+.composer__btn--voice-off {
+  color: var(--text-3);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .composer__btn svg {
   width: 18px;
   height: 18px;

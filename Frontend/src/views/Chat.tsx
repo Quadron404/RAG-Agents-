@@ -666,6 +666,7 @@ function Composer() {
   const [attaches, setAttaches] = useState<Attach[]>([]);
   const [focus, setFocus] = useState(false);
   const [listening, setListening] = useState(false);
+  const voiceSupported = speechSupported();
   const status = useCore((s) => s.status);
   const send = useCore((s) => s.send);
   const stopRun = useCore((s) => s.stopRun);
@@ -812,22 +813,21 @@ function Composer() {
             aria-label="Message"
           />
           <input ref={fileRef} type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.sh,.docx" onChange={(e) => addFiles(e.target.files)} />
-          {speechSupported() ? (
-            <button
-              className={`composer__btn${listening ? " composer__btn--voice-active" : ""}`}
-              onClick={toggleVoice}
-              title={listening ? "Stop voice input" : "Voice input"}
-              aria-label={listening ? "Stop voice input" : "Voice input"}
-            >
-              {listening ? (
-                <span className="voice-meter">
-                  <i /><i /><i /><i /><i /><i />
-                </span>
-              ) : (
-                <MicIcon />
-              )}
-            </button>
-          ) : null}
+          <button
+            className={`composer__btn${!voiceSupported && !listening ? " composer__btn--voice-off" : ""}${listening ? " composer__btn--voice-active" : ""}`}
+            disabled={!voiceSupported && !listening}
+            onClick={toggleVoice}
+            title={listening ? "Stop voice input" : voiceSupported ? "Voice input" : "Voice input not supported in this browser"}
+            aria-label={listening ? "Stop voice input" : voiceSupported ? "Voice input" : "Voice input not supported"}
+          >
+            {listening ? (
+              <span className="voice-meter">
+                <i /><i /><i /><i /><i /><i />
+              </span>
+            ) : (
+              <MicIcon />
+            )}
+          </button>
           {busy ? (
             <button className="composer__send composer__stop" onClick={stopRun} title="Stop" aria-label="Stop">
               <span className="stop-ic" />
