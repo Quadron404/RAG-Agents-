@@ -41,6 +41,9 @@ import {
 
 const stripTools = (t: string) => t.replace(/\[TOOL\s+\w+\s+\{.*?\}\]\s*/g, "");
 
+/* Shared handle so ChatView can ask Composer to restart dictation after TTS ends. */
+const callHandle = { restart: null as (() => void) | null };
+
 const EMPTY_MSGS: Message[] = [];
 
 function minifiedArgs(args: Record<string, unknown>): string {
@@ -679,6 +682,7 @@ function Composer() {
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dict = useRef<ReturnType<typeof startDictation> | null>(null);
+  const suppressRestart = useRef(false);
 
   const busy = Boolean(
     run &&
@@ -698,15 +702,16 @@ function Composer() {
 
   // Stop dictation the moment Chief starts responding so the mic can't
   // re-record the assistant's own reply and feed it back (echo loop).
-  // During a call, keep the handle so onEnd can auto-restart listening
-  // once Chief finishes speaking.
+  // During a call, suppress auto-restart on onEnd so the mic stays off
+  // while Chief is speaking; ChatView restarts it after TTS finishes.
   useEffect(() => {
     if (busy && dict.current) {
+      suppressRestart.current = true;
       dict.current.stop();
+      dict.current = null;
       setListening(false);
-      if (!calling) dict.current = null;
     }
-  }, [busy, calling]);
+  }, [busy]);
 
   const commit = () => {
     const base = text.trim();
@@ -763,9 +768,12 @@ function Composer() {
     if (calling) {
       setCalling(false);
       stopSpeaking();
-      dict.current?.stop();
+      if (dict.current) {
+        suppressRestart.current = true;
+        dict.current.stop();
+        dict.current = null;
+      }
       setListening(false);
-      dict.current = null;
       haptic("medium");
       return;
     }
@@ -782,6 +790,10 @@ function Composer() {
         }
       },
       onEnd: () => {
+        if (suppressRestart.current) {
+          suppressRestart.current = false;
+          return;
+        }
         if (calling) setListening(true);
         if (dict.current) dict.current = startDictation({
           onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
@@ -793,6 +805,10 @@ function Composer() {
             }
           },
           onEnd: () => {
+            if (suppressRestart.current) {
+              suppressRestart.current = false;
+              return;
+            }
             if (calling) setListening(true);
           },
           onError: (msg) => toast(msg, "err"),
@@ -929,6 +945,35 @@ function Composer() {
       </div>
     </div>
   );
+
+  function restartDictation() {
+    if (!calling || !speechSupported() || dict.current) return;
+    suppressRestart.current = false;
+    setListening(true);
+    dict.current = startDictation({
+      onInterim: (t) => setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t)),
+      onFinal: async (t) => {
+        setText((prev) => (prev.endsWith(t) ? prev : prev ? `${prev} ${t}` : t));
+        if (!busy) {
+          const ok = send(t);
+          if (!ok) setText("");
+        }
+      },
+      onEnd: () => {
+        if (suppressRestart.current) {
+          suppressRestart.current = false;
+          return;
+        }
+        if (calling) setListening(true);
+      },
+      onError: (msg) => toast(msg, "err"),
+    });
+  }
+
+  useEffect(() => {
+    callHandle.restart = restartDictation;
+    return () => { callHandle.restart = null; };
+  }, [calling, speechSupported, dict, suppressRestart, setListening, startDictation, setText, busy, send, toast]);
 }
 
 function MicIcon() {
@@ -998,7 +1043,7 @@ export function ChatView() {
           .replace(/`/g, "")
           .replace(/#+\s/g, "")
           .trim();
-        if (plain) speak(plain);
+        if (plain) speak(plain, { onEnd: () => callHandle.restart?.() });
       }
     }, [calling, activeThreadId, lastMsgSeq]);
 
