@@ -408,7 +408,7 @@ function renderAttachChips(data: string) {
       return parsed.attachments.map((a: { name?: string; kind?: string; data?: string }, i: number) => (
         <span key={i} className="attach-chip">
           {a.kind === "image" && a.data ? <img src={a.data} alt="" className="attach-img" /> : <FileText size={13} />}
-          {a.name}
+          {String(a.name ?? "")}
         </span>
       ));
     }
@@ -768,7 +768,7 @@ function Composer() {
               <span className="fx-chip" key={i}>
                 {a.kind === "image" && a.data ? <img src={a.data} alt="" /> : <FileText size={15} />}
                 <span className="mono" style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {a.name}
+                  {String(a.name ?? "")}
                 </span>
                 <button
                   className="fx-chip__del"
