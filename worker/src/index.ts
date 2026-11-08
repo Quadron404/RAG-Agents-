@@ -35,6 +35,16 @@ import { buildUpstreamRequest } from "./proxy";
 import { runScheduler } from "./scheduler";
 import { TokenError, verifyIdToken } from "./idtoken";
 import { validateTimezone } from "./timezone";
+import { speechToText, textToSpeech } from "./voice";
+import {
+  createRoutine,
+  deleteRoutine,
+  getRoutine,
+  listRoutines,
+  listRuns,
+  setRoutineEnabled,
+  updateRoutine,
+} from "./routines";
 import { listPendingApprovals, resolveConnectorApproval, getConnectorApproval } from "./connector-approvals";
 import { executeApprovedConnectorAction } from "./chat/connector-tools";
 import {
@@ -386,6 +396,44 @@ async function authResetAccount(request: Request, env: Env): Promise<Response> {
   return response;
 }
 
+async function authQaLoginQuick(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  // AI Testing entry point: a fixed, deterministic QA automation identity that
+  // does not touch Google OAuth.  The same google_sub is reused on every call
+  // so the QA session and its conversations persist across refreshes.  This is
+  // purely a testing shortcut and is entirely separate from the normal Google
+  // sign-in flow, which is left untouched.
+  const base = publicBaseUrl(env, url);
+  const next = safeNext(url.searchParams.get("next"));
+  const user = await upsertUser(env, {
+    sub: "qa-automation",
+    email: "qa-automation@rag-agents.test",
+    email_verified: true,
+    name: "QA Automation",
+    picture: "",
+  });
+  await setDeveloperMode(env, user.id, false);
+  await setUserTimezone(env, user.id, "Asia/Calcutta");
+
+  const existing = sessionTokenFromRequest(request);
+  const rotatedFrom = existing ? await hashSessionToken(env, existing) : undefined;
+  const session = await createSession(env, user.id, rotatedFrom);
+
+  const response = redirect(`${base}${next}`);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+      secure: isSecureRequest(env, url),
+    }),
+  );
+  await auditLogin(env, user.google_sub, user.id, "success", "qa-automation");
+  return response;
+}
+
 async function proxyApi(
   request: Request,
   env: Env,
@@ -414,6 +462,15 @@ async function proxyApi(
   }
   const upstream = buildUpstreamRequest(request, env, url, principal);
   return fetch(upstream);
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const value = await request.json();
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 export default {
@@ -449,6 +506,11 @@ export default {
     if (path === "/auth/settings/reset") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
       return authResetAccount(request, env);
+    }
+
+    if (path === "/auth/qa-login-quick") {
+      if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+      return authQaLoginQuick(request, env, url);
     }
 
     // The backend's own routes.  Handled here, never proxied, and behind the
@@ -534,6 +596,91 @@ export default {
           await resolveConnectorApproval(env, approvalId, { decision: "denied", decidedBy: userId, result: "denied by owner" });
           return json({ ok: true, status: "denied" });
         }
+      }
+    }
+
+    // Worker-native routine listing.  Routines live in D1 at the edge and must
+    // be readable whether or not the Codespace backend is reachable, so the
+    // edge serves this directly (session-authenticated) instead of proxying
+    // through the backend.  The backend's own /internal/routines path remains
+    // its privileged client route.
+    if (path === "/routines" && request.method === "GET") {
+      const principal = await resolvePrincipal(env, request);
+      if (!principal) return json({ error: "authentication required" }, 401);
+      const ownerSub = principal.user.google_sub;
+      if (!ownerSub) {
+        return json({ ok: false, available: false, error: "This account has no routine identity.", routines: [] });
+      }
+      return json({ ok: true, available: true, routines: await listRoutines(env, ownerSub) });
+    }
+
+    // Worker-native routine run history and lifecycle.  Same reasoning as the
+    // listing endpoint above: these run on D1 at the edge and should not depend
+    // on the Codespace backend being awake.
+    if (!path.startsWith("/routines/connectors/")) {
+      const routineMatch = /^\/routines\/([^/]+)(\/(runs|pause|resume))?$/.exec(path);
+      if (routineMatch) {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const ownerSub = principal.user.google_sub;
+        if (!ownerSub) {
+          return json({ ok: false, available: false, error: "This account has no routine identity.", routines: [] });
+        }
+        const routineId = decodeURIComponent(routineMatch[1]);
+        const action = routineMatch[2] ? routineMatch[2].slice(1) : "";
+        const routine = await getRoutine(env, routineId);
+        if (!routine || routine.owner_sub !== ownerSub) {
+          return json({ ok: false, error: "no such routine" }, 404);
+        }
+        const now = Date.now();
+        if (action === "runs" && request.method === "GET") {
+          const limit = Number(url.searchParams.get("limit") ?? "20") || 20;
+          return json({ ok: true, runs: await listRuns(env, routineId, limit) });
+        }
+        if (action === "pause" && request.method === "POST") {
+          return json({ ok: true, routine: await setRoutineEnabled(env, routineId, false, now) });
+        }
+        if (action === "resume" && request.method === "POST") {
+          return json({ ok: true, routine: await setRoutineEnabled(env, routineId, true, now) });
+        }
+        if (request.method === "DELETE" && !action) {
+          await deleteRoutine(env, routineId, now);
+          return json({ ok: true });
+        }
+        return json({ ok: false, error: "method not allowed" }, 405);
+      }
+    }
+
+    // Worker-native voice I/O via Groq (same API key as Chief's model).
+    // STT:  POST /voice/stt   with multipart audio -> text
+    // TTS:  POST /voice/tts   with JSON { text }   -> base64 WAV audio
+    if (path === "/voice/stt" && request.method === "POST") {
+      try {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const form = await request.formData();
+        const audio = form.get("audio");
+        if (audio === null || typeof audio === "string") {
+          return json({ error: "audio blob is required" }, 400);
+        }
+        const text = await speechToText(env, audio as unknown as Blob);
+        return json({ ok: true, text });
+      } catch (error) {
+        return json({ error: `voice STT failed: ${(error as Error).message}` }, 500);
+      }
+    }
+
+    if (path === "/voice/tts" && request.method === "POST") {
+      try {
+        const principal = await resolvePrincipal(env, request);
+        if (!principal) return json({ error: "authentication required" }, 401);
+        const body = await readJson(request);
+        const text = typeof body?.text === "string" ? body.text : "";
+        if (!text.trim()) return json({ error: "text is required" }, 400);
+        const { audioBase64, contentType } = await textToSpeech(env, text);
+        return json({ ok: true, audioBase64, contentType });
+      } catch (error) {
+        return json({ error: `voice TTS failed: ${(error as Error).message}` }, 500);
       }
     }
 

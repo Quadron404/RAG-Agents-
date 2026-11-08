@@ -114,7 +114,7 @@ interface CoreState {
   loadMessages: (id: string) => Promise<void>;
   //: Returns false when the message was not dispatched (not connected, or a run
   //: is already in flight) so the caller can keep the draft and say why.
-  send: (text: string) => boolean;
+  send: (text: string, attachments?: { name: string; kind: string; data?: string; size: number }[]) => boolean;
   stopRun: () => void;
   requestScreen: () => void;
   computerStart: () => Promise<void>;
@@ -454,7 +454,7 @@ function handleRunEvent(ev: RunEvents) {
    Worker-native chat over SSE
    ----------------------------------------------------------------------- */
 
-async function createThreadAndStream(text: string, localId: string): Promise<void> {
+async function createThreadAndStream(text: string, localId: string, attachments?: { name: string; kind: string; data?: string; size: number }[]): Promise<void> {
   try {
     const response = await apiFetch("/threads", {
       method: "POST",
@@ -487,7 +487,7 @@ async function createThreadAndStream(text: string, localId: string): Promise<voi
       };
     });
     useCore.getState().refreshThreads();
-    await streamChat(threadId, text, localId);
+    await streamChat(threadId, text, localId, attachments);
   } catch (error) {
     removePending("__new__", localId);
     patchRun({ phase: "done", cancel: true });
@@ -624,7 +624,7 @@ function handleChatEvent(type: string, payload: Record<string, unknown>, threadI
   }
 }
 
-async function streamChat(threadId: string, text: string, localId: string): Promise<void> {
+async function streamChat(threadId: string, text: string, localId: string, attachments?: { name: string; kind: string; data?: string; size: number }[]): Promise<void> {
   const requestId = `req-${crypto.randomUUID()}`;
   const controller = new AbortController();
   chatAbort?.abort(new Error("superseded"));
@@ -633,7 +633,7 @@ async function streamChat(threadId: string, text: string, localId: string): Prom
     const response = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text, request_id: requestId }),
+      body: JSON.stringify({ content: text, request_id: requestId, attachments: attachments || [] }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -914,9 +914,9 @@ export const useCore = create<CoreState>((set, get) => ({
     }
   },
 
-  send(text) {
+  send(text, attachments) {
     const { activeThreadId, run } = get();
-    if (!text.trim()) return false;
+    if (!text.trim() && !attachments?.length) return false;
     const busy =
       run &&
       run.phase !== "done" &&
@@ -934,16 +934,16 @@ export const useCore = create<CoreState>((set, get) => ({
       role: "user",
       agent: "user",
       content: text,
-      data: "{}",
+      data: JSON.stringify({ attachments: attachments || [] }),
       seq: 0,
       created_at: Date.now() / 1000,
       pending: true,
     });
     setRun(target);
     if (activeThreadId) {
-      void streamChat(activeThreadId, text, localId);
+      void streamChat(activeThreadId, text, localId, attachments);
     } else {
-      void createThreadAndStream(text, localId);
+      void createThreadAndStream(text, localId, attachments);
     }
     return true;
   },

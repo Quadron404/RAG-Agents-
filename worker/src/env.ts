@@ -135,6 +135,8 @@ export interface Env {
 
   GROQ_API_KEY?: string;
   GROQ_BASE_URL?: string;
+  /** Groq vision model for image description (e.g. a Qwen VL model). Groq does not currently ship vision models; set this when one becomes available. */
+  CV_MODEL?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   ANTHROPIC_API_KEY?: string;

@@ -38,6 +38,10 @@ const TITLES: Record<ViewId, { title: () => string; sub: () => string }> = {
     title: () => "Files",
     sub: () => useCore.getState().vmPath || "your workspace",
   },
+  make: {
+    title: () => "Make",
+    sub: () => "Artifacts built by Chief",
+  },
 };
 
 function runSummaryForActive() {

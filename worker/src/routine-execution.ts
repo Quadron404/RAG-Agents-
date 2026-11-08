@@ -16,6 +16,8 @@ import { createConnectorApproval } from "./connector-approvals";
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const ROUTINE_MODEL = "openai/gpt-oss-20b";
 
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 const ROUTINE_SYSTEM_PROMPT =
   "You are executing a scheduled routine inside RAG Agents, an AI-agent platform " +
   "built to help users perform recurring tasks.\n\n" +
@@ -101,12 +103,15 @@ export async function executeRoutine(
     routineRunId?: string;
     ownerSub?: string;
     ownerId?: string;
+    fetch?: FetchLike;
   },
 ): Promise<RoutineExecutionResult> {
   const apiKey = env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error("Groq API key is not configured on this Worker");
   }
+
+  const httpFetch = options?.fetch ?? globalThis.fetch;
 
   const hasTools = Boolean(options?.routineRunId);
   const systemPrompt = hasTools
@@ -132,7 +137,7 @@ export async function executeRoutine(
     request.tools = [{ type: "function", function: GMAIL_SEND_EMAIL_TOOL }];
   }
 
-  const response = await fetch(GROQ_CHAT_URL, {
+  const response = await httpFetch(GROQ_CHAT_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

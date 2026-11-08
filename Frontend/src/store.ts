@@ -5,7 +5,7 @@ import { setHapticsEnabled } from "./lib/haptics";
    Types
    ========================================================================== */
 
-export type ViewId = "chat" | "bots" | "tasks" | "computer" | "files";
+export type ViewId = "chat" | "bots" | "tasks" | "computer" | "files" | "make";
 export type Appearance = "system" | "light" | "dark";
 export type ConnectionStatus = "connecting" | "online" | "offline";
 

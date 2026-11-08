@@ -1,4 +1,4 @@
-import { Bot, Folder, ListTodo, MessageSquare, Monitor, Settings, type LucideIcon } from "lucide-react";
+import { Bot, Folder, Image, ListTodo, MessageSquare, Monitor, Settings, type LucideIcon } from "lucide-react";
 import { useUi, type ViewId } from "../store";
 import { useCore } from "../core";
 
@@ -8,6 +8,7 @@ const NAV: { id: ViewId; label: string; icon: LucideIcon }[] = [
   { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "computer", label: "Computer", icon: Monitor },
   { id: "files", label: "Files", icon: Folder },
+  { id: "make", label: "Make", icon: Image },
 ];
 
 /* ---- Slim icon rail (desktop) ---------------------------------------------- */

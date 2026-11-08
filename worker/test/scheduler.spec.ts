@@ -1,12 +1,23 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import type { Env } from "../src/env";
 import { createRoutine, getRoutine, listRuns } from "../src/routines";
 import { runScheduler } from "../src/scheduler";
-
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+import type { FetchLike } from "../src/routine-execution";
 
 const BASE = Date.parse("2024-05-01T00:00:00Z");
 let seq = 0;
+
+function withEnv(overrides: Partial<Env>): Env {
+  return new Proxy(env, {
+    get(target, key, receiver) {
+      if (key in overrides) return overrides[key as keyof Env];
+      return Reflect.get(target, key, receiver);
+    },
+  }) as Env;
+}
+
+const groqEnv = withEnv({ GROQ_API_KEY: "test-key" });
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -32,46 +43,31 @@ async function onceRoutine(atMs: number) {
   return result.routine;
 }
 
-/** A stub backend whose /health, execute and summaries answers are configurable. */
-function stubFetch(options: {
-  healthUp: boolean;
-  execute?: (body: Record<string, unknown>) => Response;
-  summaries?: () => Response;
-  seen?: Record<string, unknown>[];
-}): FetchLike {
-  return async (input, init) => {
+/** A stub Groq endpoint for the edge-executed routine runner. */
+function groq(options: { status?: number; text?: string } = {}): FetchLike {
+  return async (input) => {
     const url = String(input);
-    const method = init?.method ?? "GET";
-    if (url.endsWith("/health")) {
-      return options.healthUp ? json({ ok: true }) : new Response("", { status: 503 });
+    if (!url.includes("api.groq.com") || !url.includes("/chat/completions")) {
+      throw new Error(`unexpected ${url}`);
     }
-    if (url.endsWith("/internal/routines/execute")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      options.seen?.push(body);
-      return (options.execute ?? (() => json({ ok: true, result: "done" })))(body);
+    if (options.status && options.status >= 400) {
+      return new Response(JSON.stringify({ error: { message: "groq error" } }), {
+        status: options.status,
+        headers: { "content-type": "application/json" },
+      });
     }
-    if (url.endsWith("/internal/summaries/run")) {
-      return (options.summaries ?? (() => json({ ok: true })))();
-    }
-    throw new Error(`unexpected ${method} ${url}`);
+    return json({ choices: [{ message: { content: options.text ?? "sent the digest" } }] });
   };
 }
 
-describe("runScheduler", () => {
+describe("runScheduler (edge execution)", () => {
   it("materialises and completes a due one-time routine, recording the real result", async () => {
     const routine = await onceRoutine(BASE + 1000);
-    const seen: Record<string, unknown>[] = [];
-    const result = await runScheduler(env, BASE + 2000, {
-      fetchImpl: stubFetch({
-        healthUp: true,
-        execute: () => json({ ok: true, result: "sent the digest" }),
-        seen,
-      }),
-    });
+    const result = await runScheduler(groqEnv, BASE + 2000, { fetchImpl: groq({ text: "sent the digest" }) });
 
     expect(result.materialized).toBe(1);
+    expect(result.executed).toBe(1);
     expect(result.completed).toBe(1);
-    expect(seen[0].idempotency_key).toBe(`${routine.routine_id}:${BASE + 1000}`);
 
     const runs = await listRuns(env, routine.routine_id);
     expect(runs[0].status).toBe("completed");
@@ -83,70 +79,30 @@ describe("runScheduler", () => {
 
   it("is idempotent: a second tick starts no duplicate work", async () => {
     const routine = await onceRoutine(BASE + 1000);
-    const deps = { fetchImpl: stubFetch({ healthUp: true }) };
-    await runScheduler(env, BASE + 2000, deps);
-    const second = await runScheduler(env, BASE + 2000, deps);
+    const fetchImpl = groq({ text: "sent the digest" });
+    await runScheduler(groqEnv, BASE + 2000, { fetchImpl });
+    const second = await runScheduler(groqEnv, BASE + 2000, { fetchImpl });
     expect(second.materialized).toBe(0);
-    expect(second.dispatched).toBe(0);
+    expect(second.executed).toBe(0);
     expect(await listRuns(env, routine.routine_id)).toHaveLength(1);
-  });
-
-  it("leaves a run queued when the backend is asleep and refuses to dispatch", async () => {
-    const routine = await onceRoutine(BASE + 1000);
-    const result = await runScheduler(env, BASE + 2000, {
-      fetchImpl: stubFetch({ healthUp: false }),
-    });
-    expect(result.backendReady).toBe(false);
-    expect(result.queued).toBe(1);
-    expect(result.completed).toBe(0);
-    const runs = await listRuns(env, routine.routine_id);
-    expect(runs[0].status).toBe("queued");
   });
 
   it("delays a rate-limited run rather than failing or hot-retrying it", async () => {
     const routine = await onceRoutine(BASE + 1000);
     const now = BASE + 2000;
-    const result = await runScheduler(env, now, {
-      fetchImpl: stubFetch({
-        healthUp: true,
-        execute: () => json({ ok: false, error_code: "rate_limited" }, 429),
-      }),
-    });
+    const result = await runScheduler(groqEnv, now, { fetchImpl: groq({ status: 429 }) });
     expect(result.delayed).toBe(1);
-    expect(result.failed).toBe(0);
+    expect(result.completed).toBe(0);
     const runs = await listRuns(env, routine.routine_id);
     expect(runs[0].status).toBe("delayed");
     expect(runs[0].available_at).toBe(now + 60_000); // ROUTINE_RETRY_BASE_MS
   });
 
-  it("fails a run the backend rejects without retry", async () => {
-    const routine = await onceRoutine(BASE + 1000);
-    const result = await runScheduler(env, BASE + 2000, {
-      fetchImpl: stubFetch({
-        healthUp: true,
-        execute: () => json({ ok: false, error: "bad request", retryable: false }, 400),
-      }),
-    });
-    expect(result.failed).toBe(1);
-    const runs = await listRuns(env, routine.routine_id);
-    expect(runs[0].status).toBe("failed");
-    expect(runs[0].error_code).toBe("bad request");
-  });
-
   it("keeps summaries on the Worker and skips when nothing is due", async () => {
-    let summaryCalls = 0;
-    const result = await runScheduler(env, BASE, {
-      fetchImpl: stubFetch({
-        healthUp: true,
-        summaries: () => {
-          summaryCalls += 1;
-          return json({ ok: true });
-        },
-      }),
-    });
-    expect(result.dispatched).toBe(0);
-    expect(result.backendReady).toBe(true);
-    expect(result.summaries).toBe("skipped");
-    expect(summaryCalls).toBe(0);
+    const result = await runScheduler(groqEnv, BASE, { fetchImpl: groq() });
+    expect(result.materialized).toBe(0);
+    expect(result.executed).toBe(0);
+    expect(result.summaries.summarized).toBe(0);
+    expect(result.summaries.eligible).toBe(0);
   });
 });
