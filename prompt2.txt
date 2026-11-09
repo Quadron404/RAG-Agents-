@@ -1,11 +1,22 @@
 RAG AGENTS — 11 COMPREHENSIVE LIVE BROWSER QA + REPAIR PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents- (exact trailing hyphen is part of the repository name)
 Branch: main
-Audit refresh: 2026-11-09 21:11 Asia/Kolkata
-Main HEAD at refresh: 0592f98e7a18a5f78546564eefeb501fbffad637
+Audit refresh: 2026-11-09 21:59 Asia/Kolkata
+Main HEAD at refresh: 4306bc7969241ad77540d8e9e1fcecb4e31666b4
 Re-fetch main and deployed version before every run. These prompts are test specifications, not claims that the features already work.
 
 ======================================================================
+
+
+LATEST REFRESH ADDENDUM — 2026-11-09 21:59 ASIA/KOLKATA
+- Current observed latest main commit: 4306bc7969241ad77540d8e9e1fcecb4e31666b4 (GitHub tree showed “Rewrite 11 comprehensive Browserless QA and repair prompts”; re-fetch before execution).
+- Live Worker origin: HTTP 200. Firecrawl desktop and mobile captures both returned the public Google sign-in shell and the “Skip Sign In — AI Testing” action. The sign-in page currently exposes no authenticated feature evidence.
+- Extracted public-shell styling: dark background, Inter/system typography, red primary accent and amber link accent. This is a machine-extracted snapshot, not a quality verdict. Keep the product target as original restrained burgundy, refined Apple-like hierarchy and purposeful motion.
+- Firecrawl interactive browser session timed out during this refresh. Do not call that a Browserless test, and do not claim authenticated browser QA.
+- The supplied Drive avatar reference returned HTTP 404. The nine-dot requirement remains valid, but the exact linked image was not inspected.
+- The current README documents Computer/Codespace, Worker-native chat, auth, routines, Gmail connection/owner-notification approvals, history/search/summaries and file capabilities. It explicitly says inbox reading and incoming replies are not implemented. The source inventory still does not establish first-class channel membership.
+- No application-source change or Cloudflare deployment is evidenced by this prompt-refresh commit. Prompt generation is not implementation progress.
+
 ABSOLUTE BROWSER REQUIREMENT — THE HEART OF THIS QA SYSTEM
 ======================================================================
 The ONLY browser system permitted for every browser-based test in this file is the remote Browserless MCP server already configured in the AI7 agent environment:
