@@ -638,12 +638,10 @@ function MessageList() {
 
   const items = useMemo(() => {
     const list = (messages || []).slice();
-    // During active call, hide messages marked as voiceCall
-    if (callActive) {
-      return list.filter((m) => !m.voiceCall);
-    }
-    return list;
-  }, [messages, callActive]);
+    // Always hide messages marked as voiceCall from the text chat UI
+    // They are stored in history but only visible in call history view
+    return list.filter((m) => !m.voiceCall);
+  }, [messages]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
