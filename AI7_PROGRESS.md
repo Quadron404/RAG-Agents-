@@ -120,3 +120,34 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 4. Replace local-only message pin/edit/remove and conversation pin/archive state with server-authoritative persistence or remove misleading controls.
 5. Implement and verify the nine-dot Chief identity/avatar with truthful activity states and reduced-motion behavior.
 6. Continue the 118 implementation prompts by evidence, skipping only tasks proven complete and passing; deploy every verified application change securely and record Worker version plus Browserless evidence.
+
+
+## Daily Chief-of-Staff refresh — 2026-11-10 03:07 Asia/Kolkata
+
+- Re-fetched the current main branch and inspected the repository tree, README, prompt files, query.txt, AI7_PROGRESS.md, key frontend views/state, Worker chat routes/store, D1 migrations, Worker deployment configuration, and relevant backend routes.
+- Pre-refresh main HEAD: `3a533f6b21e11339a4f992ab1e82545bb262cd51`. Current tree: 298 tracked paths.
+- Confirmed the previous queues were replaced in full, not appended:
+  - `prompt.txt`: exactly 118 unique numbered implementation prompts, generated from the 2026-11-10 source audit. Commit: `cc3aa8002cb1a93dbb643e341714b694c27e5291`. Content blob SHA: `4561b7870a192e7cb514a69925f230c721931aff`.
+  - `prompt2.txt`: exactly 11 comprehensive Browserless QA/repair prompts. The exact AI7 Browserless MCP endpoint appears 11 times — once inside each numbered prompt. Commit: `a43dc16bdf1e8748fa3cdd4ae1671716d5d96965`. Content blob SHA: `55c8313df016c700fadd3737dcc8fceb8966eb11`.
+- Re-read `query.txt`: it was already empty (0 characters). The file was preserved and no deletion was performed.
+- Firecrawl cloud-browser inspection of the live Worker origin returned HTTP 200 and showed only the Google sign-in shell plus Continue with Google. A live GET to `/auth/session` returned `authenticated:false`, `user:null`. No test-bypass control was visible in this current browser session; this corrects the older ledger observation, while a full source/deployment audit remains required.
+- Firecrawl desktop inspection: viewport 1920×993, document width 1920, only the Google sign-in link visible. Mobile inspection used a 390×844 target (388×842 inner viewport); the isolated mobile frame reported no horizontal overflow and a roughly 201×46px sign-in target. The same interaction emitted an earlier 1920px document-width measurement against a 390px body, so mobile status is recorded as PARTIAL pending a clean AI7 Browserless run.
+- The Firecrawl interactive session initially timed out, then a follow-up inspection succeeded. This is Firecrawl research/inspection evidence only, not Browserless QA. Authenticated app journeys remain unverified in this ChatGPT environment.
+- Confirmed implementation gaps from source:
+  - `ConversationRow` and migration `0003_chat.sql` have no first-class channel entity or `channel_id`; `0004_channel_summaries.sql` scopes summaries by conversation and is not a channel model.
+  - `Chat.tsx` edits and removes messages in frontend state; message pins use localStorage; conversation pin/archive use localStorage. These are not server-authoritative.
+  - `AppIcon.tsx` is a dock icon set, not the requested dedicated 3×3 Chief avatar.
+  - `theme.css` still uses violet accents (#7d4bc6 light, #a78bfa dark) instead of the established deep-burgundy #4A0E17.
+  - README explicitly says inbox reading and incoming-reply workflows are not implemented. Existing owner-only mail sending resolves the verified signed-in account and does not allow the model to choose a recipient.
+  - Existing source already contains Worker-native Chief chat/SSE, Google OIDC, separate Gmail consent, connector approvals, routines/Cron, history, AI Search, summaries, Codespace Computer/noVNC/CDP, terminal, Files, and settings; prompts instruct the coding agent to verify deployed behavior and skip only evidence-backed completed work.
+- Claude Duet research refreshed using the official product article, App Store listing, and hands-on review. Useful patterns: persistent main conversation, separate project channels, task lists, artifacts, voice, connected apps, background work, proactive briefings, and approval before consequential actions. The hands-on review notes follow-through, latency, desktop continuity, and team sharing as differentiation opportunities. RAG Agents prompts explicitly target original design and stronger cross-device continuity and follow-through.
+- The supplied Drive avatar link still returns HTTP 404; the 3×3 glowing-dot requirement is preserved without claiming the exact image was inspected.
+- No application source code changed and no Cloudflare deployment was performed in this run. This was a prompt/QA-queue refresh only. The Kilo coding agent is explicitly instructed in every relevant prompt to deploy changed frontend assets and Worker using the existing CLOUDFLARE_API_KEY and GITHUB_TOKEN secrets, without exposing them.
+- No new automation or schedule was created. The existing daily refresh continues independently.
+- Next execution priorities:
+  1. Kilo should start with the production authentication/test-bypass audit, using the current live baseline rather than stale notes.
+  2. Implement the real persistent channel model and safely migrate existing conversations to Main.
+  3. Replace local-only message edit/remove/pin and conversation pin/archive behavior with server-authoritative persistence.
+  4. Build the dedicated 3×3 Chief avatar and replace the violet-first theme with the original burgundy design system.
+  5. Implement Gmail inbox reading and draft-only replies with locked, thread-derived recipients and explicit owner approval.
+  6. Execute QA prompts 1–11 through the exact AI7 Browserless MCP remote server, fixing each issue in the mandatory reproduce → root-cause fix → tests → Cloudflare deploy → same-Browserless retest loop.
