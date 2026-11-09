@@ -21,6 +21,16 @@
  */
 import type { Env } from "./env";
 import { runSummaryTick } from "./chat/summaries";
+
+async function runSummaries(env: Env, nowMs: number): Promise<"ran" | "skipped" | "failed"> {
+  try {
+    const result = await runSummaryTick(env, nowMs, { idleSeconds: 60, jobs: 1 });
+    if (result.summarized > 0) return "ran";
+    return "skipped";
+  } catch {
+    return "failed";
+  }
+}
 import { runDailyScheduleTick, runDailySummaryTick, type DailySummaryTickResult, type ScheduleTickResult } from "./chat/daily-schedule";
 import { runRollupScheduleTick, type RollupTickResult } from "./chat/rollup-schedule";
 import { runRollupSummaryTick } from "./chat/daily-rollup";
@@ -50,6 +60,8 @@ export interface SchedulerResult {
   delayed: number;
   rejected: number;
   queued: number;
+  dispatched: number;
+  backendReady: boolean;
   summaries: "ran" | "skipped" | "failed";
   dailySchedule: ScheduleTickResult | null;
   rollupSchedule: RollupTickResult | null;
@@ -82,6 +94,8 @@ export async function runScheduler(
     delayed: 0,
     rejected: 0,
     queued: 0,
+    dispatched: 0,
+    backendReady: true,
     summaries: "skipped",
     dailySchedule: null,
     rollupSchedule: null,
