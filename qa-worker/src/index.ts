@@ -1238,6 +1238,229 @@ async function runMobileTest(browserBinding: BrowserWorker, target: string, env:
   return report;
 }
 
+// --- Call/Voice test ---------------------------------------------------------
+interface CallTestReport {
+  ok: boolean;
+  passed: boolean;
+  target: string;
+  timestamp: string;
+  error: string | null;
+  stage: string;
+  loginResult: { ok: boolean; authenticated: boolean; error: string | null };
+  callStarted: boolean;
+  callStateReached: string | null;
+  transcriptReceived: boolean;
+  callEnded: boolean;
+  consoleErrors: Array<{ text: string; url?: string }>;
+  failedNetworkRequests: Array<{ url: string; method?: string; status?: number; failure?: string }>;
+  screenshots: { callPanel?: string | null; transcript?: string | null };
+}
+
+async function runCallTest(browserBinding: BrowserWorker, target: string, env: Env): Promise<CallTestReport> {
+  const report: CallTestReport = {
+    ok: false,
+    passed: false,
+    target,
+    timestamp: new Date().toISOString(),
+    error: null,
+    stage: "start",
+    loginResult: { ok: false, authenticated: false, error: null },
+    callStarted: false,
+    callStateReached: null,
+    transcriptReceived: false,
+    callEnded: false,
+    consoleErrors: [],
+    failedNetworkRequests: [],
+    screenshots: {},
+  };
+
+  const qaAuthTarget = env.QA_AUTH_TARGET;
+  if (!qaAuthTarget) { report.error = "QA_AUTH_TARGET not configured"; report.stage = "configuration"; return report; }
+
+  let browser: any = null;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), BROWSER_OPERATION_TIMEOUT_MS);
+
+  try {
+    browser = await launch(browserBinding);
+    report.stage = "browser_launched";
+
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    let page = context.pages()[0] ?? (await context.newPage());
+
+    page.on("console", (msg: any) => { if (msg.type() === "error") report.consoleErrors.push({ text: msg.text(), url: msg.location?.url }); });
+    page.on("requestfailed", (req: any) => { report.failedNetworkRequests.push({ url: req.url(), method: req.method(), failure: req.failure?.errorText }); });
+    page.on("response", (res: any) => { if (!res.ok()) report.failedNetworkRequests.push({ url: res.url(), method: res.request().method(), status: res.status() }); });
+
+    // Authenticate
+    report.stage = "authenticating";
+    let loginOk = false;
+    try {
+      const loginUrl = new URL(`${qaAuthTarget}/auth/qa-login-quick`);
+      loginUrl.searchParams.set("next", target);
+      const loginRes = await page.goto(loginUrl.toString(), { waitUntil: "domcontentloaded", timeout: NAVIGATE_TIMEOUT_MS, signal: abortController.signal });
+      if (loginRes && loginRes.ok()) loginOk = true;
+      else report.loginResult.error = `QA login returned HTTP ${loginRes?.status ?? "unknown"}`;
+    } catch (err: any) { report.loginResult.error = `QA login failed: ${err?.message ?? String(err)}`; }
+
+    if (!loginOk) { report.stage = "auth_failed"; throw new Error(report.loginResult.error ?? "QA login failed"); }
+    report.loginResult.ok = true; report.loginResult.authenticated = true; report.stage = "authenticated";
+
+    await waitForSelector(page, ".thread, .composer__ta, .chatlist", AUTH_TIMEOUT_MS);
+
+    // Debug: dump page HTML to understand structure
+    const pageHTML = await page.content();
+    console.log("PAGE HTML LENGTH:", pageHTML.length);
+    
+    // Debug: find all buttons with composer__btn class
+    const allComposerBtns = await page.$$eval(".composer__btn", btns => btns.map(b => ({
+      title: b.getAttribute("title"),
+      ariaLabel: b.getAttribute("aria-label"),
+      className: b.className,
+      innerHTML: b.innerHTML.substring(0, 200)
+    })));
+    console.log("ALL COMPOSER BUTTONS:", JSON.stringify(allComposerBtns, null, 2));
+
+    // Find and click the voice call button - try multiple selectors
+    report.stage = "starting_call";
+    let callBtn = null;
+    const callBtnSelectors = [
+      "button[title='Start voice call with Chief']",
+      "button[aria-label='Start voice call with Chief']",
+      "button.composer__btn:has(svg[data-lucide='phone'])",
+      "button.composer__btn:has(Phone)",
+      "button.composer__btn:not(.composer__btn--voice-active)",
+      ".composer__btn:not(.composer__btn--voice-active)"
+    ];
+    
+    for (const sel of callBtnSelectors) {
+      try {
+        callBtn = await waitForSelector(page, sel, 5000);
+        if (callBtn) break;
+      } catch {}
+    }
+    
+    if (!callBtn) {
+      // Try to find by looking at all composer buttons
+      const btns = await page.$$(".composer__btn");
+      for (const btn of btns) {
+        const title = await btn.getAttribute("title");
+        const ariaLabel = await btn.getAttribute("aria-label");
+        if (title?.includes("Start voice call") || ariaLabel?.includes("Start voice call") ||
+            title?.includes("Start voice call with Chief") || ariaLabel?.includes("Start voice call with Chief")) {
+          callBtn = btn;
+          break;
+        }
+      }
+    }
+    
+    if (!callBtn) {
+      // Try to find by icon
+      const phoneIcons = await page.$$("svg[data-lucide='phone'], svg.lucide-phone");
+      for (const icon of phoneIcons) {
+        const parentBtn = await icon.evaluateHandle((el: Element) => el.closest("button"));
+        if (parentBtn) {
+          callBtn = parentBtn.asElement();
+          break;
+        }
+      }
+    }
+    
+    if (!callBtn) {
+      // Debug: dump all buttons on page
+      const allBtns = await page.$$eval("button", (btns: HTMLButtonElement[]) => btns.map((b: HTMLButtonElement) => ({
+        title: b.getAttribute("title"),
+        ariaLabel: b.getAttribute("aria-label"),
+        className: b.className,
+        textContent: b.textContent?.substring(0, 100) || ""
+      }));
+      console.log("ALL BUTTONS ON PAGE:", JSON.stringify(allBtns, null, 2));
+      
+      report.error = "Could not find voice call button with any selector";
+      throw new Error("Could not find voice call button");
+    }
+    
+    await callBtn.click();
+    await new Promise(r => setTimeout(r, 2000));
+    report.callStarted = true;
+
+    // Wait for call panel to appear
+    report.stage = "waiting_call_panel";
+    try {
+      await waitForSelector(page, ".call-overlay, .call-panel", 10000);
+      report.screenshots.callPanel = await captureScreenshot(page, "call_panel");
+      report.callStateReached = "panel_open";
+    } catch (err: any) {
+      report.error = `Call panel did not appear: ${err?.message ?? String(err)}`;
+      throw err;
+    }
+
+    // Wait for call to connect (state changes from "ringing" to "connected" or "listening")
+    report.stage = "waiting_connected";
+    try {
+      // Wait for call state to change from "ringing"
+      await page.waitForFunction(() => {
+        const statusEl = document.querySelector(".call-status");
+        return statusEl && !statusEl.textContent?.includes("Calling");
+      }, { timeout: 15000 });
+      
+      // Get the call state
+      const callState = await page.evaluate(() => {
+        const statusEl = document.querySelector(".call-status");
+        return statusEl?.textContent?.trim() || "unknown";
+      });
+      report.callStateReached = callState;
+    } catch (err: any) {
+      report.error = `Call did not connect: ${err?.message ?? String(err)}`;
+      throw err;
+    }
+
+    // Check for transcript area
+    report.stage = "checking_transcript";
+    try {
+      await waitForSelector(page, ".call-transcript", 5000);
+      report.screenshots.transcript = await captureScreenshot(page, "call_transcript");
+      report.transcriptReceived = true;
+    } catch (err: any) {
+      report.error = `Transcript area not found: ${err?.message ?? String(err)}`;
+      throw err;
+    }
+
+    // End the call
+    report.stage = "ending_call";
+    try {
+      const endBtn = await waitForSelector(page, "button[title='End call'], button[aria-label='End call'], .call-end", 5000);
+      await endBtn.click();
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // Verify call overlay is gone
+      await page.waitForFunction(() => {
+        return !document.querySelector(".call-overlay");
+      }, { timeout: 5000 });
+      
+      report.callEnded = true;
+    } catch (err: any) {
+      report.error = `Failed to end call: ${err?.message ?? String(err)}`;
+      throw err;
+    }
+
+    const allOk = report.loginResult.ok && report.callStarted && !!report.callStateReached && report.transcriptReceived && report.callEnded;
+    report.ok = allOk;
+    report.passed = allOk;
+    report.error = allOk ? null : "Call test failed";
+
+  } catch (error: any) {
+    report.error = error?.message ?? String(error);
+    report.ok = false;
+    report.passed = false;
+  } finally {
+    clearTimeout(timeoutId);
+    if (browser) { try { await browser.close(); } catch {} }
+  }
+
+  return report;
+}
+
 // --- Worker ------------------------------------------------------------------
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -1366,6 +1589,22 @@ export default {
         return json({ ok: false, error: "target not authorised", target }, 403, { "content-type": "application/json; charset=utf-8" });
       }
       const report = await runMobileTest(env.BROWSER, target, env);
+      const status = report.passed ? 200 : 502;
+      return json(report, status);
+    }
+
+    if (path === "/qa/call-test" && request.method === "POST") {
+      const supplied = extractBearerToken(request);
+      if (!supplied || !env.QA_SECRET || !constantTimeEqual(supplied, env.QA_SECRET)) {
+        return json({ ok: false, error: "authentication required" }, 401);
+      }
+      let body: { url?: string } = {};
+      try { body = (await request.json()) ?? {}; } catch {}
+      const target = typeof body.url === "string" && body.url ? body.url : DEFAULT_TARGET;
+      if (!isApprovedTarget(target)) {
+        return json({ ok: false, error: "target not authorised", target }, 403, { "content-type": "application/json; charset=utf-8" });
+      }
+      const report = await runCallTest(env.BROWSER, target, env);
       const status = report.passed ? 200 : 502;
       return json(report, status);
     }
