@@ -93,3 +93,30 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - No application source code was changed and no Cloudflare deployment was performed in this refresh. This was a prompt/ledger refresh only; do not report RAG Agents as completed or deployed.
 - No new schedule or automation was created. Existing automation references in earlier ledger entries are historical and were not modified.
 - Next execution priorities: (1) isolate the public test-login bypass; (2) establish the configured Browserless MCP in AI7 and capture a baseline authenticated session; (3) implement/verify first-class channels and persistence; (4) close local-only chat actions; (5) implement/verify the nine-dot avatar; (6) execute QA prompts 1–11 with repeated repair/deploy/retest loops.
+
+
+## Manual Chief-of-Staff refresh — 2026-11-09 22:24 Asia/Kolkata
+
+- Read existing prompt.txt, prompt2.txt, query.txt, README.md and AI7_PROGRESS.md. Inspected current main branch metadata, repository tree, key frontend source (Chat.tsx and AppIcon.tsx), and live Worker sign-in shell through Firecrawl.
+- Current main SHA before this refresh: 199435747204d066c6daea44e2c129669dafbb63. Latest commit at that point created query.txt. The earlier prompt file notes referenced a stale baseline SHA; current main was re-fetched before writes.
+- Read query.txt content (a short test message) and cleared the file without deleting it. Verified resulting content length is zero.
+- Replaced prompt.txt in full while preserving exactly 118 numbered implementation prompts. Expanded every prompt with a detailed execution contract covering evidence-first audit, skip-if-complete, full-stack implementation, premium responsive UX, tests, secure Cloudflare deployment and durable progress evidence.
+  - Commit: 5b381a0914d9d79ae64448bee1f27534e4450a8a
+  - Content blob SHA: c79c0f352b5b68172f469ef7ea7488363aaad3ce
+- Replaced prompt2.txt in full while preserving exactly 11 numbered QA prompts. Added the exact AI7 remote Browserless MCP endpoint and a compulsory reproduce → capture → root-cause fix → regression tests → Cloudflare deploy → same-Browserless retest loop inside EACH of the 11 prompts.
+  - Commit: c0cc628eb89ea279a4418cb8c131b379ab0d35e8
+  - Content blob SHA: 8fcc1521780b8c10a86cd073bc8eb2f24eb7d9bf
+- Verification after writes: 118 implementation headings; 11 QA headings; 11 explicit Browserless endpoint mentions; query.txt empty. Latest main SHA after these sequential file commits: c0cc628eb89ea279a4418cb8c131b379ab0d35e8.
+- Live Worker origin returned HTTP 200 and exposed only the unauthenticated Google sign-in shell plus “Skip Sign In — AI Testing”. No authenticated app journey was verified. The AI7 Browserless MCP session is not exposed in this ChatGPT execution environment; no Browserless test is claimed.
+- Claude Duet research was refreshed using the official Claude Help Center and an independent hands-on review. Key product principles remain persistent main thread, separate topic channels sharing memory, text/voice, task visibility, connected apps, cloud computer/browser work and proactive briefs. Differentiate with faster completion, reliable follow-through, desktop/mobile continuity and collaboration; do not copy proprietary visuals.
+- The linked Drive avatar image could not be fetched through an available connector action in this environment; previous refresh reported that the link returned 404. The 3x3 glowing-dot avatar requirement remains in the prompt backlog, but the exact image is unverified.
+- This was a prompt/queue maintenance run only: no application source code changed, no Cloudflare deployment was performed, and RAG Agents is not being represented as finished. Do not repeat this queue-refresh work as product implementation.
+
+## Next execution priorities
+
+1. In AI7, verify the configured Browserless MCP endpoint is actually connected and run the 11 QA prompts against an authenticated test identity; if unavailable, diagnose the MCP setup and mark browser work blocked rather than substituting a browser.
+2. Audit and isolate the publicly visible “Skip Sign In — AI Testing” route so it cannot bypass production authentication.
+3. Implement or verify first-class persistent channels and conversation membership, including cross-device continuity and channel-scoped history.
+4. Replace local-only message pin/edit/remove and conversation pin/archive state with server-authoritative persistence or remove misleading controls.
+5. Implement and verify the nine-dot Chief identity/avatar with truthful activity states and reduced-motion behavior.
+6. Continue the 118 implementation prompts by evidence, skipping only tasks proven complete and passing; deploy every verified application change securely and record Worker version plus Browserless evidence.
