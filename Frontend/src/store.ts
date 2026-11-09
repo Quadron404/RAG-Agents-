@@ -29,6 +29,7 @@ export interface Message {
   editing?: boolean;
   pending?: boolean;
   pinned?: boolean;
+  voiceCall?: boolean; // true = part of voice call, hidden from UI during call
 }
 
 export interface ToolCallState {
@@ -266,6 +267,36 @@ interface UiState {
   setPinnedConv: (id: string | null) => void;
   archiveConv: (id: string) => void;
 }
+
+/* ============================================================================
+   Call state
+   ========================================================================== */
+
+interface CallState {
+  active: boolean;
+  muted: boolean;
+  startTime: number | null;
+  duration: number;
+  setActive: (v: boolean) => void;
+  setMuted: (v: boolean) => void;
+  setDuration: (v: number) => void;
+  reset: () => void;
+}
+
+export const useCall = create<CallState>((set) => ({
+  active: false,
+  muted: false,
+  startTime: null,
+  duration: 0,
+  setActive: (active) => set((s) => ({ 
+    active, 
+    startTime: active ? Date.now() : null,
+    duration: active ? 0 : s.duration 
+  })),
+  setMuted: (muted) => set({ muted }),
+  setDuration: (duration) => set({ duration }),
+  reset: () => set({ active: false, muted: false, startTime: null, duration: 0 }),
+}));
 
 let toastId = 0;
 

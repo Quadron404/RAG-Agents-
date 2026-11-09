@@ -1891,3 +1891,180 @@
   letter-spacing: 0;
   text-transform: none;
 }
+
+/* ============================================================================
+   Voice Call Overlay
+   ========================================================================== */
+
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 16px 120px;
+  pointer-events: none;
+  animation: call-overlay-in 0.25s var(--ease-spring);
+}
+
+@keyframes call-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.call-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.call-overlay__panel {
+  position: relative;
+  pointer-events: auto;
+  width: 100%;
+  max-width: 360px;
+  border-radius: 24px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: call-panel-in 0.3s var(--ease-spring);
+}
+
+@keyframes call-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.call-overlay__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg1);
+}
+
+.call-overlay__avatar {
+  flex: none;
+}
+
+.call-overlay__avatar .msg__ava {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 20px;
+}
+
+.call-overlay__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.call-overlay__name {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-overlay__status {
+  font-size: 12.5px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+.call-overlay__timer {
+  flex: none;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.call-overlay__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 24px;
+}
+
+.call-overlay__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg3);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.call-overlay__btn:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
+.call-overlay__btn:active {
+  transform: scale(0.95);
+}
+
+.call-overlay__btn--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.call-overlay__btn--end {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+}
+
+.call-overlay__btn--end:hover {
+  background: rgba(239, 68, 68, 0.28);
+}
+
+@media (max-width: 480px) {
+  .call-overlay {
+    padding: 0 8px 100px;
+  }
+  .call-overlay__panel {
+    max-width: 100%;
+    border-radius: 20px;
+  }
+  .call-overlay__header {
+    padding: 14px 16px;
+  }
+  .call-overlay__controls {
+    padding: 16px 20px;
+    gap: 12px;
+  }
+  .call-overlay__btn {
+    width: 56px;
+    height: 56px;
+  }
+}

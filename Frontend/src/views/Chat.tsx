@@ -12,9 +12,12 @@ import {
   Copy,
   FileText,
   Globe,
+  Mic,
+  MicOff,
   Monitor,
   MoreHorizontal,
   Paperclip,
+  Phone,
   Plus,
   Quote,
   Search,
@@ -22,7 +25,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
+import { BOT_BY_ID, botForRole, useUi, useCall, type Message, type Step, type ToolCallState } from "../store";
 import { useAuth } from "../auth";
 import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
@@ -36,6 +39,47 @@ import {
   fetchConnectorApprovals,
   type ConnectorApproval,
 } from "../lib/routines";
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onend: () => void;
+  onerror: (event: { error: string }) => void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: { new (): SpeechRecognition };
+    webkitSpeechRecognition: { new (): SpeechRecognition };
+  }
+}
 
 /* ============================ utilities =================================== */
 
@@ -588,12 +632,18 @@ function MessageList() {
   const threads = useCore((s) => s.threads);
   const run = useCore((s) => s.run);
   const liveRun = run && run.threadId === activeThreadId && run.phase !== "done" ? run : null;
+  const { active: callActive } = useCall();
 
   const summarizedThrough = threads.find((t) => t.thread_id === activeThreadId)?.summarized_through ?? 0;
 
   const items = useMemo(() => {
-    return (messages || []).slice();
-  }, [messages]);
+    const list = (messages || []).slice();
+    // During active call, hide messages marked as voiceCall
+    if (callActive) {
+      return list.filter((m) => !m.voiceCall);
+    }
+    return list;
+  }, [messages, callActive]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
@@ -652,6 +702,181 @@ function MessageList() {
   );
 }
 
+/* ============================ call overlay ==================================== */
+
+function CallOverlay() {
+  const { active, muted, duration } = useCall();
+  const { setActive, setMuted, setDuration } = useCall();
+  const toast = useUi((s) => s.toast);
+  const activeThreadId = useCore((s) => s.activeThreadId);
+  const run = useCore((s) => s.run);
+  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
+  const finalTranscriptRef = useRef("");
+
+  // Timer for call duration
+  useEffect(() => {
+    if (!active) return;
+    const interval = setInterval(() => {
+      setDuration(Math.floor((Date.now() - (useCall.getState().startTime || Date.now())) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [active, setDuration]);
+
+  // Initialize speech recognition for STT
+  useEffect(() => {
+    if (!active) return;
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      toast("Voice recognition not supported in this browser", "err");
+      return;
+    }
+    const rec = new SpeechRecognitionCtor();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+    
+    rec.onresult = (event: any) => {
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscriptRef.current += transcript + " ";
+          // Send final transcript immediately
+          if (transcript.trim()) {
+            sendVoiceMessage(transcript.trim());
+          }
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+    };
+    
+    rec.onend = () => {
+      if (active && !muted) {
+        // Restart recognition if call is still active and not muted
+        try { rec.start(); } catch {}
+      }
+    };
+    
+    rec.onerror = (err: any) => {
+      console.log("Speech recognition error:", err.error);
+      if (err.error === "not-allowed" || err.error === "service-not-allowed") {
+        toast("Microphone permission denied", "err");
+      }
+    };
+    
+    setRecognition(rec);
+    
+    if (!muted) {
+      try { rec.start(); } catch {}
+    }
+    
+    return () => {
+      try { rec.stop(); } catch {}
+    };
+  }, [active, muted, toast, activeThreadId, run]);
+
+  const sendVoiceMessage = useCallback((transcript: string) => {
+    if (!transcript.trim() || !activeThreadId) return;
+    const busy = run && run.phase !== "done" && run.phase !== "idle" && run.threadId === activeThreadId;
+    if (busy) return;
+    
+    // Send as a voice call message (hidden from UI during call)
+    const localId = `local-${crypto.randomUUID()}`;
+    const target = activeThreadId;
+    useCore.setState((s) => {
+      const list = s.messages[target] || [];
+      return {
+        messages: {
+          ...s.messages,
+          [target]: [
+            ...list,
+            {
+              id: localId,
+              thread_id: target,
+              role: "user",
+              agent: "user",
+              content: transcript,
+              data: "{}",
+              seq: 0,
+              created_at: Date.now() / 1000,
+              pending: true,
+              voiceCall: true, // Hidden from UI during call
+            },
+          ],
+        },
+      };
+    });
+    
+    // Send to backend
+    useCore.getState().send(transcript);
+  }, [activeThreadId, run]);
+
+  const toggleMute = () => {
+    const newMuted = !muted;
+    setMuted(newMuted);
+    const rec = recognition;
+    if (newMuted) {
+      try { rec?.stop(); } catch {}
+    } else {
+      try { rec?.start(); } catch {}
+    }
+    haptic("medium");
+    toast(newMuted ? "Microphone muted" : "Microphone unmuted", "info");
+  };
+
+  const endCall = () => {
+    setActive(false);
+    try { recognition?.stop(); } catch {}
+    haptic("heavy");
+    toast("Voice call ended", "info");
+  };
+
+  const formatDuration = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  if (!active) return null;
+
+  return (
+    <div className="call-overlay">
+      <div className="call-overlay__backdrop" onClick={endCall} />
+      <div className="call-overlay__panel">
+        <div className="call-overlay__header">
+          <div className="call-overlay__avatar">
+            <span className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient }}>
+              {BOT_BY_ID.commander.glyph}
+            </span>
+          </div>
+          <div className="call-overlay__info">
+            <div className="call-overlay__name">Chief</div>
+            <div className="call-overlay__status">Voice call active</div>
+          </div>
+          <div className="call-overlay__timer">{formatDuration(duration)}</div>
+        </div>
+        <div className="call-overlay__controls">
+          <button
+            className={`call-overlay__btn${muted ? " call-overlay__btn--active" : ""}`}
+            onClick={toggleMute}
+            aria-label={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? <MicOff size={24} /> : <Mic size={24} />}
+          </button>
+          <button
+            className="call-overlay__btn call-overlay__btn--end"
+            onClick={endCall}
+            aria-label="End call"
+          >
+            <Phone size={24} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================ composer ====================================== */
 
 interface Attach {
@@ -666,7 +891,7 @@ function Composer() {
   const [attaches, setAttaches] = useState<Attach[]>([]);
   const [focus, setFocus] = useState(false);
   const [listening, setListening] = useState(false);
-  const [calling, setCalling] = useState(false);
+  const { active: calling, setActive: setCalling } = useCall();
   const status = useCore((s) => s.status);
   const send = useCore((s) => s.send);
   const stopRun = useCore((s) => s.stopRun);
@@ -744,8 +969,9 @@ function Composer() {
 
   const toggleCall = () => {
     haptic("medium");
-    setCalling((prev) => !prev);
-    if (!calling) {
+    const newState = !calling;
+    setCalling(newState);
+    if (newState) {
       toast("Voice call started", "ok");
     } else {
       toast("Voice call ended", "info");
@@ -1002,6 +1228,7 @@ export function ChatView() {
         )}
         <MessageList />
         <Composer />
+        <CallOverlay />
         {developerMode && (
           <div className="dev-history-panel">
             <div className="dev-history-panel__head">

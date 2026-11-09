@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useUi, loadLastActiveThread, saveLastActiveThread, type ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
+import { useUi, useCall, loadLastActiveThread, saveLastActiveThread, type ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
 import { currentCsrf, currentUserId } from "./auth";
 
 /* ============================================================================
@@ -505,11 +505,17 @@ function removePending(threadId: string, localId: string): void {
 }
 
 function upsertMessage(threadId: string, message: Message): void {
+  // If call is active, mark assistant messages as voiceCall so they're hidden from UI during call
+  const callActive = useCall.getState().active;
+  const messageWithCallFlag = callActive && message.role === "assistant"
+    ? { ...message, voiceCall: true }
+    : message;
+  
   useCore.setState((s) => {
     const list = [...(s.messages[threadId] || [])];
-    const index = list.findIndex((m) => m.id === message.id);
-    if (index >= 0) list[index] = { ...list[index], ...message, pending: false };
-    else list.push(message);
+    const index = list.findIndex((m) => m.id === messageWithCallFlag.id);
+    if (index >= 0) list[index] = { ...list[index], ...messageWithCallFlag, pending: false };
+    else list.push(messageWithCallFlag);
     return { messages: { ...s.messages, [threadId]: list } };
   });
 }
