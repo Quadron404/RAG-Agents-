@@ -1,9 +1,19 @@
 RAG AGENTS — 118 IMPLEMENTATION PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents- (exact name includes trailing hyphen)
-Baseline inspected: main HEAD fc7881fb88e87e58011db8cfc46f7d2b5a62e871; 294 tree entries at inspection on 2026-11-09. Re-check main before every run.
+Baseline inspected 2026-11-09: main HEAD 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1; 266 tracked files; 66 test/spec paths; default branch main. Re-fetch main before every run; this baseline is not permanent.
+
+CURRENT VERIFIED BASELINE — DO NOT MISREPRESENT
+- Repository: Quadron404/RAG-Agents-, branch main. The latest inspected commit 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1 adds the existing 11-step Browserless QA queue.
+- The source contains Worker-native Chief chat/SSE and D1 conversations/messages; frontend views Chat, Bots, Tasks, Computer, Files and Settings; Google identity login separate from Gmail consent; Worker/D1/Cron routines; Gmail connection/owner-notification/approval infrastructure; AI Search/history/summaries; Codespace computer, noVNC, CDP browser, terminal and files.
+- Worker chat storage is conversation-centric. ConversationRow has no channel_id; current UI list is “Chats”. Daily summaries mentioning channels do not constitute a first-class channel system. Treat proper channels as a major feature unless a fresh audit proves they have since been implemented.
+- Chat.tsx currently contains local-only behavior for some conversation archive/pin and message edit/remove actions. Verify each action; make it durable or remove misleading controls.
+- The inspected live Worker origin rendered the unauthenticated Google sign-in shell and a “Skip Sign In — AI Testing” button. The authenticated application was NOT browser-tested in this inspection. Treat production exposure of test bypass as a priority security audit; never assume the bypass is safe.
+- The dedicated 3x3 glowing Chief avatar is a stated product requirement; current AppIcon.tsx contains dock app icons, not proof that the required Chief avatar exists.
+- There is no evidence in the inspected tree of GitHub Actions workflows. Do not assume CI exists. Existing backend and Worker tests are substantial; frontend-specific test coverage needs audit.
+- Firecrawl inspection was limited to the public sign-in shell. Actual authenticated behavior must be tested by the configured Browserless MCP in the AI7 environment.
 
 MISSION
-Finish RAG Agents as a production-ready multi-device product. Priority 1: exceptionally smooth, premium Apple-quality UI/UX. Priority 2: correct end-to-end product logic. Priority 3: UI state and promises exactly match backend reality. Chief is the singular visible assistant; specialists work behind Chief. Learn from Claude Duet's channel organization, focused assistant chat, task visibility and mobile continuity, but do not copy proprietary assets or exact UI.
+Finish RAG Agents as a production-ready multi-device product. Priority 1: exceptionally smooth, premium Apple-quality UI/UX. Priority 2: correct end-to-end product logic. Priority 3: UI state and promises exactly match backend reality. Chief is the singular visible assistant; specialists work behind Chief. Learn from Claude Duet's verified product principles: one persistent main thread, separate topic channels sharing memory, a useful task surface, cloud execution, connected apps, browser-based work and approval before consequential actions. Build a more capable, original product; do not copy proprietary assets or exact UI.
 
 MANDATORY CONTRACT FOR EVERY PROMPT
 1. Inspect current code, deployed behavior and progress ledger before editing. If already complete and passing, SKIP. If partial, close only the verified gap. If broken, fix the root cause. Never repeat completed tasks or invent defects.
@@ -19,7 +29,7 @@ MANDATORY CONTRACT FOR EVERY PROMPT
 
 === BASELINE AND RELIABILITY ===
 Prompt 1:
-Re-audit current main, README, frontend, Worker, D1 migrations, backend, tests and deployment metadata. Produce a path-and-evidence inventory of implemented, partial, broken and missing behavior; source presence alone is not proof.
+Re-audit current main, README, frontend, Worker, D1 migrations, backend, tests, deployment metadata, the existing prompt files and AI7_PROGRESS.md if present. Reproduce the deployed sign-in flow with Browserless. Produce a path-and-evidence inventory of implemented, partial, broken and missing behavior. Specifically verify first-class channels, local-only Chat.tsx actions, the nine-dot avatar, test-login isolation, frontend test coverage and actual deployment state. Source presence alone is not proof. Mark already-passing features complete and skip them in all later prompts.
 
 Prompt 2:
 Create a durable resumable progress ledger keyed by prompt ID. Track status, code paths, tests, Browserless evidence, commit, Worker version and blockers; skip completed passing tasks and never erase prior evidence.
@@ -394,3 +404,7 @@ Run complete Browserless end-to-end regression across desktop/mobile for auth, c
 Prompt 118:
 Perform final first-time-user acceptance, remove dead/misleading controls, verify every advertised feature works, and publish a handoff dossier with architecture, setup, deploy, tests, recovery and exact release evidence.
 
+
+
+DAILY EXECUTION RULE
+This file is a finite queue of 118 implementation prompts, not permission to rerun all tasks blindly. At the start of each daily cycle, read AI7_PROGRESS.md and inspect current main. If previous work is done and verified, do not repeat it: use the released capacity for the next genuinely missing feature or a newly discovered defect. Reserve only the number of prompts justified by current failures; use the rest for new, non-duplicate product work. If the 118 prompts are exhausted, author a new numbered backlog based on fresh evidence rather than recycling completed tasks.
