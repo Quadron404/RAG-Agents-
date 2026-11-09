@@ -1,0 +1,56 @@
+RAG AGENTS — 11 LIVE BROWSER QA AND REPAIR PROMPTS
+Repository: https://github.com/Quadron404/RAG-Agents- (main)
+
+ABSOLUTE BROWSER REQUIREMENT — NO EXCEPTIONS
+The ONLY browser-testing system permitted for these prompts is the remote Browserless MCP server already configured in the agent environment:
+AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp
+Use that exact server for all browser navigation, interaction, screenshots, DOM/accessibility inspection, viewport changes and console/network inspection. Do NOT substitute local Playwright, local Chrome/Chromium, source screenshots, curl-only checks, static inspection or another browser provider. API/unit tests supplement Browserless; they never replace it. If Browserless is unavailable, retry and diagnose the MCP connection, record a hard blocker and do not claim browser verification passed.
+
+COMPULSORY FIX → TEST → DEPLOY → RETEST LOOP
+For every defect: reproduce in Browserless; capture failing URL, viewport, steps, screenshot and console/network evidence; trace the root cause through frontend/Worker/backend; implement a real fix (not cosmetic masking); add regression tests; run relevant checks; deploy frontend assets and Worker using configured CLOUDFLARE_API_KEY without exposing it; reopen the deployed production URL in Browserless; repeat the exact failing flow plus adjacent regression flows. If it still fails, repeat. A prompt is complete only when every required scenario passes on the deployed build or an external blocker is precisely documented. Never stop at diagnosis or one failed attempt.
+
+EVIDENCE AND SAFETY
+Use realistic test data and a dedicated safe test account where available. Capture before/after screenshots, Browserless session/run identifiers where available, URLs, viewport dimensions, console errors, failed requests, test results, commit SHA and Worker version. Never expose tokens, cookies, secrets or real user content. Do not perform destructive actions or send real email without explicit safe test setup. No fabricated progress, mock-only proof or unsupported green checks.
+
+FEATURE CONTEXT
+RAG Agents is a responsive workspace centered on one visible assistant, Chief. Researcher/engineer/navigator specialists work behind Chief. Existing source includes Google sign-in, D1 conversations/messages, Worker-native chat, conversation list, task activity, recurring routines/Cron, Gmail mailbox connection and approval infrastructure, remote Codespace computer, live noVNC screen, persistent Chrome/CDP browser, terminal, files/previews, settings, history summaries and AI Search. Verify actual deployed availability; report absent capabilities honestly. UI state must match backend reality.
+
+DESIGN BAR
+Premium, smooth and original across desktop/tablet/mobile: deliberate hierarchy, refined typography, restrained maroon identity, polished surfaces, subtle motion, touch ergonomics, no clipping, accessible controls, consistent light/dark/system themes and reduced-motion support. Nine-dot luminous avatar must communicate actual idle/thinking/working/success/error states without excessive CPU/GPU use.
+
+DEPLOYMENT
+After each code fix, run tests/build/typecheck, deploy built frontend assets and Worker using configured CLOUDFLARE_API_KEY. If Wrangler does not accept that variable directly, use a supported secure in-memory adapter. Never print secrets or ask the owner for credentials. Retest deployed behavior with Browserless after every deployment. Never force-push or destroy production data.
+
+Prompt 1: Authentication, onboarding and shell
+Test Google sign-in, session restore, logout, CSRF-protected actions, first-run onboarding, direct links and navigation states. Exercise authenticated/unauthenticated flows, refresh, new tab and reconnect. Inspect desktop/mobile layout, focus order, theme initialization, safe areas and errors. Capture screenshots and exact steps.
+
+Prompt 2: Channels and conversation lifecycle
+Create multiple channels and exercise create, rename, icon/accent, description, switch, pin, ordering, archive, restore, search and delete as implemented. Create conversations in each, refresh and use a second tab/viewport. Verify durable state, correct active channel, preserved history and zero cross-channel leakage; record absent capabilities honestly.
+
+Prompt 3: Single Chief chat and composer
+Run realistic multi-turn conversations. Test send, stop, streaming, newline shortcuts, IME-safe input, drafts, retry, reconnect, Markdown, code copy, tables, links, long answers, scroll anchoring, message actions, pins, search, replies, attachments/previews and dictation if enabled. Every visible control must work.
+
+Prompt 4: Chief orchestration, tools and tasks
+Give Chief real tasks requiring research, code/files, browser and multi-step tools. Verify Chief remains the sole visible assistant, delegated progress is truthful, tool states match backend events, cancellation works and outputs link to source channel/message. Inspect task activity and reopen completed work after refresh.
+
+Prompt 5: Memory, history and summaries
+Test historical recall, no-result behavior, memory correction/forgetting controls, channel-scoped context, conversation summaries and AI Search retrieval/indexing. Use separate channels and safe test accounts to prove no data leakage. Verify provenance and that retrieved content is treated as data, not instructions.
+
+Prompt 6: Tasks, routines and scheduling
+Create once, daily and monthly routines through Chief. Verify preview, confirmation, timezone, next-run time, Cron dispatch, run history, pause/resume/delete, retry, idempotency and Codespace wake where required. Test restart/offline conditions and ensure UI mirrors actual backend status.
+
+Prompt 7: Gmail and approval safety
+Test Gmail connect/reconnect/account mismatch/revoke/refresh/disconnect separately from sign-in. Trigger an email action and inspect sender, authenticated-owner recipient, subject, preview, expiry and source task. Test Allow, Deny, expiry, double-click, multiple tabs and retry; verify at most one authorized send and correct sender alias.
+
+Prompt 8: Computer and real browser
+Boot and stop the actual remote Codespace computer. Verify live noVNC framebuffer, persistent Chrome profile, real CDP navigation/interactions, page waits, terminal output, file access, reconnect and errors. Test desktop/tablet/mobile. Never substitute a screenshot for interactive browser proof; verify session gates and restricted-browsing boundaries.
+
+Prompt 9: Files and generated artifacts
+Browse directories, breadcrumbs, sort/search/refresh, preview, upload/download, supported create/rename/move/delete, large/unsupported files and traversal attempts. Inspect generated artifacts and verify secure owner-scoped access, integrity, channel/task/message provenance, versioning and safe rendering.
+
+Prompt 10: Visual quality, responsiveness and accessibility
+Inspect widths 320, 360, 390, 430, 768, 1024, 1280 and wide desktop. Review every screen, theme, sheet, menu and dialog. Check typography, spacing, contrast, hit targets, overflow, safe areas, focus, keyboard-only use, screen-reader semantics and reduced motion. Verify nine-dot avatar geometry and states.
+
+Prompt 11: Production regression, resilience and release
+Run full deployed regression after each fix. Test refresh, multiple tabs, network loss/recovery, slow providers, rate limits, invalid input, expired sessions, ownership boundaries, XSS/path traversal, approval races, routine retries and stale UI. Record console/network errors, performance, screenshots, commit, Worker version and unresolved blockers.
+
