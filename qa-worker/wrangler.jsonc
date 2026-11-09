@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rag-agents-browser-qa",
+  "main": "src/index.ts",
+  "account_id": "01522829f05316893eff23bb4c630deb",
+  "compatibility_date": "2026-11-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "browser": {
+    "binding": "BROWSER"
+  },
+  "vars": {
+    "QA_SERVICE_NAME": "rag-agents-browser-qa",
+    "DEFAULT_QA_TARGET": "https://rag-agents.pratyakshrawat768.workers.dev/",
+    "QA_AUTH_TARGET": "https://rag-agents.pratyakshrawat768.workers.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePrefs, useUi } from "./store";
 import { useCore } from "./core";
-import { useAuth, loginHref } from "./auth";
+import { useAuth, loginHref, skipSignIn } from "./auth";
 import { setHapticsEnabled } from "./lib/haptics";
 import { Rail, TabBar } from "./components/Shell";
 import { TopBar } from "./components/TopBar";
@@ -33,6 +33,7 @@ function Splash() {
 }
 
 function SignIn() {
+  const [skipping, setSkipping] = useState(false);
   return (
     <div style={gateStyle}>
       <div style={{ maxWidth: 360 }}>
@@ -54,6 +55,34 @@ function SignIn() {
         >
           Continue with Google
         </a>
+        <button
+          onClick={async () => {
+            setSkipping(true);
+            try {
+              await skipSignIn();
+            } finally {
+              setSkipping(false);
+            }
+          }}
+          disabled={skipping}
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 12,
+            padding: "10px 18px",
+            borderRadius: 10,
+            border: "1px solid rgba(127,127,127,.25)",
+            background: "rgba(0,0,0,.03)",
+            textDecoration: "none",
+            color: "inherit",
+            fontWeight: 600,
+            cursor: "pointer",
+            fontSize: 14,
+            textAlign: "center",
+          }}
+        >
+          {skipping ? "Signing in…" : "Skip Sign In — AI Testing"}
+        </button>
       </div>
     </div>
   );

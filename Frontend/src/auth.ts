@@ -230,3 +230,10 @@ export function loginHref(): string {
   const next = encodeURIComponent(location.pathname + location.search);
   return `/auth/login?next=${next}`;
 }
+
+/** Skip sign-in for AI testing — creates a synthetic session via POST /auth/skip-signin. */
+export async function skipSignIn(): Promise<void> {
+  const res = await fetch("/auth/skip-signin", { method: "POST", credentials: "include" });
+  if (!res.ok) throw new Error(`skip sign-in failed: ${res.status}`);
+  location.assign("/");
+}
