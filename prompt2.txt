@@ -1,71 +1,82 @@
-RAG AGENTS — 11 LIVE BROWSER QA AND REPAIR PROMPTS
-Repository: https://github.com/Quadron404/RAG-Agents- (main)
-Baseline inspected 2026-11-09: HEAD 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1. Re-check current main before each run.
+RAG AGENTS — 11 LIVE BROWSERLESS QA + REPAIR PROMPTS
+Repository: https://github.com/Quadron404/RAG-Agents- (main; trailing hyphen is part of the repository name)
+Refresh: 2026-11-09 21:10 Asia/Kolkata
+Current inspected main HEAD: 0592f98e7a18a5f78546564eefeb501fbffad637. Re-fetch main and AI7_PROGRESS.md at execution time.
 
-ABSOLUTE BROWSER REQUIREMENT — NO EXCEPTIONS
-The ONLY browser-testing system permitted for these prompts is the remote Browserless MCP server already configured in the agent environment:
+ABSOLUTE BROWSERLESS REQUIREMENT — THE HEART OF THIS QA SYSTEM
+Every browser action MUST use the already-configured remote Browserless MCP server in the AI7 coding-agent environment:
 AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp
-Use that exact server for all browser navigation, interaction, screenshots, DOM/accessibility inspection, viewport changes and console/network inspection. Do NOT substitute local Playwright, local Chrome/Chromium, source screenshots, curl-only checks, static inspection or another browser provider. API/unit tests supplement Browserless; they never replace it. If Browserless is unavailable, retry and diagnose the MCP connection, record a hard blocker and do not claim browser verification passed.
+Use this exact server for navigation, clicking, typing, keyboard input, screenshots, DOM/accessibility inspection, viewport/device emulation, console logs, network requests and end-to-end user journeys. It is mandatory, not optional.
+Do NOT substitute local Playwright, local Chrome/Chromium, a local browser, the RAG Agents computer-browser, curl-only checks, source-code inspection, static screenshots or another hosted browser provider. Unit/API tests supplement Browserless; they do not replace it. The product's own remote computer browser is NOT the QA browser.
+If Browserless MCP is missing or unavailable, inspect the AI7 MCP configuration, retry connection, verify the exact remote URL and diagnose the error. Record a hard blocker with the exact failed step and do not claim any browser test passed. Continue independent non-browser work only where safe.
 
-COMPULSORY FIX → TEST → DEPLOY → RETEST LOOP
-For every defect: reproduce in Browserless; capture failing URL, viewport, steps, screenshot and console/network evidence; trace the root cause through frontend/Worker/backend; implement a real fix (not cosmetic masking); add regression tests; run relevant checks; deploy frontend assets and Worker using configured CLOUDFLARE_API_KEY without exposing it; reopen the deployed production URL in Browserless; repeat the exact failing flow plus adjacent regression flows. If it still fails, repeat. A prompt is complete only when every required scenario passes on the deployed build or an external blocker is precisely documented. Never stop at diagnosis or one failed attempt.
+COMPULSORY REPAIR LOOP — REPEAT UNTIL PASS
+For EACH defect and EACH failing acceptance criterion:
+1. Reproduce the exact failure in Browserless on the deployed application. Record URL, account fixture, viewport, steps, expected result and actual result.
+2. Capture before evidence: screenshot, DOM/accessibility evidence, console errors, failed network requests and Browserless session/run ID when available.
+3. Trace the real root cause through React state, API contract, Worker route, D1 query/migration, backend/Codespace service or provider integration. Do not guess from appearance.
+4. Implement the complete fix at the correct layer. Do not hide the defect with CSS, mock data, optimistic-only state or swallowed errors.
+5. Add a regression test at the lowest useful layer plus an integration/contract test where applicable.
+6. Run focused tests, full relevant suite, typecheck and production build.
+7. Deploy changed frontend assets AND Worker to the existing Cloudflare deployment using the AI7 environment secret CLOUDFLARE_API_KEY. Never print, log, paste, copy into code or commit the secret. Verify Wrangler's supported environment credential mechanism; never guess a flag or secret variable.
+8. Open the deployed production URL again through the SAME Browserless MCP. Repeat the exact failing scenario and adjacent regression scenarios at desktop and mobile breakpoints.
+9. If anything still fails, return to step 1. Repeat reproduce → root-cause fix → tests → deploy → Browserless retest until all acceptance criteria pass.
+10. Mark the prompt complete only when the deployed flow passes with evidence. If an external dependency (Browserless outage, OAuth configuration, provider outage, unavailable Codespace) blocks the loop, document the precise blocker and mark BLOCKED, never PASS. Continue independent safe test cases.
 
-EVIDENCE AND SAFETY
-Use realistic test data and a dedicated safe test account where available. Capture before/after screenshots, Browserless session/run identifiers where available, URLs, viewport dimensions, console errors, failed requests, test results, commit SHA and Worker version. Never expose tokens, cookies, secrets or real user content. Do not perform destructive actions or send real email without explicit safe test setup. No fabricated progress, mock-only proof or unsupported green checks.
+SAFETY / EVIDENCE RULES
+- Use a dedicated synthetic AI test identity and isolated test data. The public “Skip Sign In — AI Testing” route must be treated as untrusted until its isolation is proven.
+- Never send real emails, delete real user data, trigger purchases, sign documents or perform irreversible actions in QA. Use a fake provider/test sink or a separately provisioned test account.
+- Never expose tokens, cookies, OAuth codes, private prompts, real email content or secrets in screenshots, logs, artifacts or commits.
+- A feature is not verified merely because a component, endpoint, migration, mock or README section exists.
+- Record Browserless run/session ID, deployed URL, viewport, screenshots, console/network findings, test output, commit SHA, Cloudflare Worker version, timestamp and unresolved limitations.
+- UI state must match backend truth. Empty is not unavailable; queued is not running; a draft is not sent; a click is not success.
 
-FEATURE CONTEXT — SOURCE-VERIFIED, NOT ASSUMED LIVE
-RAG Agents is intended to be a responsive workspace centered on one visible assistant, Chief; researcher/engineer/navigator specialists work behind Chief. The inspected source includes Google identity login, D1 conversations/messages, Worker-native SSE chat, a Chats list, task activity, Worker/D1/Cron recurring routines, Gmail mailbox connection, owner-only notification/approval infrastructure, remote Codespace computer, live noVNC screen, persistent Chrome/CDP browser, terminal, file browsing/previews, settings, history summaries and AI Search.
-Important gaps to prove or close:
-- Current storage is conversations, not a first-class channel entity (ConversationRow has no channel_id in inspected main). The channel workflow must be treated as missing until proven implemented.
-- Some Chat.tsx actions are local-only (archive/pin/edit/remove); test server persistence and cross-device behavior rather than trusting the control label.
-- The live public URL returned the Google sign-in shell plus “Skip Sign In — AI Testing”. Test this route carefully and verify it is isolated from production identity and real user data.
-- AppIcon.tsx contains dock icons; it does not prove the requested glowing 3x3 Chief avatar is implemented.
-- Tasks has Activity and Scheduled modes; scheduled routines are fetched from the Worker service. Distinguish an unavailable service from a genuinely empty schedule.
-- Gmail connection is a separate consent from login. Test sender/recipient safety and approval lifecycle; never send real mail during unattended QA.
-- Computer view is a remote Codespace/noVNC/CDP surface; it is distinct from the external Browserless MCP used to test the RAG Agents web app.
-- Firecrawl inspection in this run reached only the unauthenticated shell. No authenticated feature is declared working until Browserless evidence proves it.
-Report absent, gated, broken and unverified capabilities honestly. UI state must match backend reality.
+CURRENT FEATURE CONTEXT — SOURCE EXISTS, LIVE BEHAVIOR UNVERIFIED
+The inspected repository includes a React/Vite app and Worker/D1 architecture with Chief chat/SSE, conversation/message storage, Google sign-in, separate Gmail consent, routines/Cron, owner-notification and approval infrastructure, memory/history/summaries/AI Search, remote Codespace computer, noVNC, CDP browser, terminal, files/previews and settings.
+Verified gaps/risks from current source inspection:
+- The inspected D1 conversation model is conversation-centric; a first-class channel entity was not established. Current UI calls its list “Chats”. Prove or implement channels; do not assume they exist.
+- Chat.tsx has browser-local code paths for some archive/pin/edit/remove interactions. Test actual persistence and cross-device behavior.
+- Public Worker scrape returned HTTP 200 but only the unauthenticated shell, with Google sign-in and “Skip Sign In — AI Testing”. Authenticated product behavior was not verified in this run.
+- AppIcon.tsx contains colorful desktop dock app icons, not proof of the dedicated black-square 3×3 glowing Chief avatar.
+- Tasks has Activity and Scheduled modes; scheduled routines are fetched from Worker services. Distinguish service unavailable from a real empty schedule.
+- Gmail connection is separate from login; owner-only mail tools and approvals require sender/recipient and one-time-execution verification.
+- The remote computer/browser inside RAG Agents is distinct from this mandatory Browserless QA browser.
+- README describes substantial backend/Worker test coverage and multiple shipped phases, but real production behavior still needs Browserless proof.
+- Do not repeat work already marked complete and proven in AI7_PROGRESS.md. Re-audit current main before every prompt.
 
-DESIGN BAR
-Premium, smooth and original across desktop/tablet/mobile: deliberate hierarchy, refined typography, restrained maroon identity, polished surfaces, subtle motion, touch ergonomics, no clipping, accessible controls, consistent light/dark/system themes and reduced-motion support. Nine-dot luminous avatar must communicate actual idle/thinking/working/success/error states without excessive CPU/GPU use.
+PRODUCT AND DESIGN BAR
+RAG Agents must feel like a premium, fluid, original Apple-quality workspace across desktop, tablet and mobile. Prioritize refined typography, hierarchy, restrained deep-burgundy accents, polished surfaces, fast transitions, subtle motion, touch ergonomics, accessibility, reduced-motion support and the singular Chief identity. No generic AI-generated dashboard look.
+Use Claude Duet only as a product-principle reference: persistent main thread, topic channels with shared memory, visible task tracking, connected apps, cloud execution and approval for consequential actions. Differentiate through fast response, reliable follow-through, desktop/mobile continuity and stronger task closure; never copy proprietary layouts/assets.
 
-DEPLOYMENT
-After each code fix, run tests/build/typecheck, deploy built frontend assets and Worker using configured CLOUDFLARE_API_KEY. If Wrangler does not accept that variable directly, use a supported secure in-memory adapter. Never print secrets or ask the owner for credentials. Retest deployed behavior with Browserless after every deployment. Never force-push or destroy production data.
+PROMPT 1 — Authentication, onboarding, shell and test identity
+Use Browserless to exercise signed-out landing, Google login (only with a provisioned test identity), callback, session restore, logout, expired session, refresh, new tab, deep links and reconnect. Test “Skip Sign In — AI Testing” specifically for production isolation, synthetic identity, cookie separation and inability to read or mutate real user data. Inspect focus order, shell navigation, first paint, responsive layout, theme initialization, mobile safe areas and error states. Repair every defect through the compulsory loop.
 
-Prompt 1: Authentication, onboarding and shell
-Test Google sign-in, session restore, logout, CSRF-protected actions, first-run onboarding, direct links and navigation states. Exercise authenticated/unauthenticated flows, refresh, new tab and reconnect. Inspect desktop/mobile layout, focus order, theme initialization, safe areas and errors. Capture screenshots and exact steps.
+PROMPT 2 — Channels, persistent conversations and lifecycle
+Create multiple test channels and a persistent main Chief conversation. Exercise create, rename, description, icon/accent, switch, per-channel drafts, pin/order, unread state, archive/restore, search and delete only with synthetic data. Refresh, open a second Browserless context/device viewport and verify server persistence, ownership, correct message routing, shared-vs-channel memory boundaries and no cross-channel leakage. If first-class channels are absent, implement migration/backfill safely and retest legacy conversations.
 
-Prompt 2: Channels and conversation lifecycle
-Create multiple channels and exercise create, rename, icon/accent, description, switch, pin, ordering, archive, restore, search and delete as implemented. Create conversations in each, refresh and use a second tab/viewport. Verify durable state, correct active channel, preserved history and zero cross-channel leakage; record absent capabilities honestly.
+PROMPT 3 — Single Chief chat, composer and message behavior
+Test sending, streaming, stop/cancel, reconnect, retry, long messages, Enter/Shift+Enter, IME composition, dictation permission, attachment selection, upload failure, Markdown, code, tables, links, copy, reply, share, edit, delete, pin and reactions wherever supported. Verify each action persists on the server and across sessions; remove misleading local-only controls. Ensure specialists remain behind Chief and that the visible answer is coherent. Test long history pagination and scroll anchoring on desktop/mobile.
 
-Prompt 3: Single Chief chat and composer
-Run realistic multi-turn conversations. Test send, stop, streaming, newline shortcuts, IME-safe input, drafts, retry, reconnect, Markdown, code copy, tables, links, long answers, scroll anchoring, message actions, pins, search, replies, attachments/previews and dictation if enabled. Every visible control must work.
+PROMPT 4 — Chief orchestration, tools, task state and latency
+Submit realistic multi-step research, coding-planning and file-analysis tasks using only tools enabled in the test account. Observe actual plan, delegation, tool calls, failures, synthesis, cancellation and final output. Verify IDs, idempotency, no duplicate side effects, accurate queued/running/waiting/completed/failed/cancelled states, source provenance, safe logs and resume after refresh. Measure time-to-first-token and completion; repair stale status, silent failures and missing follow-through.
 
-Prompt 4: Chief orchestration, tools and tasks
-Give Chief real tasks requiring research, code/files, browser and multi-step tools. Verify Chief remains the sole visible assistant, delegated progress is truthful, tool states match backend events, cancellation works and outputs link to source channel/message. Inspect task activity and reopen completed work after refresh.
+PROMPT 5 — Memory, history, summaries and search
+Create confirmed and inferred non-sensitive test memories, then verify provenance, edit/delete, secret rejection, channel scope and cross-device behavior. Exercise past-chat search, tool-call history, AI Search indexing/retry, summaries, stale-summary protection, message ordering and context restoration. Prove deleted facts/messages are not reintroduced into prompts or search. Verify no fabricated history and clear no-result behavior.
 
-Prompt 5: Memory, history and summaries
-Test historical recall, no-result behavior, memory correction/forgetting controls, channel-scoped context, conversation summaries and AI Search retrieval/indexing. Use separate channels and safe test accounts to prove no data leakage. Verify provenance and that retrieved content is treated as data, not instructions.
+PROMPT 6 — Tasks, routines, Cron and scheduled work
+Create synthetic one-time, daily, weekly and monthly routines in a known IANA timezone. Verify preview/confirmation, next run, DST behavior, monthly date clamping, pause/resume/edit/delete, run history, retries, duplicate Cron ticks, delayed runs, Codespace wake and service-unavailable states. Test with fake clocks/provider stubs for destructive or outbound actions, then verify deployed read-only UI state via Browserless. A scheduled run is complete only after a real result is recorded.
 
-Prompt 6: Tasks, routines and scheduling
-Create once, daily and monthly routines through Chief. Verify preview, confirmation, timezone, next-run time, Cron dispatch, run history, pause/resume/delete, retry, idempotency and Codespace wake where required. Test restart/offline conditions and ensure UI mirrors actual backend status.
+PROMPT 7 — Gmail, connected services and approval safety
+Test Google login separately from Gmail consent; connect/reconnect/disconnect only a test mailbox. Verify account match, scopes, token refresh/revocation, truthful status, owner-only recipient/sender rules, alias validation, draft vs sent state, approval details, allow/deny, expiry, duplicate clicks, replay and cross-owner access. Use a fake mail provider or isolated test sink; never send real mail. Confirm pending approvals return to the originating task/channel and one action executes at most once.
 
-Prompt 7: Gmail and approval safety
-Test Gmail connect/reconnect/account mismatch/revoke/refresh/disconnect separately from sign-in. Trigger an email action and inspect sender, authenticated-owner recipient, subject, preview, expiry and source task. Test Allow, Deny, expiry, double-click, multiple tabs and retry; verify at most one authorized send and correct sender alias.
+PROMPT 8 — Computer, remote desktop and real browser tools
+Test the product's own remote Codespace computer separately from Browserless QA. Verify start/stop, booting/running/unavailable, noVNC screen, keyboard/mouse interaction, authenticated WebSocket, terminal, persistent Chrome/CDP profile, browser navigation, restricted browsing allowlist, cancellation, timeout and reconnect. Confirm ordinary browsing cannot bypass computer-action approvals or egress restrictions. If Codespace is unavailable, record the exact blocker and continue UI states that can be tested safely.
 
-Prompt 8: Computer and real browser
-Boot and stop the actual remote Codespace computer. Verify live noVNC framebuffer, persistent Chrome profile, real CDP navigation/interactions, page waits, terminal output, file access, reconnect and errors. Test desktop/tablet/mobile. Never substitute a screenshot for interactive browser proof; verify session gates and restricted-browsing boundaries.
+PROMPT 9 — Files, uploads, previews and generated artifacts
+Use synthetic files only. Test workspace navigation, breadcrumbs, path traversal rejection, owner/session isolation, text/image/PDF/office previews, large-file limits, downloads, uploads where supported, cancellation, corrupt files, artifact generation, edit/versioning, task/channel linkage and refresh recovery. Confirm original file bytes remain intact and remote VM files are not mislabeled as local laptop files.
 
-Prompt 9: Files and generated artifacts
-Browse directories, breadcrumbs, sort/search/refresh, preview, upload/download, supported create/rename/move/delete, large/unsupported files and traversal attempts. Inspect generated artifacts and verify secure owner-scoped access, integrity, channel/task/message provenance, versioning and safe rendering.
+PROMPT 10 — Premium UI, responsive behavior and accessibility
+Run full Browserless visual/interaction passes at phone portrait, phone landscape, tablet, laptop and wide desktop sizes. Inspect navigation, channel sidebar, single Chief chat, composer, message actions, task panels, dialogs, settings, remote desktop and file views. Check clipping, overflow, safe areas, keyboard/focus, contrast, reduced motion, dark/light/system themes, avatar animation states, loading/empty/error states and touch targets. Capture before/after screenshots and fix every visible defect through the loop.
 
-Prompt 10: Visual quality, responsiveness and accessibility
-Inspect widths 320, 360, 390, 430, 768, 1024, 1280 and wide desktop. Review every screen, theme, sheet, menu and dialog. Check typography, spacing, contrast, hit targets, overflow, safe areas, focus, keyboard-only use, screen-reader semantics and reduced motion. Verify nine-dot avatar geometry and states.
-
-Prompt 11: Production regression, resilience and release
-Run full deployed regression after each fix. Test refresh, multiple tabs, network loss/recovery, slow providers, rate limits, invalid input, expired sessions, ownership boundaries, XSS/path traversal, approval races, routine retries and stale UI. Record console/network errors, performance, screenshots, commit, Worker version and unresolved blockers.
-
-
-
-AUTONOMOUS QA COMPLETION RULE
-Run the 11 prompts in order after implementation batches, and rerun the relevant prompt after every repair. Do not spend time rechecking a scenario that has current deployed passing evidence unless a related change could regress it. Keep a durable AI7_PROGRESS.md ledger and attach evidence to each scenario. A Browserless outage is a blocker, never permission to substitute another browser. If a scenario is blocked by missing safe test identity, synthetic data or a required external credential, report the exact blocker and continue independent safe scenarios.
+PROMPT 11 — Production regression, resilience, security and release gate
+Run a complete realistic journey from sign-in to channel creation, Chief chat, delegated task, approval-safe workflow, artifact review and cross-device resume. Test offline/online, Worker errors, provider rate limits, stale sessions, WebSocket drops, migration safety, owner isolation, CSRF, XSS, path traversal, prompt injection and secret leakage. Run all relevant suites/builds, deploy Worker and frontend, then repeat the journey on the deployed origin in Browserless. Produce a go/no-go report with exact evidence, commit, Worker version and blockers; never claim full completion while any acceptance criterion fails.
