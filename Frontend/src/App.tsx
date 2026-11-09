@@ -33,6 +33,12 @@ function Splash() {
 }
 
 function SignIn() {
+  const skipSignIn = async () => {
+    const next = encodeURIComponent(location.pathname + location.search);
+    const res = await fetch(`/auth/skip?next=${next}`, { credentials: "include" });
+    if (res.ok) location.reload();
+  };
+
   return (
     <div style={gateStyle}>
       <div style={{ maxWidth: 360 }}>
@@ -54,6 +60,26 @@ function SignIn() {
         >
           Continue with Google
         </a>
+        <button
+          onClick={skipSignIn}
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 12,
+            padding: "10px 18px",
+            borderRadius: 10,
+            border: "1px solid rgba(127,127,127,.25)",
+            background: "rgba(0,0,0,.03)",
+            textDecoration: "none",
+            color: "inherit",
+            fontWeight: 600,
+            cursor: "pointer",
+            fontSize: 14,
+            textAlign: "center",
+          }}
+        >
+          Skip Sign In — AI Testing
+        </button>
       </div>
     </div>
   );

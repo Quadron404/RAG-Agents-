@@ -42,6 +42,7 @@ import {
   createOauthState,
   createSession,
   getDeveloperMode,
+  getUserBySub,
   getUserTimezone,
   hashSessionToken,
   revokeSession,
@@ -196,6 +197,39 @@ async function authLogout(request: Request, env: Env, url: URL): Promise<Respons
   return response;
 }
 
+async function authSkip(request: Request, env: Env, url: URL): Promise<Response> {
+  const SKIP_USER_SUB = "skip-test-user";
+  const base = publicBaseUrl(env, url);
+
+  let user = await getUserBySub(env, SKIP_USER_SUB);
+  if (!user) {
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO users (id, google_sub, email, email_verified, name, picture, timezone, developer_mode, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'UTC', 1, ?7, ?7)`,
+    )
+      .bind(id, SKIP_USER_SUB, "test@skip.local", 1, "Test User", "", now)
+      .run();
+    user = { id, google_sub: SKIP_USER_SUB, email: "test@skip.local", email_verified: 1, name: "Test User", picture: "", timezone: "UTC", developer_mode: 1, created_at: now, updated_at: now };
+  }
+
+  const existing = sessionTokenFromRequest(request);
+  const rotatedFrom = existing ? await hashSessionToken(env, existing) : undefined;
+  const session = await createSession(env, user.id, rotatedFrom);
+
+  const next = safeNext(url.searchParams.get("next"));
+  const response = redirect(`${base}${next}`);
+  response.headers.append(
+    "Set-Cookie",
+    serializeSessionCookie(session.token, {
+      maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
+      secure: isSecureRequest(env, url),
+    }),
+  );
+  return response;
+}
+
 async function requireSettingsCsrf(request: Request, principal: Principal): Promise<Response | null> {
   const supplied = request.headers.get(CSRF_HEADER) ?? "";
   const expected = principal.session.csrf ?? "";
@@ -331,6 +365,7 @@ export default {
     if (path === "/auth/callback") return authCallback(request, env, url);
     if (path === "/auth/session") return authSession(request, env);
     if (path === "/auth/logout") return authLogout(request, env, url);
+    if (path === "/auth/skip") return authSkip(request, env, url);
 
     if (path === "/auth/settings/timezone") {
       if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
