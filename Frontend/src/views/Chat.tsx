@@ -676,11 +676,11 @@ function MessageList() {
         {items.map((m) => (
           <MessageBubble key={m.id} m={m} threadId={activeThreadId} summarizedThrough={summarizedThrough} />
         ))}
-        {liveRun ? <RunBanner /> : null}
-        {liveRun
+        {!callActive && liveRun ? <RunBanner /> : null}
+        {!callActive && liveRun
           ? liveRun.steps.map((s) => <StepCard key={s.id} step={s} busy={s.status === "working"} />)
           : null}
-        {liveRun && liveRun.commanderDelta ? (
+        {!callActive && liveRun && liveRun.commanderDelta ? (
           <div className="msg msg--agent msg--commander">
             <div className="msg__ava" style={{ background: BOT_BY_ID.commander.gradient, color: "#fff" }}>
               ◇
