@@ -71,3 +71,25 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - This environment did not expose the AI7 Browserless MCP session. No authenticated browser test, app source modification, Cloudflare deployment or app completion claim is made here. The 11 QA prompts require the configured AI7 remote Browserless MCP; do not substitute another browser.
 - No new automation/schedule was created in this manual run. The pre-existing daily prompt-refresh automation referenced in the earlier ledger remains unchanged.
 - Next: AI7 should execute prompt.txt in order, skip only evidence-backed completed items, start with test-login isolation and first-class channel verification, then execute prompt2.txt through the required Browserless repair loop.
+
+
+## Manual refresh — 2026-11-09 21:59 Asia/Kolkata
+
+- Re-inspected the current GitHub main tree and README, fetched the existing implementation/QA queues and progress ledger, inspected frontend view inventory, Worker chat module inventory, Worker deployment configuration and frontend/Worker package scripts.
+- Latest observed repository tree commit before this refresh: `4306bc7969241ad77540d8e9e1fcecb4e31666b4` (“Rewrite 11 comprehensive Browserless QA and repair prompts”). Re-fetch main before executing prompts.
+- Replaced `prompt.txt` in full, retaining exactly 118 numbered implementation prompts because the ledger contains no evidence that the previous queue has been executed or that its remaining tasks have been completed. The prompts retain skip-if-already-passing rules and add the latest production observations.
+  - Commit: `723d770df280d2d85a09e2a128890cc66796e4fc`
+  - Content blob SHA: `d3585c4164771f41ac6f310fb0256a98d2a6eb9f`
+  - Verified numbered prompt count: 118
+- Replaced `prompt2.txt` in full, retaining exactly 11 comprehensive Browserless QA prompts and the compulsory reproduce → capture → root-cause fix → regression tests → Cloudflare deploy → same-Browserless production retest loop.
+  - Commit: `e63b5158cb8ce4ca3629d537bddb1f74af004b0e`
+  - Content blob SHA: `022d61e405098beca68dc3243af49ca0f994a0d8`
+  - Verified numbered QA prompt count: 11
+- Live Worker origin returned HTTP 200. Firecrawl desktop and mobile captures both exposed the unauthenticated Google sign-in shell and “Skip Sign In — AI Testing” control. This is a production security audit priority; no authenticated journey was verified.
+- Firecrawl branding extraction found a dark shell, Inter/system font, red primary accent and amber link accent. This is only an extracted public-shell snapshot; the desired design direction remains original premium RAG styling with restrained deep burgundy and high-quality responsive interaction.
+- A Firecrawl interactive browser attempt timed out. It is not counted as Browserless or authenticated QA. AI7 must use the exact configured remote Browserless MCP endpoint in `prompt2.txt`; no substitute browser is allowed.
+- The supplied Drive avatar URL returned HTTP 404, so the exact reference image could not be inspected. The required original black-square 3×3 glowing-dot Chief avatar remains a product requirement.
+- README/source inventory continues to show substantial existing Worker chat, auth, routines, Gmail connection/owner-notification approval, history/search/summaries, Codespace Computer and Files infrastructure. README explicitly says inbox reading and incoming-reply workflow are not implemented; first-class channel membership remains unproven.
+- No application source code was changed and no Cloudflare deployment was performed in this refresh. This was a prompt/ledger refresh only; do not report RAG Agents as completed or deployed.
+- No new schedule or automation was created. Existing automation references in earlier ledger entries are historical and were not modified.
+- Next execution priorities: (1) isolate the public test-login bypass; (2) establish the configured Browserless MCP in AI7 and capture a baseline authenticated session; (3) implement/verify first-class channels and persistence; (4) close local-only chat actions; (5) implement/verify the nine-dot avatar; (6) execute QA prompts 1–11 with repeated repair/deploy/retest loops.
