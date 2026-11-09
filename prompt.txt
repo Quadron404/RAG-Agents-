@@ -1,6 +1,6 @@
 RAG AGENTS — 118 IMPLEMENTATION PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents- (exact name includes trailing hyphen)
-Baseline inspected 2026-11-09: main HEAD 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1; 266 tracked files; 66 test/spec paths; default branch main. Re-fetch main before every run; this baseline is not permanent.
+Live refresh inspected 2026-11-09 21:10 Asia/Kolkata. Current main HEAD: 0592f98e7a18a5f78546564eefeb501fbffad637. Tree and README were re-read; re-fetch main before every batch because this baseline is not permanent.
 
 CURRENT VERIFIED BASELINE — DO NOT MISREPRESENT
 - Repository: Quadron404/RAG-Agents-, branch main. The latest inspected commit 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1 adds the existing 11-step Browserless QA queue.
@@ -10,10 +10,10 @@ CURRENT VERIFIED BASELINE — DO NOT MISREPRESENT
 - The inspected live Worker origin rendered the unauthenticated Google sign-in shell and a “Skip Sign In — AI Testing” button. The authenticated application was NOT browser-tested in this inspection. Treat production exposure of test bypass as a priority security audit; never assume the bypass is safe.
 - The dedicated 3x3 glowing Chief avatar is a stated product requirement; current AppIcon.tsx contains dock app icons, not proof that the required Chief avatar exists.
 - There is no evidence in the inspected tree of GitHub Actions workflows. Do not assume CI exists. Existing backend and Worker tests are substantial; frontend-specific test coverage needs audit.
-- Firecrawl inspection was limited to the public sign-in shell. Actual authenticated behavior must be tested by the configured Browserless MCP in the AI7 environment.
+- This ChatGPT run could not access the configured AI7 Browserless MCP session. No authenticated browser QA is claimed. All authenticated journeys must be tested through the exact Browserless MCP configured in AI7.
 
 MISSION
-Finish RAG Agents as a production-ready multi-device product. Priority 1: exceptionally smooth, premium Apple-quality UI/UX. Priority 2: correct end-to-end product logic. Priority 3: UI state and promises exactly match backend reality. Chief is the singular visible assistant; specialists work behind Chief. Learn from Claude Duet's verified product principles: one persistent main thread, separate topic channels sharing memory, a useful task surface, cloud execution, connected apps, browser-based work and approval before consequential actions. Build a more capable, original product; do not copy proprietary assets or exact UI.
+Finish RAG Agents as a production-ready multi-device product. Priority 1: exceptionally smooth, premium Apple-quality UI/UX. Priority 2: correct end-to-end product logic. Priority 3: UI state and promises exactly match backend reality. Chief is the singular visible assistant; specialists work behind Chief. Learn from the official Claude Duet product principles verified today: one persistent main thread, separate topic channels sharing memory, voice/text, cloud computer work, proactive briefs, a task surface, connected apps, cloud browser work and approval before consequential actions. Independent hands-on review also highlights the importance of fast completion, meaningful follow-up, desktop continuity and team-ready sharing. Build an original product; do not copy proprietary visuals. Build a more capable, original product; do not copy proprietary assets or exact UI.
 
 MANDATORY CONTRACT FOR EVERY PROMPT
 1. Inspect current code, deployed behavior and progress ledger before editing. If already complete and passing, SKIP. If partial, close only the verified gap. If broken, fix the root cause. Never repeat completed tasks or invent defects.
