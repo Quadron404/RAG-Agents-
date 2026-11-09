@@ -55,3 +55,19 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - Never mark source-present features complete without tests and deployed evidence.
 - Never repeat a completed prompt; use that capacity for a new verified gap.
 - Never expose or commit API keys, cookies, tokens or private user data.
+
+
+## Manual refresh — 2026-11-09 21:10 Asia/Kolkata
+
+- User-triggered refresh completed. Re-inspected repository tree, README, AI7 progress ledger, prompt files, key frontend state/views, Chief agent code, memory/context code and routines UI.
+- Replaced `prompt.txt` in full with exactly 118 implementation prompts, based on the current repository audit and explicit skip-if-already-passing rules.
+  - Commit: `a0f6cabdcdd6745475f7ec276e2ecc010dd308fc`
+  - Content SHA: `d64371006fa9400881079e4b5ba279016baefaaa`
+- Replaced `prompt2.txt` in full with exactly 11 feature-complete Browserless QA/repair prompts and a compulsory reproduce → root-cause fix → tests → Cloudflare deploy → same-Browserless retest loop.
+  - Commit: `26d6f1d3791f681c35ededb61b4e5aba13cf8d83`
+  - Content SHA: `852b93952b0ab956cfe5ae89cd744737212548c7`
+- The inspected public Worker returned HTTP 200 and the unauthenticated shell only (Google sign-in + “Skip Sign In — AI Testing”). Authenticated features remain unverified in this ChatGPT run.
+- Firecrawl verified the official Claude Duet help article: persistent main thread, separate topic channels sharing memory, voice/text, cloud computer, connected apps, task surface, proactive briefings and approval for consequential actions. An independent hands-on review highlighted latency, follow-through, desktop continuity and team sharing as differentiation opportunities.
+- This environment did not expose the AI7 Browserless MCP session. No authenticated browser test, app source modification, Cloudflare deployment or app completion claim is made here. The 11 QA prompts require the configured AI7 remote Browserless MCP; do not substitute another browser.
+- No new automation/schedule was created in this manual run. The pre-existing daily prompt-refresh automation referenced in the earlier ledger remains unchanged.
+- Next: AI7 should execute prompt.txt in order, skip only evidence-backed completed items, start with test-login isolation and first-class channel verification, then execute prompt2.txt through the required Browserless repair loop.
