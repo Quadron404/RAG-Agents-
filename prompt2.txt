@@ -1,5 +1,6 @@
 RAG AGENTS — 11 LIVE BROWSER QA AND REPAIR PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents- (main)
+Baseline inspected 2026-11-09: HEAD 1e42c2581d5ed25ac58a78c5758db3ebf8fd57a1. Re-check current main before each run.
 
 ABSOLUTE BROWSER REQUIREMENT — NO EXCEPTIONS
 The ONLY browser-testing system permitted for these prompts is the remote Browserless MCP server already configured in the agent environment:
@@ -12,8 +13,18 @@ For every defect: reproduce in Browserless; capture failing URL, viewport, steps
 EVIDENCE AND SAFETY
 Use realistic test data and a dedicated safe test account where available. Capture before/after screenshots, Browserless session/run identifiers where available, URLs, viewport dimensions, console errors, failed requests, test results, commit SHA and Worker version. Never expose tokens, cookies, secrets or real user content. Do not perform destructive actions or send real email without explicit safe test setup. No fabricated progress, mock-only proof or unsupported green checks.
 
-FEATURE CONTEXT
-RAG Agents is a responsive workspace centered on one visible assistant, Chief. Researcher/engineer/navigator specialists work behind Chief. Existing source includes Google sign-in, D1 conversations/messages, Worker-native chat, conversation list, task activity, recurring routines/Cron, Gmail mailbox connection and approval infrastructure, remote Codespace computer, live noVNC screen, persistent Chrome/CDP browser, terminal, files/previews, settings, history summaries and AI Search. Verify actual deployed availability; report absent capabilities honestly. UI state must match backend reality.
+FEATURE CONTEXT — SOURCE-VERIFIED, NOT ASSUMED LIVE
+RAG Agents is intended to be a responsive workspace centered on one visible assistant, Chief; researcher/engineer/navigator specialists work behind Chief. The inspected source includes Google identity login, D1 conversations/messages, Worker-native SSE chat, a Chats list, task activity, Worker/D1/Cron recurring routines, Gmail mailbox connection, owner-only notification/approval infrastructure, remote Codespace computer, live noVNC screen, persistent Chrome/CDP browser, terminal, file browsing/previews, settings, history summaries and AI Search.
+Important gaps to prove or close:
+- Current storage is conversations, not a first-class channel entity (ConversationRow has no channel_id in inspected main). The channel workflow must be treated as missing until proven implemented.
+- Some Chat.tsx actions are local-only (archive/pin/edit/remove); test server persistence and cross-device behavior rather than trusting the control label.
+- The live public URL returned the Google sign-in shell plus “Skip Sign In — AI Testing”. Test this route carefully and verify it is isolated from production identity and real user data.
+- AppIcon.tsx contains dock icons; it does not prove the requested glowing 3x3 Chief avatar is implemented.
+- Tasks has Activity and Scheduled modes; scheduled routines are fetched from the Worker service. Distinguish an unavailable service from a genuinely empty schedule.
+- Gmail connection is a separate consent from login. Test sender/recipient safety and approval lifecycle; never send real mail during unattended QA.
+- Computer view is a remote Codespace/noVNC/CDP surface; it is distinct from the external Browserless MCP used to test the RAG Agents web app.
+- Firecrawl inspection in this run reached only the unauthenticated shell. No authenticated feature is declared working until Browserless evidence proves it.
+Report absent, gated, broken and unverified capabilities honestly. UI state must match backend reality.
 
 DESIGN BAR
 Premium, smooth and original across desktop/tablet/mobile: deliberate hierarchy, refined typography, restrained maroon identity, polished surfaces, subtle motion, touch ergonomics, no clipping, accessible controls, consistent light/dark/system themes and reduced-motion support. Nine-dot luminous avatar must communicate actual idle/thinking/working/success/error states without excessive CPU/GPU use.
@@ -54,3 +65,7 @@ Inspect widths 320, 360, 390, 430, 768, 1024, 1280 and wide desktop. Review ever
 Prompt 11: Production regression, resilience and release
 Run full deployed regression after each fix. Test refresh, multiple tabs, network loss/recovery, slow providers, rate limits, invalid input, expired sessions, ownership boundaries, XSS/path traversal, approval races, routine retries and stale UI. Record console/network errors, performance, screenshots, commit, Worker version and unresolved blockers.
 
+
+
+AUTONOMOUS QA COMPLETION RULE
+Run the 11 prompts in order after implementation batches, and rerun the relevant prompt after every repair. Do not spend time rechecking a scenario that has current deployed passing evidence unless a related change could regress it. Keep a durable AI7_PROGRESS.md ledger and attach evidence to each scenario. A Browserless outage is a blocker, never permission to substitute another browser. If a scenario is blocked by missing safe test identity, synthetic data or a required external credential, report the exact blocker and continue independent safe scenarios.
