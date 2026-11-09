@@ -1,9 +1,9 @@
 RAG AGENTS — 118 IMPLEMENTATION PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents- (exact name includes trailing hyphen)
-Live refresh inspected 2026-11-09 21:10 Asia/Kolkata. Current main HEAD: 0592f98e7a18a5f78546564eefeb501fbffad637. Tree and README were re-read; re-fetch main before every batch because this baseline is not permanent.
+Live refresh inspected 2026-11-09 21:59 Asia/Kolkata. Current main HEAD: 4306bc7969241ad77540d8e9e1fcecb4e31666b4. Tree and README were re-read; re-fetch main before every batch because this baseline is not permanent.
 
 CURRENT VERIFIED BASELINE — DO NOT MISREPRESENT
-- Repository: Quadron404/RAG-Agents-, branch main. Current main HEAD at this refresh: 0592f98e7a18a5f78546564eefeb501fbffad637 (2026-11-09 14:35:37 UTC; latest commit adds the durable AI7 progress ledger). Tree contains 297 tracked paths, including 66 test/spec paths. Re-fetch main before every execution batch.
+- Repository: Quadron404/RAG-Agents-, branch main. Current main HEAD at this refresh: 4306bc7969241ad77540d8e9e1fcecb4e31666b4 (2026-11-09 14:35:37 UTC; latest commit adds the durable AI7 progress ledger). Tree contains 297 tracked paths, including 66 test/spec paths. Re-fetch main before every execution batch.
 - The source contains Worker-native Chief chat/SSE and D1 conversations/messages; frontend views Chat, Bots, Tasks, Computer, Files and Settings; Google identity login separate from Gmail consent; Worker/D1/Cron routines; Gmail connection/owner-notification/approval infrastructure; AI Search/history/summaries; Codespace computer, noVNC, CDP browser, terminal and files. README explicitly says incoming-reply workflow and inbox reading are not implemented; do not treat those as finished capabilities.
 - Worker chat storage is conversation-centric. ConversationRow has no channel_id; current UI list is “Chats”. Daily summaries mentioning channels do not constitute a first-class channel system. Treat proper channels as a major feature unless a fresh audit proves they have since been implemented.
 - Chat.tsx currently contains local-only behavior for some conversation archive/pin and message edit/remove actions. Verify each action; make it durable or remove misleading controls.
@@ -11,6 +11,17 @@ CURRENT VERIFIED BASELINE — DO NOT MISREPRESENT
 - The dedicated 3x3 glowing Chief avatar is a stated product requirement; current AppIcon.tsx contains dock app icons, not proof that the required Chief avatar exists.
 - There is no `.github/workflows/` path in the inspected 297-path tree. Do not assume CI exists. Existing backend and Worker tests are substantial (66 test/spec paths overall); frontend-specific test coverage needs audit.
 - This ChatGPT run could not access the configured AI7 Browserless MCP session. No authenticated browser QA is claimed. All authenticated journeys must be tested through the exact Browserless MCP configured in AI7.
+
+
+
+LATEST REFRESH ADDENDUM — 2026-11-09 21:59 ASIA/KOLKATA
+- Current observed latest main commit: 4306bc7969241ad77540d8e9e1fcecb4e31666b4 (GitHub tree showed “Rewrite 11 comprehensive Browserless QA and repair prompts”; re-fetch before execution).
+- Live Worker origin: HTTP 200. Firecrawl desktop and mobile captures both returned the public Google sign-in shell and the “Skip Sign In — AI Testing” action. The sign-in page currently exposes no authenticated feature evidence.
+- Extracted public-shell styling: dark background, Inter/system typography, red primary accent and amber link accent. This is a machine-extracted snapshot, not a quality verdict. Keep the product target as original restrained burgundy, refined Apple-like hierarchy and purposeful motion.
+- Firecrawl interactive browser session timed out during this refresh. Do not call that a Browserless test, and do not claim authenticated browser QA.
+- The supplied Drive avatar reference returned HTTP 404. The nine-dot requirement remains valid, but the exact linked image was not inspected.
+- The current README documents Computer/Codespace, Worker-native chat, auth, routines, Gmail connection/owner-notification approvals, history/search/summaries and file capabilities. It explicitly says inbox reading and incoming replies are not implemented. The source inventory still does not establish first-class channel membership.
+- No application-source change or Cloudflare deployment is evidenced by this prompt-refresh commit. Prompt generation is not implementation progress.
 
 MISSION
 Finish RAG Agents as a production-ready multi-device product. Priority 1: exceptionally smooth, premium Apple-quality UI/UX. Priority 2: correct end-to-end product logic. Priority 3: UI state and promises exactly match backend reality. Chief is the singular visible assistant; specialists work behind Chief. Learn from the official Claude Duet product principles verified today: one persistent main thread, separate topic channels sharing memory, voice/text, cloud computer work, proactive briefs, a task surface, connected apps, cloud browser work and approval before consequential actions. Independent hands-on review also highlights the importance of fast completion, meaningful follow-up, desktop continuity and team-ready sharing. Build an original product; do not copy proprietary visuals. Build a more capable, original product; do not copy proprietary assets or exact UI.
@@ -28,7 +39,7 @@ MANDATORY CONTRACT FOR EVERY PROMPT
 
 
 === BASELINE AND RELIABILITY ===
-Current audit facts to re-check, not blindly trust: main HEAD 0592f98e7a18a5f78546564eefeb501fbffad637; 297 tracked paths; 66 test/spec paths; no .github/workflows directory; Worker ConversationRow has no channel_id; Chat.tsx has local-state-only archive/pin/edit/remove paths; live public sign-in shell includes “Skip Sign In — AI Testing”; Firecrawl could inspect only the unauthenticated shell. The current AI7 Browserless session was not available to this ChatGPT execution, so authenticated browser QA remains unverified.
+Current audit facts to re-check, not blindly trust: main HEAD 4306bc7969241ad77540d8e9e1fcecb4e31666b4; 297 tracked paths; 66 test/spec paths; no .github/workflows directory; Worker ConversationRow has no channel_id; Chat.tsx has local-state-only archive/pin/edit/remove paths; live public sign-in shell includes “Skip Sign In — AI Testing”; Firecrawl could inspect only the unauthenticated shell. The current AI7 Browserless session was not available to this ChatGPT execution, so authenticated browser QA remains unverified.
 Prompt 1:
 Re-audit current main, README, frontend, Worker, D1 migrations, backend, tests, deployment metadata, the existing prompt files and AI7_PROGRESS.md if present. Reproduce the deployed sign-in flow with Browserless. Produce a path-and-evidence inventory of implemented, partial, broken and missing behavior. Specifically verify first-class channels, local-only Chat.tsx actions, the nine-dot avatar, test-login isolation, frontend test coverage and actual deployment state. Source presence alone is not proof. Mark already-passing features complete and skip them in all later prompts.
 
