@@ -1,356 +1,518 @@
-RAG AGENTS — 11 COMPREHENSIVE LIVE BROWSER QA + REPAIR PROMPTS
-Repository: https://github.com/Quadron404/RAG-Agents- (exact trailing hyphen is part of the repository name)
+RAG AGENTS — 11 LIVE BROWSERLESS QA + REPAIR PROMPTS
+Repository: https://github.com/Quadron404/RAG-Agents-
 Branch: main
-Audit refresh: 2026-11-09 22:24 Asia/Kolkata
-Main HEAD at refresh: 199435747204d066c6daea44e2c129669dafbb63
-Re-fetch main and deployed version before every run. These prompts are test specifications, not claims that the features already work.
+Production origin: https://rag-agents.pratyakshrawat768.workers.dev
+Audit time: 2026-11-10 03:07 Asia/Kolkata
+These are full feature specifications and mandatory live QA/repair jobs, not superficial smoke tests. Re-fetch current main and deployed Worker version before each prompt.
+
+CURRENT VERIFIED BASELINE
+- Live Firecrawl inspection saw only the Google sign-in shell and Continue with Google. GET /auth/session returned authenticated:false. No authenticated product journey has yet been proven in this audit.
+- Current D1 conversation schema has no first-class channel_id/channel entity. Existing channel-summary tables refer to conversations.
+- Chat.tsx uses local-only edit/remove, message pinning in localStorage, and conversation pin/archive in localStorage.
+- README documents Gmail connection and owner-only sending but says inbox reading and incoming-reply workflows are not implemented.
+- AppIcon.tsx does not prove the requested Chief 3×3 glowing-dot avatar exists. theme.css still uses violet accents rather than the established deep-burgundy #4A0E17 identity.
+- Existing source already includes Worker-native Chief chat/SSE, Google OIDC, separate Gmail consent, routines/Cron, approvals, history/search/summaries, Codespace Computer, noVNC/CDP, terminal, Files, and settings. Test the real behavior; do not treat source presence as proof.
+- The supplied Drive avatar link currently returns 404. Preserve the 3×3 glowing-dot requirement without claiming the image was inspected.
+- Claude Duet research: official product material describes a persistent ongoing thread, proactive briefings, background virtual-machine work, connected apps, voice/text, and explicit approval before consequential actions. The App Store listing and hands-on review describe project channels, task lists, and artifacts. The review praises mobile polish but identifies weak follow-through, slow work, missing desktop continuity, and limited team sharing. RAG Agents must be original and should outperform on reliable follow-through, desktop/mobile continuity, fast feedback, and optional team collaboration.
+- Research links: https://claude.com/resources/articles/claude-duet ; https://apps.apple.com/us/app/claude-duet-by-anthropic/id6803276000 ; https://www.chatprd.ai/how-i-ai/claude-duet-review .
+
+Do not treat a Firecrawl page inspection as Browserless QA. Only the exact AI7 Browserless MCP session can satisfy these prompts.
 
 ======================================================================
 
+PROMPT 1: Authentication, onboarding, and protected application shell
 
-LATEST REFRESH ADDENDUM — 2026-11-09 21:59 ASIA/KOLKATA
-- Current observed latest main commit: 4306bc7969241ad77540d8e9e1fcecb4e31666b4 (GitHub tree showed “Rewrite 11 comprehensive Browserless QA and repair prompts”; re-fetch before execution).
-- Live Worker origin: HTTP 200. Firecrawl desktop and mobile captures both returned the public Google sign-in shell and the “Skip Sign In — AI Testing” action. The sign-in page currently exposes no authenticated feature evidence.
-- Extracted public-shell styling: dark background, Inter/system typography, red primary accent and amber link accent. This is a machine-extracted snapshot, not a quality verdict. Keep the product target as original restrained burgundy, refined Apple-like hierarchy and purposeful motion.
-- Firecrawl interactive browser session timed out during this refresh. Do not call that a Browserless test, and do not claim authenticated browser QA.
-- The supplied Drive avatar reference returned HTTP 404. The nine-dot requirement remains valid, but the exact linked image was not inspected.
-- The current README documents Computer/Codespace, Worker-native chat, auth, routines, Gmail connection/owner-notification approvals, history/search/summaries and file capabilities. It explicitly says inbox reading and incoming replies are not implemented. The source inventory still does not establish first-class channel membership.
-- No application-source change or Cloudflare deployment is evidenced by this prompt-refresh commit. Prompt generation is not implementation progress.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+RAG Agents is a Google-authenticated workforce app. The Cloudflare Worker owns OIDC, D1 sessions, CSRF, and the frontend shell. Gmail consent is a separate grant. The current live public page shows only the RAG Agents sign-in message and Continue with Google; GET /auth/session currently returns authenticated:false, user:null. The earlier ledger mentioned a testing bypass, but the current live Firecrawl browser did not see one. Prove the current truth rather than repeating stale notes.
 
-ABSOLUTE BROWSER REQUIREMENT — THE HEART OF THIS QA SYSTEM
-======================================================================
-The ONLY browser system permitted for every browser-based test in this file is the remote Browserless MCP server already configured in the AI7 agent environment:
+BROWSERLESS JOURNEY
+1. Open the production origin in a fresh remote browser context and capture the unauthenticated shell.
+2. Inspect the accessibility tree, links, buttons, document dimensions, console, failed requests, and response headers. Confirm no private app data or test-bypass control is exposed.
+3. Follow Continue with Google only far enough to verify the OAuth redirect and state handling; do not submit unknown credentials.
+4. Use the already authorized AI7 test identity/profile if present. Verify successful sign-in, reload, session restoration, Gmail-disconnected state, settings, and logout.
+5. Test expired or invalid session, denied OAuth, wrong account, missing CSRF, and direct protected routes.
+6. Confirm logout removes access from the current browser and stale back/forward navigation cannot reveal private content.
 
-AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp
+REPAIR TARGET
+If a test bypass exists, remove or isolate it from production without weakening normal auth. Fix session, CSRF, cookie, redirect, loading, and error-state defects at their root. Do not add a public bypass to make testing easier. Verify account ownership and protected WebSocket routes as well as HTTP.
 
-Use that exact configured MCP server for all app navigation, browser interaction, DOM and accessibility inspection, screenshots, viewport/device emulation, keyboard/touch interaction, console inspection, network request/response inspection, downloads and end-to-end user journeys. The AI7 agent MUST invoke the configured browserless MCP tools; it is not enough to mention Browserless in a report.
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
 
-PROHIBITED SUBSTITUTES:
-- Do not use local Playwright, local Chrome/Chromium, a local browser, a local browser daemon, or a developer's personal browser.
-- Do not use a different hosted browser provider.
-- Do not use source-code inspection, static screenshots, curl, API-only tests or unit tests as a substitute for the real Browserless user journey.
-- Do not use RAG Agents' own Computer/noVNC/CDP feature as the QA browser. That is a product feature under test, not the external Browserless test system.
-- Do not claim a browser test passed if the Browserless MCP session was not actually used.
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
 
-If Browserless cannot connect: retry the configured MCP connection, inspect the MCP tool error, diagnose configuration/network/authentication issues available inside AI7, and retry. If it remains unavailable, record a hard blocker with exact error, timestamp and attempted recovery. Continue source-level and unit tests that do not require a browser, but mark every browser-dependent scenario BLOCKED; never substitute another browser and never report it as passed.
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
 
-======================================================================
-COMPULSORY REPRODUCE → FIX → TEST → DEPLOY → RETEST LOOP
-======================================================================
-This loop is mandatory for EVERY defect and every incomplete feature:
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
 
-1. REPRODUCE: Use Browserless against the deployed app. Record exact URL, account/test identity class (never credentials), viewport, steps, expected behavior, actual behavior and repeatability.
-2. CAPTURE: Save before-fix screenshot(s), browser session/run identifier, console errors, failed network requests, response status and relevant DOM/accessibility evidence. Redact cookies, tokens, private content and secrets.
-3. ROOT CAUSE: Trace the failure through the actual frontend component, state store, Worker route, D1 migration/query, backend/Codespace service or provider boundary. Identify the precise root cause; do not guess.
-4. FIX: Implement a durable functional fix. Do not hide errors with CSS, fake success toasts, hardcoded sample data, optimistic state without reconciliation, weakened auth, skipped approvals or mock-only behavior.
-5. REGRESSION: Add or update targeted unit, integration, migration, contract and security tests. Run all relevant tests, typechecks and production builds. Browserless is still compulsory for browser behavior.
-6. DEPLOY: Deploy the actual changed frontend assets and Cloudflare Worker to the existing production Worker using the configured CLOUDFLARE_API_KEY environment secret. First inspect existing wrangler configuration and the installed Wrangler authentication contract. If that variable is not consumed directly by Wrangler, use a supported secure in-memory environment adapter; never echo, print, log, serialize, commit or ask the owner to paste the key. Do not invent new secrets. Apply migrations only when the code requires them and the migration is reviewed, backward-compatible and safe for existing user data.
-7. RETEST PRODUCTION: Open the deployed production URL in the same Browserless MCP. Repeat the exact failing steps and test adjacent flows, refresh, second tab and responsive viewport where relevant. Capture after-fix evidence.
-8. REPEAT: If any expected result still fails, return to root-cause analysis and repeat steps 3–7 until it works. Do not stop after one repair attempt.
-9. CLOSE: Mark PASS only when the deployed production flow passes in Browserless and relevant regression tests pass. Otherwise record BLOCKED with a precise external dependency. A code commit, local test, screenshot or successful deploy alone is not a pass.
-
-A QA prompt is not complete because the agent has written a report. It is complete only after the required scenarios have been exercised, defects fixed, deployed and retested. Never claim completion for inaccessible authenticated functionality.
-
-======================================================================
-SAFETY, TEST DATA AND EVIDENCE
-======================================================================
-- Use a dedicated safe test identity and synthetic content if available. Never use another person's mailbox, real confidential files or private conversations.
-- Never send a real email, delete real user data, revoke a real account grant, modify a real schedule with consequences, or execute a destructive computer action unless an explicitly designated safe test setup authorizes it.
-- For Gmail, use a controlled test recipient and sender configuration only. If no safe test mailbox exists, test the approval lifecycle up to the final delivery boundary and mark actual delivery BLOCKED.
-- Never weaken Google auth, CSRF, session checks, owner scoping, internal tokens, approval requirements, file-root restrictions or restricted-browsing isolation to make a test pass.
-- Never expose API keys, cookies, OAuth tokens, refresh tokens, internal headers, private file contents or full user messages in evidence.
-- Keep evidence per scenario: prompt ID, test case, production URL, viewport, timestamp, Browserless session/run reference, before/after screenshot reference, steps, expected/actual, console/network result, regression test result, commit SHA, Worker version ID and PASS/FAIL/BLOCKED.
-- Do not fabricate test accounts, API responses, deployment IDs, Browserless sessions or successful outcomes.
-- The public production sign-in page was observed to show Google sign-in and a “Skip Sign In — AI Testing” action. Treat this as a security-sensitive path and verify its production isolation before using it. Do not click it unless its test-only scope, identity isolation and non-production data boundary have first been verified from source and safe environment configuration.
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-FEATURE CONTEXT — VERIFIED SOURCE IS NOT PROOF OF LIVE FUNCTIONALITY
-======================================================================
-The source currently contains a React/Vite frontend with Chat, Bots, Tasks, Computer, Files and Settings surfaces; Worker-native Chief chat with SSE; D1 conversation/message storage; Google identity login; a separate Gmail consent lifecycle; Worker/D1/Cron routines; connector approvals and owner-notification infrastructure; AI Search/history/summaries; a remote Codespace computer with noVNC, Chrome/CDP, terminal and file access; restricted browsing; and frontend theme/components.
 
-Known audit gaps to explicitly prove or fix:
-- The inspected Worker ConversationRow has no channel_id and chat storage is conversation-centric. Daily summaries described as channel summaries do not create a first-class channel system. Treat channels as missing until real D1 entities, APIs, UI, ownership, migration and cross-device persistence are proven.
-- Chat.tsx has local-only paths for some archive/pin/edit/remove actions. Test persistence after refresh, a second tab and another device. Replace unsupported controls with durable operations or remove them.
-- The public unauthenticated shell exposes “Skip Sign In — AI Testing”. Verify strict test-only isolation, no production bypass and no cross-user access.
-- AppIcon.tsx contains dock app icons; this does not prove the dedicated nine-dot Chief avatar exists.
-- README says incoming-reply workflow and inbox reading are not implemented. Do not claim these as delivered.
-- Existing backend and Worker test suites are substantial, but 66 test/spec paths do not establish complete frontend acceptance. No .github/workflows directory was found in the inspected tree.
-- Firecrawl inspection reached only the unauthenticated public shell. Authenticated behavior is unverified until Browserless evidence exists.
-- The product's own remote Computer/noVNC/CDP is separate from Browserless QA. Never confuse them.
+PROMPT 2: Persistent channels, shared memory, and one unified Chief chat
 
-DESIGN AND PRODUCT BAR
-Build an original premium product, not a clone. User priorities, in order:
-1. Exceptionally smooth, refined, premium Apple/iOS-quality UI/UX.
-2. Correct end-to-end application logic.
-3. UI state, controls and messaging must exactly match backend reality.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The product must have one always-available Main channel and focused project channels, all using the same visible Chief assistant and chat canvas. Channels organize work; they are not separate bot identities. User-level memory may be shared across channels, while raw project transcripts, files, tasks, and private decisions remain channel-scoped unless explicitly shared. The current Worker ConversationRow has no channel_id and migration 0003 creates conversations without a channel entity; migration 0004's word channel refers to conversation summaries, not a real channel table.
 
-Use a restrained deep-maroon identity, precise typography, clear hierarchy, deliberate whitespace, polished interaction states, subtle glass/depth where useful, high-quality responsive layouts, accessible controls and low-cost motion. Avoid generic AI gradients, excessive cards, childish styling, clutter and fake activity. The Chief remains the singular visible assistant; specialists work behind Chief and surface only concise useful progress.
+BROWSERLESS JOURNEY
+1. Sign in and inspect the channel navigation on desktop and mobile.
+2. Verify Main exists on first use and opening the app does not create duplicate conversations.
+3. Create two project channels, rename one, reorder them, archive one, restore it, and switch rapidly between them.
+4. Send distinct messages in Main and each project channel. Reload and open a second Browserless context for the same test identity; verify channel list, active channel, history, archive, ordering, read state, and task links are consistent.
+5. Ask a harmless preference question in one channel and verify only permitted user-level memory is shared. Place synthetic project-only information in another channel and verify it does not leak into unrelated channels.
+6. Test deep links, browser back/forward, deleted channels, empty channels, and concurrent channel switching while a response streams.
 
-Claude Duet comparison principles verified from its official help material (https://support.claude.com/en/articles/17631495-get-started-with-claude-duet): one persistent main thread, separate topic channels sharing memory, text/voice interaction, connected-app work and confirmation before consequential actions. Use these product principles as competitive reference, not as permission to copy its proprietary visuals or exact interface. RAG Agents should add reliable desktop continuity, deeper computer/browser workflows, richer task provenance and strong cross-device behavior.
+REPAIR TARGET
+Implement the real D1 channel entity and safe migration if absent. Preserve legacy conversation IDs and attach them to Main. Add owner-scoped APIs and server-authoritative metadata. Fix any cross-channel state contamination. Keep Chief singular and visible; specialists remain internal. Never call a channel feature complete because a summary table happens to use the word channel.
 
-======================================================================
-PROMPT 1: AUTHENTICATION, ONBOARDING AND APPLICATION SHELL
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Act as a real first-time and returning user. In Browserless, inspect the deployed sign-in route at desktop and mobile widths. Test Google sign-in only with an approved safe test identity; inspect session bootstrap, callback return path, refresh, logout, expired session, a second tab, direct deep links and reconnect after temporary network failure. Verify that the unauthenticated shell never renders private chat, files, tasks or computer state.
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
 
-Investigate “Skip Sign In — AI Testing” before activating it. Prove from code and deployed configuration whether it is restricted to a non-production/test environment, whether it can create or impersonate an identity, and whether it can reach production D1 data or backend resources. If it is exposed in production or bypasses normal identity checks, fix the root cause without weakening ordinary authentication. Add a regression test proving production cannot use a test bypass.
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
 
-Once safely authenticated, inspect the full app shell: initial loading, navigation, active destination, browser back/forward, deep links, empty states, error states, theme initialization and session restoration. Confirm every visible nav item opens the intended screen and that the shell does not flash the wrong theme or show fake online status. Test keyboard-only navigation, visible focus, labels and mobile safe areas.
-
-Acceptance: safe login and logout work; sessions restore correctly; private routes are protected; test bypass is safely isolated; navigation/deep links work; UI state reflects actual auth/service state; no console errors or failed required requests remain. Fix, deploy and retest every failure.
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-PROMPT 2: CHANNELS, SHARED MEMORY AND CONVERSATION LIFECYCLE
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+PROMPT 3: Chief chat, composer, streaming, and message interactions
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test whether a true channel entity exists in the deployed product. Do not confuse a conversation list, a summary label or a localStorage grouping with channels. A channel must have durable owner-scoped identity and support its own name, optional description, icon/accent, ordering, archive state and conversations. Verify the D1 schema, migration history, Worker API contracts and frontend state before concluding it exists.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The central surface is one conversation with Chief. It supports text, streaming replies, task progress, voice input, attachments, Markdown, and message actions. Existing source currently contains local-only Edit and Remove behavior, message Pin in localStorage, and conversation Pin/Archive in localStorage; these are not durable. Reply is currently a local composer reference and must be verified end to end. Do not trust a toast as proof of persistence.
 
-If channels are missing or partial, implement them end to end with a backward-compatible migration that preserves every existing conversation and message. Define a safe default channel for existing users, owner-scoped indexes and explicit conversation membership. Add server APIs for create, list, open, rename, metadata edit, pin/order, archive, restore, search and delete as supported. Ensure all queries enforce authenticated owner identity server-side; never trust a channel owner ID supplied by the model or browser.
+BROWSERLESS JOURNEY
+1. Send a short prompt and a multi-step prompt. Observe the user message, stream start, partial tokens, tool activity, completion, and final message.
+2. Double-click Send, reload mid-stream, disconnect/reconnect, retry, and stop a response. Verify no duplicate messages or duplicate external actions.
+3. Edit and remove a synthetic user message, pin and unpin messages, pin and archive a conversation, and reload. Confirm every supported action is server-persisted and synchronized to another context.
+4. React to a message, reply to a specific message, jump to the source, and verify the relation remains correct after refresh.
+5. Attach supported files, remove an attachment before sending, use voice dictation with permission granted and denied, and test keyboard shortcuts and IME composition.
+6. Test long Markdown, code blocks, tables, links, narrow mobile layout, and error states.
 
-In Browserless, create several channels for distinct synthetic topics, switch rapidly between them, start conversations, refresh, open a second tab and use a mobile viewport. Verify each channel's conversations and drafts stay correctly associated; no message may be routed to the previously active channel during rapid switching. Test archive/restore, ordering, search and deletion confirmation. Verify shared memory means relevant user-level context can be reused while channel-specific instructions and private content do not leak into unrelated channels. Prove ownership isolation with two safe test identities if available.
+REPAIR TARGET
+Implement missing server APIs, D1 persistence, idempotency, and safe UI rollback. If a control cannot be made real in this prompt, remove or disable it honestly rather than showing fake success. Do not expose hidden tool payloads or internal reasoning.
 
-Acceptance: channel identity and membership survive refresh and cross-device use; existing conversations remain accessible; no cross-channel or cross-owner leakage occurs; every visible channel control works; destructive actions are explicit and recoverable where promised. Fix, deploy and retest.
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
 
-======================================================================
-PROMPT 3: SINGLE CHIEF CHAT, COMPOSER AND MESSAGE INTERACTIONS
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Treat Chief as the only primary visible assistant. Verify the chat header, channel context, transcript, message composer, streaming output, tool activity and history. Specialists may execute behind the scenes, but the user must receive one coherent Chief response with useful summarized progress rather than confusing raw agent identities.
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
 
-In Browserless, run realistic multi-turn tasks. Test send, stop/cancel, retry, regenerate where safe, Enter-to-send, Shift+Enter newline, IME composition, mobile keyboard behavior, auto-grow, draft persistence, attachment selection, dictation if enabled, paste, long messages, empty/oversized input, provider failure, timeout and reconnect. Inspect the network and confirm each user action maps to exactly one request and one persisted user message. Verify SSE token streaming, stable message IDs, scroll anchoring, partial response recovery and no duplicate assistant messages after refresh.
-
-Inspect Markdown, code blocks, tables, lists, links, long URLs, images/attachments and narrow-screen overflow. Verify copy, quote/reply, share, edit, pin, remove, reactions and other visible actions. For each action, verify a durable server-side result after refresh and second tab; if it is not supported, remove or clearly disable the control instead of showing a fake success toast. Verify editing an earlier message does not silently replay consequential tool calls or duplicate email/computer actions.
-
-Acceptance: chat works smoothly on desktop and mobile; one user action produces one durable turn; streaming/cancellation/recovery are correct; every visible action works or is honestly unavailable; no local-only mutation masquerades as saved state. Fix, deploy and retest.
-
-======================================================================
-PROMPT 4: CHIEF ORCHESTRATION, TOOL USE AND TASK ACTIVITY
-
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
-
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test Chief with real safe tasks that require multiple capabilities: research a public page, summarize a supplied synthetic file, create a safe local artifact, inspect a page through an approved tool and coordinate multiple steps. Verify the tool registry exposes only tools actually configured for the authenticated owner and that permission failures are explained without pretending the task succeeded.
-
-Observe task lifecycle from request acceptance through planning, delegation, tool execution, synthesis and final response. Confirm Chief remains the only visible assistant identity. Tool rows must show accurate tool names, safe argument summaries, running/completed/failed state, timing and useful results. No raw internal prompt, secret, token, hidden system message or irrelevant subagent transcript may appear in the user interface.
-
-Test task cancellation, timeout, retries, partial success, unavailable provider, rate limit and network loss. Verify cancellation reaches active tools and prevents later side effects. Reopen the task after refresh and confirm the timeline and final artifacts persist. Every task must link to its originating channel, message and artifact where relevant. The Tasks surface must distinguish queued, running, waiting for approval/input, completed, failed and cancelled using actual backend state.
-
-Acceptance: delegated work is traceable and resumable; UI progress is truthful; cancellation and retries are safe; partial failures are explicit; Chief synthesizes one coherent response; no fake tool execution is displayed. Fix, deploy and retest.
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-PROMPT 5: MEMORY, HISTORY, SEARCH AND SUMMARIES
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+PROMPT 4: Chief orchestration, tools, approvals, and task activity
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test the complete historical-context path. Create synthetic conversations in multiple channels, then ask Chief questions whose answers are present in one prior conversation, absent from history, or present only in another channel. Verify history search returns relevant evidence with dates and source provenance; it must not invent facts or treat retrieved page/message content as trusted instructions.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+Chief is the visible commander. Specialist agents may research, engineer, or navigate behind the scenes, but users should see one coherent plan, meaningful progress, tool outcomes, approvals, and final deliverables. Consequential actions require an explicit approval bound to the exact action. A tool call being started is not proof it succeeded.
 
-Inspect tool_call_history retrieval, AI Search indexing, retries, stale-index behavior, daily summaries, 30-day rollups, compaction and source high-watermarks. Test fresh messages arriving while a summary job runs; older jobs must not overwrite newer coverage. Verify indexing failures are visible and retryable rather than silently treated as indexed. Search results must respect owner scope and intended channel scope.
+BROWSERLESS JOURNEY
+1. Submit one simple request, one research request, and one multi-step task that should use multiple internal capabilities.
+2. Inspect the visible task plan, progress timeline, specialist attribution, and final result. Verify specialists do not create separate conversational identities or duplicate replies.
+3. Trigger a harmless approval-required action in a test environment. Inspect exact target, payload, scope, expiry, and Allow/Deny behavior.
+4. Deny one action and approve another. Verify denial prevents execution and approval only authorizes the immutable action shown.
+5. Simulate a provider timeout, unavailable tool, quota error, malformed tool result, and browser reload during a task.
+6. Confirm the Tasks view and originating channel show the same canonical status and result.
 
-Test user controls for viewing, correcting or excluding retained non-sensitive preferences where implemented. Respect privacy and sensitive-data boundaries; do not expose internal summaries or unrelated conversation text. Verify deletion semantics across messages, summaries and search documents, including retries after partial failure. Do not claim data is fully erased if indexes or backups remain.
+REPAIR TARGET
+Fix orchestration, idempotency, approval lifecycle, provider fallback, and failure reporting. A task is complete only after its real output is verified. Keep approvals owner-scoped, non-replayable, and truthful. Never send real messages or perform irreversible actions during this test.
 
-Acceptance: correct historical recall is evidence-based; no-result is honest; summaries do not lose new messages; indexing status is truthful; channel and owner boundaries hold; correction/deletion behavior is documented and tested. Fix, deploy and retest.
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
 
-======================================================================
-PROMPT 6: TASKS, ROUTINES, TIMEZONES AND SCHEDULED EXECUTION
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Use Chief to create safe test routines: one-time, daily and monthly. Verify the assistant gathers missing required details rather than guessing, previews the exact task prompt, cadence, timezone and next run, and persists only the confirmed schedule. Test list, detail, edit, pause, resume, delete, run status and history from both Chat and Tasks.
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
 
-Inspect timezone conversion using IANA zones, UTC storage, daylight-saving skipped/repeated times, month-end dates, leap years and invalid recurrence values. Confirm server time is authoritative. Verify Worker Cron materializes due runs into a durable ledger, idempotency keys prevent duplicate execution, leases recover after worker interruption, retries use bounded backoff, and permanent failures do not retry forever.
-
-Test execution when the Codespace is running, stopped, starting, unreachable or rate-limited. Verify the Worker queues work before wake-up and dispatches only after a real health check. A routine must not be shown as completed merely because it was queued or dispatched. Verify routine execution cannot access the user's personal computer-control browser or bypass approvals.
-
-Acceptance: schedules persist and display correct local time; each due run executes at most once; offline recovery and retries are truthful; run history matches the Worker ledger; UI state reconciles after refresh and across devices. Use harmless test tasks only. Fix, deploy and retest.
-
-======================================================================
-PROMPT 7: GMAIL, CONNECTED SERVICES AND APPROVAL SAFETY
-
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
-
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test Google identity login separately from Gmail mailbox consent. Verify exact OAuth scopes, same-account binding, reconnect, wrong-account rejection, refresh, revoked grant, transient provider failure and disconnect. Confirm tokens remain server-side encrypted and never appear in browser storage, model prompts, logs or tool outputs.
-
-Test the owner-notification/approval lifecycle with a safe test configuration. Create a draft, inspect its exact sender, authenticated-owner recipient, subject, body preview, originating request and expiry. The model must never select or change recipient, sender, Cc, Bcc or Reply-To. Verify Allow, Deny, expiration, repeated clicks, two simultaneous tabs, retry and backend/provider failure. The state must transition atomically and at most one delivery may occur. Never send a real email during unattended QA; if no safe mailbox and test recipient exist, stop before delivery and mark that portion BLOCKED.
-
-Verify connector health indicators distinguish not connected, connected, expired, revoked, unavailable and permission denied. Ensure the UI does not show success based only on OAuth callback. Verify approval cards remain accurate after refresh and that a denied/expired request cannot later execute.
-
-Acceptance: least-privilege consent works; owner identity is enforced; approval is explicit and one-time; sender/recipient are authoritative; no unsafe real delivery occurs; UI mirrors backend state. Fix, deploy and retest.
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-PROMPT 8: COMPUTER, REMOTE CHROME AND REAL BROWSER WORKSPACE
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+PROMPT 5: Memory, history, search, summaries, and provenance
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test the RAG Agents Computer product feature separately from the Browserless QA system. Use only an approved safe test Codespace and synthetic pages/data. Verify boot, start, stop, reconnect, health status, session ownership, live noVNC framebuffer, fullscreen, split pane, persistent Chrome profile, CDP browser commands, terminal and remote file access. Confirm the displayed screen is the actual remote desktop, not a cached screenshot or simulated frame.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+Chief uses current conversation context, durable user memory, channel-specific history, incremental summaries, daily/30-day rollups, and Cloudflare AI Search. A source must be current, authorized, and traceable. User-level preferences can cross channels; private project details cannot. A stale summary must never erase newer transcript coverage.
 
-Test browser navigation, page waits, element targeting, click/type/scroll, downloads and screenshot capture through the app's computer tools. A tool must verify resulting page state before reporting success. Exercise stale elements, navigation timeouts, disconnected CDP, browser crash, stopped Codespace and network interruption. Verify user task context survives returning from Computer to Chat.
+BROWSERLESS JOURNEY
+1. Add a synthetic preference in Main and verify Chief can recall it from a separate project channel.
+2. Add project-specific synthetic information in one channel and ask for it from another; verify the privacy boundary.
+3. Search for a known message, channel, task, and artifact. Check filters, snippets, pagination, and source navigation.
+4. Open a long synthetic conversation, trigger or wait for summarization, reload, and verify recent messages remain searchable and correctly summarized.
+5. Test memory correction and deletion, stale search results, deleted messages, missing AI Search configuration, and provider failure.
+6. Inspect source references and verify they point to actual authorized messages or files rather than invented links.
 
-Audit security boundaries: noVNC and WebSocket routes require the authenticated session; tunnel origin is not treated as a credential; internal token checks remain active; ordinary agents use only the restricted allowlist/gateway sandbox and cannot access the personal Chrome session or bypass network controls. Never weaken these boundaries to make the test pass.
+REPAIR TARGET
+Fix retrieval ranking, summary watermarks, indexing retries, deletion cleanup, memory provenance, and user controls. Do not show hidden chain-of-thought or raw search metadata. If the source is missing or unauthorized, say so rather than fabricating an answer.
 
-Acceptance: real remote computer works end to end; UI reports actual machine state; reconnect and persistence are reliable; terminal/files are owner-scoped; restricted browsing is fail-closed; noVNC is protected. Fix, deploy and retest.
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
 
-======================================================================
-PROMPT 9: FILES, ARTIFACTS AND WORKSPACE INTEGRITY
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Test Files as a real user. Browse directories, breadcrumbs, sorting, search, refresh, hidden-file behavior, pagination, empty/loading/error states, previews and downloads. Use synthetic files in supported formats. Verify code/text, image, PDF and document previews are safely rendered; large and unsupported files must produce clear bounded errors rather than freezing the app.
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
 
-Test upload, download, create, rename, move and delete only where supported. Verify progress, interrupted transfers, duplicate filenames, conflicts, atomic writes and confirmation for destructive operations. Check MIME handling, content disposition, cache policy, authenticated download links and owner-scoped file identifiers. Attempt harmless traversal strings, encoded traversal, symlink escapes and unauthorized IDs in the safe test environment; all must be rejected server-side.
-
-Inspect Chief-generated artifacts. Verify each artifact has a stable identity, correct source channel/task/message provenance, preview, version and supported download/open actions. Confirm a new generation does not overwrite an existing file without explicit user intent. Ensure uploaded or generated HTML/scripts cannot execute in the application origin.
-
-Acceptance: file actions are durable and secure; previews are safe and responsive; transfer failures recover; provenance/versioning are accurate; no traversal or cross-owner access succeeds. Fix, deploy and retest.
-
-======================================================================
-PROMPT 10: PREMIUM VISUAL QUALITY, RESPONSIVENESS AND ACCESSIBILITY
-
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
-
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
-======================================================================
-Run a visual and interaction audit with Browserless at widths 320, 360, 390, 430, 768, 1024, 1280 and wide desktop. Test touch and pointer interactions, portrait/landscape, browser zoom, long text, empty/error/loading states, menus, dialogs, sheets, popovers and every major destination: Chat, channels, Bots, Tasks, Computer, Files and Settings.
-
-Evaluate the interface against the product bar: Apple-quality polish, excellent information hierarchy, typography, restrained maroon identity, deliberate spacing, refined surfaces, subtle motion, responsive ergonomics and visual consistency. Avoid generic generated-dashboard patterns, random gradients, over-cardification, unnecessary decoration and controls that appear clickable but are not. Compare interaction principles—not proprietary assets—with Claude Duet's persistent main thread, topic channels, useful task surface and connected-app workflow.
-
-Verify the distinctive Chief avatar: black square, exactly nine visible dots in a 3×3 arrangement, crisp at small and large sizes, with restrained sequential/wave patterns. Its states must map to real idle, thinking, streaming, tool-running, waiting-approval, success and error events. It must not burn CPU/GPU, flicker, obscure content or rely on color alone. Honor prefers-reduced-motion and pause offscreen animation.
-
-Check WCAG 2.2 AA essentials: semantic landmarks, accessible names, labels, focus visibility/order, keyboard operation, contrast, target sizes, screen-reader announcements, dialog focus management and reduced motion. Inspect console, layout overflow and network-loaded assets at each viewport.
-
-Acceptance: no clipped or inaccessible primary flow; mobile is deliberately designed rather than compressed desktop; themes are coherent; avatar is present and state-accurate; motion is smooth and restrained; all controls work. Fix, deploy and retest at affected widths.
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-PROMPT 11: FULL PRODUCTION REGRESSION, RESILIENCE AND RELEASE
 
-MANDATORY BROWSERLESS DIRECTIVE FOR THIS PROMPT — NOT OPTIONAL
-Use the exact remote Browserless MCP server already configured in AI7: AI7 → MCP → browserless → remote → https://mcp.browserless.io/mcp . Invoke its configured MCP browser tools for the actual deployed-app journey: navigate, click, type, scroll, inspect DOM/accessibility, capture screenshots, emulate desktop/tablet/mobile viewports, inspect console and network failures, and verify visible results. Do not merely mention Browserless in your report. Do not use local Playwright/Chrome, a personal browser, another hosted browser, RAG Agents' own Computer/noVNC/CDP browser, curl, API-only checks or static source inspection as a substitute. If this exact Browserless MCP is unavailable, retry and diagnose the MCP connection; then mark browser acceptance BLOCKED with exact error and timestamp. Never silently substitute another browser or claim a pass.
+PROMPT 6: Tasks, routines, scheduling, and notifications
 
-COMPULSORY REPAIR LOOP FOR THIS PROMPT
-1. REPRODUCE the issue/unfinished behavior in the deployed app using the Browserless MCP above; record URL, viewport, test identity class, exact steps, expected vs actual behavior and repeatability.
-2. CAPTURE before-fix screenshots, Browserless run/session identifier, relevant DOM/accessibility evidence, console errors and failed network requests. Redact cookies, tokens, personal data and secrets.
-3. TRACE the failure to its actual root cause across frontend state/component, Worker route, D1 schema/query, backend/Codespace or provider boundary. Do not guess or paper over symptoms.
-4. FIX the underlying implementation. Preserve auth, ownership, approvals and data integrity. No fake success, hard-coded demo responses, CSS-only concealment or weakened security.
-5. ADD regression tests, run targeted suites, typecheck and production build; then deploy frontend assets and Worker using the existing secure CLOUDFLARE_API_KEY environment secret. Never expose the key.
-6. RETEST the same scenario in the same configured Browserless MCP against the deployed version, then test adjacent journeys and affected desktop/mobile widths. If anything fails, return to step 3 and repeat without an arbitrary retry limit.
-7. Update AI7_PROGRESS.md with evidence and PASS/FAIL/BLOCKED. Source changes, passing unit tests or successful deploy alone are not browser acceptance. Do not finish until the repaired deployed journey passes or a precise external blocker is documented.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The Tasks surface contains one-off Chief work and recurring routines. The Worker Cron scheduler is intended to materialize due runs in D1, preserve them while the Codespace is stopped, wake the Codespace when configured, and dispatch idempotently. A saved routine is not the same as an executed run. Times must respect the user's IANA timezone and daylight-saving rules.
+
+BROWSERLESS JOURNEY
+1. Create a one-off task and verify it appears in the task list and originating channel.
+2. Create a synthetic daily routine with a test time, inspect the saved timezone and next run, then pause, resume, edit, and delete it.
+3. Test a weekly and monthly recurrence, month-end behavior, and a daylight-saving transition using a safe test clock or test fixture.
+4. Inspect queued, running, delayed, completed, rejected, and failed states. Simulate an unavailable backend or Codespace and verify the run remains queued rather than disappearing.
+5. Verify duplicate cron ticks do not execute the same run twice.
+6. Confirm completion and approval notifications deep-link to the right task and channel, respect quiet hours, and do not duplicate.
+
+REPAIR TARGET
+Fix task persistence, recurrence preview, run leases, retry/backoff, cancellation, and truthful notification state. Never claim a scheduled task ran because its card was created. Do not send real notifications or run destructive tasks against the owner's account.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
+
 ======================================================================
-After implementation batches, execute the complete deployed Browserless user journey from sign-in through channels, chat, Chief tools/tasks, history/search, routines, Gmail approvals (safe test boundary only), Computer, Files, Settings, logout and reauthentication. Include desktop and mobile. Use fresh sessions and a second tab to expose stale state and ownership errors.
 
-Exercise resilience: refresh mid-stream, network loss/recovery, slow provider, rate limit, malformed provider output, unavailable tool, expired session, multiple tabs, duplicate click, stale task state, Codespace outage, D1/AI Search errors and retry after partial completion. Test security boundaries including CSRF, owner isolation, test-login bypass isolation, XSS-safe Markdown, path traversal, approval races and restricted-browser escape attempts using safe non-destructive cases.
+PROMPT 7: Gmail inbox, drafts, approvals, and connected services
 
-For every defect, run the compulsory reproduce → capture → root-cause → fix → regression tests → deploy frontend and Worker → Browserless production retest loop. Continue until the same failing journey and adjacent regression scenarios pass. If a dependency outside the agent's control blocks progress, document the exact error and safe next action; do not mark it passed.
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+Google sign-in and Gmail consent are separate. Existing code supports a Gmail connection lifecycle, owner-only mail sending, and connector approvals; the README explicitly says inbox reading and incoming-reply workflows are not implemented. The model must not choose an arbitrary recipient. Owner notifications are sent only to the verified signed-in account. Any reply recipient must be mechanically derived from the selected original thread, displayed, locked, and approved by the owner.
 
-Before release, verify frontend build/typecheck, backend tests, Worker tests, migration compatibility, deployed asset version, Worker version ID, health endpoints and production smoke flows. Preserve the last known-good deployment and user data. Record commit, deploy timestamp, Browserless evidence references, test results, unresolved blockers and rollback procedure. Do not call the product finished while a required core flow is broken or unverified.
+BROWSERLESS JOURNEY
+1. Inspect Gmail connection status with no grant, after test consent, after token expiry, and after revocation.
+2. Verify the connected account identity and scope display.
+3. If inbox reading has been implemented, search and open synthetic test messages, inspect thread order, labels, unread state, and sanitized HTML. If absent, confirm the gap and implement the smallest complete read-only vertical slice.
+4. Draft a reply to a synthetic test thread. Verify recipients are derived from the selected thread and cannot be edited by the model. Do not send it.
+5. Inspect an approval card and verify it shows exact sender, recipient, subject, body, account, expiry, and action.
+6. Test denial, expired approval, wrong account, disconnected mailbox, duplicate send protection, and connector revocation.
 
-Acceptance: all safely testable core journeys pass on the deployed production app in Browserless; each repaired defect has regression coverage and post-deploy evidence; blocked tests are explicitly listed; no secrets or real user data appear in the report.
+REPAIR TARGET
+Fix inbox, thread, draft, approval, token refresh, and identity gaps. Never use a real recipient or send a real email in QA. Keep the owner-only notification recipient invariant. Report delivery only after a provider-confirmed result.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
 
 ======================================================================
-FINAL QA OPERATING RULES
+
+PROMPT 8: Computer, remote Chrome, terminal, and restricted browsing
+
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The Computer view connects to the actual Codespace machine through the Cloudflare Worker and tunnel. The same machine provides noVNC framebuffer, CDP browser actions, terminal, and files. The personal Computer browser is not the coding agent's QA browser. Ordinary agents must use the restricted-browser allowlist and must not control the user's signed-in Chrome.
+
+BROWSERLESS JOURNEY
+1. Inspect Computer state with the Codespace stopped, starting, ready, disconnected, and restarting.
+2. When the designated test Codespace is available, open the live screen and verify framebuffer updates, resize, keyboard, mouse, and reconnect.
+3. Open a harmless test page in the product's remote Chrome and verify navigation, click, typing, wait, screenshot, and page-state reporting.
+4. Run a harmless terminal command and read a synthetic workspace file. Verify output, exit code, path containment, and session identity.
+5. Test denied restricted-browser domains, allowed test domains, redirects, alternate ports, and proxy failure.
+6. Confirm a non-owner or unauthenticated context cannot open the screen, CDP, terminal, files, or internal routes.
+
+REPAIR TARGET
+Fix real session and lifecycle defects without weakening the gateway, tunnel, or restricted egress boundary. Label unavailable Codespace capabilities honestly. Use Browserless MCP for QA navigation; never use the product's Computer browser to test the product itself.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
+
 ======================================================================
-- Run prompts 1–11 in order for the initial comprehensive pass. For later cycles, select prompts based on code changes and open defects; do not rerun a passing scenario without a relevant regression risk.
-- After any repair, rerun the exact failing test and related neighboring journeys in Browserless against the deployed build. If it fails, repair again and repeat. There is no one-retry limit.
-- Use the exact AI7 Browserless MCP endpoint above for every browser test. Browserless outage means BLOCKED, not permission to switch tools.
-- Maintain durable progress in the existing AI7_PROGRESS.md without erasing history. Do not create schedules or automations as part of QA.
-- Do not repeat completed implementation work from prompt.txt. Use QA to find actual defects and verify the fix, not to create cosmetic churn.
-- A release report must distinguish PASS, FAIL and BLOCKED. Never turn "source exists", "API returned 200", "build succeeded" or "deployed" into a claim that a real user journey works.
+
+PROMPT 9: Files, previews, generated artifacts, and sharing
+
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The Files surface exposes the real workspace filesystem through the Codespace daemon. It should support safe browsing, previews, uploads, downloads, and Chief-generated artifacts linked to tasks and channels. A generated file must exist on the server before the UI claims it is ready. Private files must remain private unless the owner explicitly shares them.
+
+BROWSERLESS JOURNEY
+1. Browse workspace roots, folders, breadcrumbs, search, sorting, and empty directories.
+2. Open supported text, Markdown, image, PDF, and office previews. Test unsupported and malformed files.
+3. Upload and download synthetic text and binary files; verify byte size or checksum and path.
+4. Ask Chief to generate a small report artifact, open it from the originating task and channel, edit it, save, reload, and inspect version history if implemented.
+5. Test duplicate filenames, interrupted transfers, oversized files, traversal attempts, symlink escape, and disconnected Codespace.
+6. Verify sharing is disabled by default and that expired or revoked test links cannot be used.
+
+REPAIR TARGET
+Fix path validation, ownership, MIME handling, preview sanitization, upload/download integrity, artifact versioning, and truthful progress. Never expose the raw Codespace filesystem or execute uploaded content in the app origin.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
+
+======================================================================
+
+PROMPT 10: Premium visual quality, responsive behavior, and Chief identity
+
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+The product target is a premium, original, calm interface with the quality of a carefully designed iOS app, not generic AI-generated dashboard styling. Use the established deep burgundy #4A0E17 as a restrained identity. The requested Chief face is a black square with a 3×3 grid of glowing dots and deliberate activity sequences. The current theme uses violet accents and AppIcon.tsx contains dock icons, not proof of the Chief avatar. The live unauthenticated sign-in shell is not evidence of authenticated-view quality.
+
+BROWSERLESS JOURNEY
+1. Test desktop 1440×900 and wide desktop; inspect typography, hierarchy, spacing, sidebar, chat, tasks, and overlays.
+2. Test tablet 768×1024 and mobile 390×844 plus 320px width. Inspect horizontal overflow, fixed navigation, keyboard-safe composer, safe-area insets, touch targets, dialogs, and scrolling.
+3. Switch light/dark themes and inspect contrast, focus, borders, and semantic states.
+4. Observe Chief avatar idle, listening, thinking, working, approval, success, and error states. Test reduced-motion preference.
+5. Navigate using keyboard only and inspect the accessibility tree, focus order, accessible names, live announcements, and dialog focus trapping.
+6. Simulate slow network, no data, disconnected services, long messages, and task errors.
+
+REPAIR TARGET
+Fix design-system inconsistency and real interaction defects, not just colors. Keep the layout original; do not copy Claude's proprietary screens. Every visible control must work. Capture before/after Browserless screenshots at each breakpoint and retest after deployment.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
+
+======================================================================
+
+PROMPT 11: Full production regression, security, resilience, and release
+
+FEATURE DESCRIPTION AND TEST OBJECTIVE
+FEATURE MAP
+This is the final cross-product acceptance run. RAG Agents must behave as one coherent workforce across auth, Main and project channels, Chief chat, internal specialists, memory, AI Search, tasks, routines, Gmail, connected services, Computer, Files, artifacts, notifications, and settings. The UI must never claim more than the backend actually completed. Desktop and mobile must share the same durable state.
+
+BROWSERLESS JOURNEY
+1. Start in a clean test account and complete onboarding, create Main plus two project channels, and verify cross-device state.
+2. Run a complete Chief task that uses history, a specialist, a safe tool, and an artifact; inspect progress and final result.
+3. Create and complete a routine in a safe test environment; verify scheduled state, idempotency, and notification.
+4. Exercise Gmail read-only access and draft-only reply approval without sending external mail.
+5. Exercise Computer and Files only when the designated test Codespace is available; otherwise record a precise blocker.
+6. Test expired sessions, CSRF failures, owner isolation, connector revocation, network interruption, provider quota, and Worker restart.
+7. Repeat critical journeys on desktop, tablet, and mobile; inspect console, network failures, accessibility, and screenshots.
+8. Verify deployment version, migrations, health, and recovery behavior.
+
+REPAIR TARGET
+Create a release-blocker list ranked by severity. Fix every reproducible blocker through the compulsory loop. Run the full backend, Worker, frontend, and migration suites. Deploy the final verified assets and Worker with the existing secret. Do not mark the product finished while a critical journey remains blocked or unverified.
+
+AI7 MCP CONFIGURATION — INVOKE THIS EXACT REMOTE SERVER
+Import
+Only add servers you trust. Docker and absolute host paths are not supported.
+browserless
+remote
+1
+https://mcp.browserless.io/mcp
+
+MANDATORY BROWSER RULE
+You MUST use the Browserless MCP tools exposed by the already configured AI7 environment for every browser action in this prompt. The configuration above is the exact server identity to invoke, not optional documentation. Open the deployed RAG Agents origin in that remote Browserless session; inspect the real DOM/accessibility tree, screenshots, viewport, console, and network. Do not merely mention Browserless in the report. Do not substitute local Playwright, local Chrome/Chromium, another hosted browser, Firecrawl, curl, API-only tests, source inspection, static screenshots, or RAG Agents' own Computer browser. Those are not browser acceptance. Firecrawl is used by the Chief of Staff for external research; it is not the Kilo QA browser.
+
+If Browserless is not visible or cannot connect, inspect AI7's configured MCP server list and invoke the existing browserless remote entry. Do not silently skip it and do not install a different browser. If it remains unavailable, write the exact connection error and attempted resolution to query.txt, mark browser acceptance BLOCKED, continue independent non-browser work, and never claim a browser pass. Use the existing authorized AI7 test profile or designated test identity; Browserless does not inherit the owner's personal browser cookies. Never add a public production sign-in bypass or ask the owner to paste credentials.
+
+COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
+1. Reproduce the exact journey in Browserless against https://rag-agents.pratyakshrawat768.workers.dev. Capture screenshots, DOM/accessibility evidence, console errors, failed requests, response codes, and the affected user/channel/task IDs using synthetic data.
+2. Write down the expected behavior and actual behavior. Identify the smallest reproducible failure and trace it to the real frontend, Worker, D1, backend, or deployment root cause.
+3. Implement a durable fix across UI and server. Do not hide the defect, add fake data, suppress errors, remove a useful control, or weaken auth/approval/ownership boundaries.
+4. Add or update unit, integration, API-contract, migration, and security regression tests. Run the relevant suites, typechecks, and production build.
+5. Deploy the changed frontend assets AND Worker to the existing Cloudflare deployment using the already-configured CLOUDFLARE_API_KEY environment secret. GITHUB_TOKEN is also already configured. Never print, echo, log, commit, or expose either secret; never ask the owner for them. Verify the actual deployed Worker version.
+6. Start or reuse the exact Browserless MCP remote session and repeat the same failing steps against the newly deployed origin. Then run adjacent regression cases and all relevant responsive breakpoints.
+7. If any assertion still fails, return to step 1 and repeat. A passing build is not a passing product. A passing local test is not a passing deployed journey. Do not stop after one attempted fix.
+8. Mark PASS only after the same Browserless scenario succeeds on the deployed version and the relevant regression suite passes. If a genuine external prerequisite prevents completion, mark BLOCKED with exact evidence, write a non-secret query.txt entry, and continue other independent fixes.
+
+GLOBAL QA SAFETY AND REPORTING
+Use only synthetic data and a designated test identity. Do not send real external email, make purchases, delete real user files, reset the owner's account, or alter real connected services. Draft-only is the default for external communications. Preserve existing D1 data and use additive migrations. Keep Chief as the sole visible assistant. Record evidence in AI7_PROGRESS.md after this prompt: prompt number, date, branch/commit, Browserless session/run URL or ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Do not modify prompt.txt or prompt2.txt. Do not create schedules or ask the owner to hand off to another mode.
+
+END OF 11 MANDATORY BROWSERLESS QA + REPAIR PROMPTS
