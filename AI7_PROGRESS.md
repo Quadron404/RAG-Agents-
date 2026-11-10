@@ -181,3 +181,18 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - Next execution priorities: Kilo should begin with Prompt 1's production OAuth configuration diagnosis, then Prompt 2's production test-bypass audit, followed by the channel data model/migration and durable chat interactions. Execute prompt2.txt through the exact AI7 remote Browserless MCP after a valid test identity is available; never bypass authentication to force a pass.
 
 - Final read-back verification after the wording correction: 118/118 implementation prompts contain the exact report phrase, query.txt instruction, To-Do requirement, and Wrangler token-export line; 11/11 QA prompts contain the Browserless URL, compulsory repair loop, token-export line, and query.txt reporting requirement. query.txt remains 0 bytes.
+
+
+## Cloudflare Production secret-binding verification — 2026-11-11
+
+- Used the connected Cloudflare account to inspect the exact service environment with GET /accounts/{account_id}/workers/services/rag-agents/environments/production/settings. The response was successful and listed the known plain-text variables plus D1, AI Search, and assets bindings; it returned no secret_text bindings.
+- A separate Worker-script secret listing request returned an empty list. The service-environment settings endpoint is the authoritative match for the dashboard's Production environment; no secret values were retrieved or exposed.
+- Source confirms the operational impact:
+  - worker/src/index.ts requires both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before /auth/login proceeds; the live endpoint returns HTTP 503.
+  - worker/src/env.ts declares GOOGLE_CLIENT_SECRET, SESSION_SECRET, and RAG_INTERNAL_TOKEN as secrets.
+  - worker/src/store.ts uses SESSION_SECRET for session-token HMAC.
+  - worker/src/proxy.ts sends RAG_INTERNAL_TOKEN to the backend.
+  - worker/src/chat/providers.ts reads GROQ_API_KEY when AGENT_PROVIDER=groq.
+- Therefore the current Production environment appears to lack the required secret bindings, not merely a UI configuration display. Do not invent values or claim the app is fixed. The owner-provided CLOUDFLARE_API_KEY is a deployment credential, not a substitute for Google OAuth, session, internal proxy, or Groq secrets.
+- Updated prompt.txt Prompt 1 and the current baseline to require an exact secret-name audit, secure-source check, and explicit blocker reporting; updated prompt2.txt's live baseline accordingly. No secret values were read, printed, or changed.
+- This remains an external configuration blocker for authenticated production QA. Kilo should continue independent code/UI work, but must not create a production auth bypass or mark the app fully operational until the required secret bindings are supplied from a legitimate secure source and verified live.
