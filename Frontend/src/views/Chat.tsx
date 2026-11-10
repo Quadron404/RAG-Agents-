@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
 import { useAuth } from "../auth";
-import { useCore } from "../core";
+import { useCore, apiFetch } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
 import { parseAgentField, relativeTime, timeStr } from "../lib/format";
 import { Markdown } from "../lib/markdown";
@@ -51,10 +51,92 @@ function minifiedArgs(args: Record<string, unknown>): string {
   return v.length > 40 ? v.slice(0, 40) + "…" : v;
 }
 
+/* API helpers for message operations --------------------------------------- */
+
+async function apiEditMessage(threadId: string, messageId: string, content: string): Promise<Message | null> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Message;
+  } catch {
+    return null;
+  }
+}
+
+async function apiDeleteMessage(threadId: string, messageId: string): Promise<boolean> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: "DELETE",
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function apiTogglePin(threadId: string, messageId: string): Promise<Message | null> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/pin`, {
+      method: "POST",
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Message;
+  } catch {
+    return null;
+  }
+}
+
+async function apiReact(threadId: string, messageId: string, emoji: string): Promise<Message | null> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/react`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Message;
+  } catch {
+    return null;
+  }
+}
+
+async function apiUnreact(threadId: string, messageId: string, emoji: string): Promise<Message | null> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/unreact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Message;
+  } catch {
+    return null;
+  }
+}
+
+async function apiSetReply(threadId: string, messageId: string, replyToId: string | null): Promise<Message | null> {
+  try {
+    const r = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reply_to_id: replyToId }),
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Message;
+  } catch {
+    return null;
+  }
+}
+
 /* hover/context menu items builder ------------------------------------------ */
 
 function baseMessageMenu(m: Message, threadId: string, openMenu: ReturnType<typeof useUi.getState>["openMenu"], x: number, y: number) {
   const { toast } = useUi.getState();
+  const core = useCore.getState();
   const items: { label: string; icon: string; danger?: boolean; onSelect: () => void }[] = [
     {
       label: "Copy",
@@ -71,6 +153,8 @@ function baseMessageMenu(m: Message, threadId: string, openMenu: ReturnType<type
       onSelect: () => {
         useUi.getState().setReplyTo({ threadId, msgId: m.id, text: m.content });
         haptic("light");
+        /* Persist reply-to on server */
+        void apiSetReply(threadId, m.id, m.id);
       },
     },
   ];
@@ -79,14 +163,9 @@ function baseMessageMenu(m: Message, threadId: string, openMenu: ReturnType<type
       label: "Edit",
       icon: "edit",
       onSelect: () => {
-        useCore.setState((s) => ({
-          messages: {
-            ...s.messages,
-            [threadId]: (s.messages[threadId] || []).map((mm) =>
-              mm.id === m.id ? { ...mm, editing: !mm.editing } : mm
-            ),
-          },
-        }));
+        core.setMessages(threadId, (prev) =>
+          prev.map((mm) => (mm.id === m.id ? { ...mm, editing: !mm.editing } : mm))
+        );
       },
     });
   }
@@ -99,8 +178,17 @@ function baseMessageMenu(m: Message, threadId: string, openMenu: ReturnType<type
     {
       label: m.pinned ? "Unpin" : "Pin",
       icon: "pin",
-      onSelect: () => {
-        togglePin(threadId, m.id);
+      onSelect: async () => {
+        const updated = await apiTogglePin(threadId, m.id);
+        if (updated) {
+          core.setMessages(threadId, (prev) =>
+            prev.map((mm) => (mm.id === m.id ? { ...mm, ...updated, pinned: updated.pinned ?? !m.pinned } : mm))
+          );
+          toast(updated.pinned ? "Pinned" : "Unpinned", "ok");
+        } else {
+          toast("Failed to update pin", "err");
+        }
+        haptic("success");
       },
     }
   );
@@ -109,10 +197,45 @@ function baseMessageMenu(m: Message, threadId: string, openMenu: ReturnType<type
       label: "Remove",
       icon: "trash",
       danger: true,
-      onSelect: () => {
-        useCore.setState((s) => ({
-          messages: { ...s.messages, [threadId]: (s.messages[threadId] || []).filter((mm) => mm.id !== m.id) },
-        }));
+      onSelect: async () => {
+        const ok = await apiDeleteMessage(threadId, m.id);
+        if (ok) {
+          core.setMessages(threadId, (prev) => prev.filter((mm) => mm.id !== m.id));
+          toast("Message removed", "ok");
+        } else {
+          toast("Failed to remove message", "err");
+        }
+        haptic("success");
+      },
+    });
+  }
+  /* Reactions */
+  const reactions = (m.data && typeof m.data === "string" ? JSON.parse(m.data).reactions : {}) as Record<string, number>;
+  const userReacted = (m.data && typeof m.data === "string" ? JSON.parse(m.data).user_reacted : {}) as Record<string, boolean>;
+  const emojiOptions = ["👍", "❤️", "😂", "😮", "😢", "😡", "🎉", "👀"];
+  for (const emoji of emojiOptions) {
+    const count = reactions[emoji] || 0;
+    const reacted = userReacted[emoji] || false;
+    items.push({
+      label: `${emoji} ${count ? count : ""}${reacted ? " (you)" : ""}`,
+      icon: reacted ? "check" : "",
+      onSelect: async () => {
+        if (reacted) {
+          const updated = await apiUnreact(threadId, m.id, emoji);
+          if (updated) {
+            core.setMessages(threadId, (prev) =>
+              prev.map((mm) => (mm.id === m.id ? { ...mm, ...updated } : mm))
+            );
+          }
+        } else {
+          const updated = await apiReact(threadId, m.id, emoji);
+          if (updated) {
+            core.setMessages(threadId, (prev) =>
+              prev.map((mm) => (mm.id === m.id ? { ...mm, ...updated } : mm))
+            );
+          }
+        }
+        haptic("light");
       },
     });
   }
@@ -134,24 +257,6 @@ async function shareMessage(text: string) {
 }
 
 /* pins (conversation + message) ---------------------------------------------- */
-
-function loadThreadPins(): Record<string, string[]> {
-  try {
-    return JSON.parse(localStorage.getItem("rag.pins") || "{}") as Record<string, string[]>;
-  } catch {
-    return {};
-  }
-}
-
-function togglePin(threadId: string, msgId: string) {
-  const pins = loadThreadPins();
-  const list = pins[threadId] || [];
-  const next = list.includes(msgId) ? list.filter((x) => x !== msgId) : [...list, msgId];
-  pins[threadId] = next;
-  localStorage.setItem("rag.pins", JSON.stringify(pins));
-  useUi.getState().toast(list.includes(msgId) ? "Removed from pinned" : "Pinned", "ok");
-  haptic("success");
-}
 
 /* ============================ conversation list =========================== */
 
@@ -281,6 +386,10 @@ function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadI
 
   const isEdited = (m.data && JSON.stringify(m.data).includes("edited")) || m.editing;
 
+  /* Parse reactions from message data */
+  const reactions = (m.data && typeof m.data === "string" ? JSON.parse(m.data).reactions : {}) as Record<string, number>;
+  const reactionEntries = Object.entries(reactions).map(([emoji, count]) => ({ emoji, count }));
+
   return (
     <div
       className={`msg ${isUser ? "msg--user" : "msg--agent"}${parsed.kind === "commander" ? " msg--commander" : ""}`}
@@ -326,10 +435,35 @@ function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadI
             <div className="bubble__attach">
               {m.data && typeof m.data === "string" && m.data.includes("{") ? renderAttachChips(m.data) : null}
             </div>
+            {/* Reply-to indicator */}
+            {(() => {
+              try {
+                const data = m.data && typeof m.data === "string" ? JSON.parse(m.data) : {};
+                if (data.reply_to) {
+                  return (
+                    <div className="reply-indicator" style={{ marginBottom: 8, padding: "6px 10px", background: "var(--bg2)", borderRadius: 8, borderLeft: "3px solid var(--violet)", fontSize: 12.5 }}>
+                      <span style={{ color: "var(--violet)", fontWeight: 600 }}>Replying to </span>
+                      <span style={{ color: "var(--text-2)" }}>{data.reply_to}</span>
+                    </div>
+                  );
+                }
+              } catch {}
+              return null;
+            })()}
             {m.content ? (
               <Markdown text={m.content} streaming={m.pending} />
             ) : (
               <span style={{ color: "var(--text-3)" }}>…</span>
+            )}
+            {reactionEntries.length > 0 && (
+              <div className="msg__reactions" style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                {reactionEntries.map(({ emoji, count }) => (
+                  <span key={emoji} className="reaction-badge" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, background: "var(--bg2)", fontSize: 12 }}>
+                    <span>{emoji}</span>
+                    <span>{count}</span>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -367,17 +501,19 @@ function MessageBubble({ m, threadId, summarizedThrough }: { m: Message; threadI
 
 function EditBox({ m, threadId, onDone }: { m: Message; threadId: string; onDone: () => void }) {
   const [v, setV] = useState(m.content);
-  const save = () => {
-    useCore.setState((s) => ({
-      messages: {
-        ...s.messages,
-        [threadId]: (s.messages[threadId] || []).map((mm) =>
-          mm.id === m.id ? { ...mm, content: v, data: '{"edited":true}' } : mm
-        ),
-      },
-    }));
-    haptic("medium");
-    onDone();
+  const { toast } = useUi.getState();
+  const core = useCore.getState();
+  const save = async () => {
+    const updated = await apiEditMessage(threadId, m.id, v);
+    if (updated) {
+      core.setMessages(threadId, (prev) =>
+        prev.map((mm) => (mm.id === m.id ? { ...mm, ...updated, editing: false } : mm))
+      );
+      haptic("medium");
+      onDone();
+    } else {
+      toast("Failed to save edit", "err");
+    }
   };
   return (
     <div className="bubble" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 260 }}>
@@ -707,7 +843,8 @@ function Composer() {
     // the socket is down, or a run is already in flight.  Clearing the draft
     // regardless is what made clicking Send while offline look like it worked
     // and throw the message away.
-    if (!send(finalText)) return;
+    const replyToId = replyTo?.msgId;
+    if (!send(finalText, replyToId)) return;
     setText("");
     setAttaches([]);
     autoGrow();

@@ -1,0 +1,25 @@
+BROWSERLESS AUTHENTICATION BLOCKED - Google sign-in not configured on deployed Worker
+
+The deployed RAG Agents application at https://rag-agents.pratyakshrawat768.workers.dev:
+1. Loaded the unauthenticated shell (shows only "Continue with Google" link)
+2. Verified GET /auth/session returns authenticated:false
+3. Clicked "Continue with Google" → navigated to /auth/login?next=%
+4. Page returns: {"error":"Google sign-in is not configured"}
+
+ROOT CAUSE: The Cloudflare Worker is missing Google OAuth configuration (GOOGLE_CLIENT_SECRET and/or GOOGLE_CLIENT_ID not properly set as secrets). The wrangler.jsonc has GOOGLE_CLIENT_ID as a var but GOOGLE_CLIENT_SECRET would need to be a secret (wrangler secret put).
+
+This is a production deployment configuration issue, not a code issue.
+
+WORKAROUND: Cannot proceed with authenticated Browserless QA for Prompt 3 without Google OAuth configured on the Worker.
+
+IMPLEMENTATION STATUS: Code changes for Prompt 3 are complete and deployed (version f6e64f32-9a1f-4655-a407-09a291d5f2e1):
+- Worker store/routes: message edit, delete, pin, reactions, reply-to APIs
+- Frontend: server-persisted operations, reaction badges, reply-to indicators, composer reply_to field
+
+REQUIRED TO UNBLOCK: Configure Google OAuth credentials on Cloudflare Worker:
+- GOOGLE_CLIENT_SECRET as wrangler secret
+- Verify GOOGLE_CLIENT_ID is correct
+- Verify GOOGLE_AUTH_URL, GOOGLE_TOKEN_URL, GOOGLE_JWKS_URL
+- Verify SESSION_TTL_SECONDS
+
+BLOCKED: Authenticated Browserless QA for Prompt 3 and subsequent prompts.

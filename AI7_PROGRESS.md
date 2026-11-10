@@ -151,3 +151,49 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
   4. Build the dedicated 3×3 Chief avatar and replace the violet-first theme with the original burgundy design system.
   5. Implement Gmail inbox reading and draft-only replies with locked, thread-derived recipients and explicit owner approval.
   6. Execute QA prompts 1–11 through the exact AI7 Browserless MCP remote server, fixing each issue in the mandatory reproduce → root-cause fix → tests → Cloudflare deploy → same-Browserless retest loop.
+
+## Prompt 3 Implementation — 2026-11-10 12:47 Asia/Kolkata
+
+- **Objective**: Chief chat, composer, streaming, and message interactions (Prompt 3 from prompt2.txt)
+- **Browserless QA**: BLOCKED — No AI7 test profile with Google credentials available for authenticated session. OAuth redirect verified working; `/auth/session` returns `authenticated:false`.
+- **Code Changes Implemented** (verified via TypeScript build):
+  1. **Worker store** (`src/chat/store.ts`): Added `deleteMessage`, `toggleMessagePin`, `addMessageReaction`, `removeMessageReaction`, `setMessageReplyTo` with `parseData` utility.
+  2. **Worker routes** (`src/chat/routes.ts`): Added handlers for PATCH/DELETE `/threads/:id/messages/:messageId` and POST `/pin`, `/react`, `/unreact`, `/reply`. Fixed routing logic for `segments.length >= 4`.
+  3. **Frontend core** (`src/core.ts`): Added `setMessages` helper for optimistic updates; updated `send()` to accept `replyToId` and include in SSE request.
+  4. **Frontend Chat** (`src/views/Chat.tsx`): 
+     - Replaced localStorage-only pin/edit/delete with server API calls (`apiTogglePin`, `apiEditMessage`, `apiDeleteMessage`)
+     - Added reaction API (`apiReact`, `apiUnreact`) and reply-to API (`apiSetReply`)
+     - Updated `EditBox` to persist via server
+     - Added reaction badges display on messages
+     - Added reply-to indicator display in bubble
+     - Context menu now includes reaction options (👍 ❤️ 😂 😮 😢 😡 🎉 👀)
+     - Composer sends `reply_to` field for threaded replies
+- **Build & Deploy**: ✅ Frontend builds successfully (5 assets, 236.38 KiB). ✅ Worker deployed to Cloudflare.
+- **Deployed Version**: `f6e64f32-9a1f-4655-a407-09a291d5f2e1` at https://rag-agents.pratyakshrawat768.workers.dev
+- **Worker Status**: Responds to `/chat/status` with `authentication required` (expected)
+- **Pre-existing TypeScript Errors**: mail-tool.ts, routine-tools.ts, scheduler.ts, test files — unchanged by this work.
+
+**Remaining Browserless QA for Prompt 3** (requires authenticated session):
+- Test short prompt + multi-step prompt: stream start, partial tokens, tool activity, completion
+- Test double-click Send, reload mid-stream, disconnect/reconnect, retry, stop response — verify no duplicates
+- Test edit/remove user message, pin/unpin, pin/archive conversation — verify server persistence + sync to second context
+- Test react to message, reply to specific message, jump to source — verify relation after refresh
+- Test attachments (add/remove before send), voice dictation (permission granted/denied), keyboard shortcuts, IME
+- Test long Markdown, code blocks, tables, links, narrow mobile layout, error states
+- Record evidence in this ledger: prompt number, date, branch/commit, Browserless session ID, screenshots, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED
+
+**Next**: Await AI7 test profile availability or user-provided Google credentials to complete Browserless QA loop per mandatory reproduce → fix → deploy → retest requirement.
+
+
+## Critical Finding — 2026-11-10 13:15 Asia/Kolkata
+
+- **Issue**: Google OAuth not configured on deployed Cloudflare Worker
+- **Evidence**: Browserless session clicked "Continue with Google" → navigated to `/auth/login?next=%` → page returned `{"error":"Google sign-in is not configured"}`
+- **Root Cause**: Worker missing GOOGLE_CLIENT_SECRET (and possibly other OAuth credentials) as Cloudflare secrets. The wrangler.jsonc has GOOGLE_CLIENT_ID as a var but secrets must be set via `wrangler secret put`.
+- **Impact**: All authenticated Browserless QA for Prompts 1-11 BLOCKED until fixed.
+- **Code Status**: Prompt 3 implementation complete and deployed (v f6e64f32). Cannot verify without authentication.
+- **Required Fix**: Set Cloudflare Worker secrets:
+  - `wrangler secret put GOOGLE_CLIENT_SECRET`
+  - Verify `GOOGLE_CLIENT_ID`, `GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `GOOGLE_JWKS_URL`, `SESSION_TTL_SECONDS`
+  - Redeploy Worker after secrets configured
+

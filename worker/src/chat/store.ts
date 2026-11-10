@@ -2,6 +2,15 @@
 import type { Env } from "../env";
 import type { ToolCall } from "./types";
 
+function parseData(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 export interface ConversationRow {
   id: string;
   owner_sub: string;
@@ -292,6 +301,74 @@ export async function updateMessage(
       value.agent ?? null,
     )
     .first<MessageRow>();
+}
+
+export async function deleteMessage(
+  env: Env,
+  ownerSub: string,
+  id: string,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `DELETE FROM messages WHERE id = ?1 AND owner_sub = ?2`,
+  )
+    .bind(id, ownerSub)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function toggleMessagePin(
+  env: Env,
+  ownerSub: string,
+  id: string,
+): Promise<MessageRow | null> {
+  const row = await getMessageById(env, ownerSub, id);
+  if (!row) return null;
+  const data = parseData(row.data);
+  const nextPinned = !data.pinned;
+  return updateMessage(env, ownerSub, id, { data: { ...data, pinned: nextPinned } });
+}
+
+export async function addMessageReaction(
+  env: Env,
+  ownerSub: string,
+  id: string,
+  emoji: string,
+): Promise<MessageRow | null> {
+  const row = await getMessageById(env, ownerSub, id);
+  if (!row) return null;
+  const data = parseData(row.data);
+  const reactions = (data.reactions as Record<string, number>) || {};
+  reactions[emoji] = (reactions[emoji] || 0) + 1;
+  return updateMessage(env, ownerSub, id, { data: { ...data, reactions } });
+}
+
+export async function removeMessageReaction(
+  env: Env,
+  ownerSub: string,
+  id: string,
+  emoji: string,
+): Promise<MessageRow | null> {
+  const row = await getMessageById(env, ownerSub, id);
+  if (!row) return null;
+  const data = parseData(row.data);
+  const reactions = (data.reactions as Record<string, number>) || {};
+  if (reactions[emoji] && reactions[emoji] > 0) {
+    reactions[emoji] -= 1;
+    if (reactions[emoji] === 0) delete reactions[emoji];
+  }
+  return updateMessage(env, ownerSub, id, { data: { ...data, reactions } });
+}
+
+export async function setMessageReplyTo(
+  env: Env,
+  ownerSub: string,
+  id: string,
+  replyToId: string | null,
+): Promise<MessageRow | null> {
+  const row = await getMessageById(env, ownerSub, id);
+  if (!row) return null;
+  const data = parseData(row.data);
+  return updateMessage(env, ownerSub, id, { data: { ...data, reply_to: replyToId } });
 }
 
 export async function insertHiddenToolCall(

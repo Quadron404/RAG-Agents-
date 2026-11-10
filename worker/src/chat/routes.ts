@@ -20,6 +20,7 @@ import {
   createConversation,
   createRequest,
   deleteConversation,
+  deleteMessage,
   getConversation,
   getMessageById,
   getRequest,
@@ -38,6 +39,10 @@ import {
   renameConversation,
   resetRequestForRetry,
   setTitleIfDefault,
+  toggleMessagePin,
+  addMessageReaction,
+  removeMessageReaction,
+  setMessageReplyTo,
   touchConversation,
   updateMessage,
   type ConversationRow,
@@ -370,6 +375,7 @@ async function ensureMessages(
   userId: string,
   assistantId: string,
   content: string,
+  replyToId?: string,
 ): Promise<{ userMessage: MessageRow; assistantMessage: MessageRow; firstTurn: boolean }> {
   let userMessage = await getMessageById(env, principal.user.google_sub, userId);
   const existingUsers = await countUserMessages(env, conversation.id);
@@ -392,6 +398,7 @@ async function ensureMessages(
       role: "user",
       agent: "user",
       content,
+      data: replyToId ? { reply_to: replyToId } : undefined,
       requestId,
     });
   }
@@ -518,6 +525,7 @@ async function startTurn(
       userMessageId,
       assistantMessageId,
       content,
+      typeof body?.reply_to === "string" ? body.reply_to : undefined,
     );
     await setTitleIfDefault(env, principal.user.google_sub, conversation.id, autoTitle(content), now);
     await touchConversation(env, principal.user.google_sub, conversation.id, now);
@@ -808,6 +816,109 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Message operation handlers                                                  */
+/* -------------------------------------------------------------------------- */
+
+async function handleSetReply(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const replyToId = body?.reply_to_id === null ? null : typeof body?.reply_to_id === "string" ? body.reply_to_id : "";
+  if (replyToId === "") {
+    return json({ error: "reply_to_id is required" }, 400);
+  }
+  const updated = await setMessageReplyTo(env, principal.user.google_sub, messageId, replyToId || null);
+  if (!updated) return json({ error: "message not found" }, 404);
+  return json(mapMessage(updated));
+}
+
+async function handleReact(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const emoji = typeof body?.emoji === "string" ? body.emoji : "";
+  if (!emoji || emoji.length > 8) {
+    return json({ error: "valid emoji required" }, 400);
+  }
+  const updated = await addMessageReaction(env, principal.user.google_sub, messageId, emoji);
+  if (!updated) return json({ error: "message not found" }, 404);
+  return json(mapMessage(updated));
+}
+
+async function handleUnreact(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const emoji = typeof body?.emoji === "string" ? body.emoji : "";
+  if (!emoji || emoji.length > 8) {
+    return json({ error: "valid emoji required" }, 400);
+  }
+  const updated = await removeMessageReaction(env, principal.user.google_sub, messageId, emoji);
+  if (!updated) return json({ error: "message not found" }, 404);
+  return json(mapMessage(updated));
+}
+
+async function handleTogglePin(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+): Promise<Response> {
+  const updated = await toggleMessagePin(env, principal.user.google_sub, messageId);
+  if (!updated) return json({ error: "message not found" }, 404);
+  return json(mapMessage(updated));
+}
+
+async function handleEditMessage(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const content = typeof body?.content === "string" ? body.content : "";
+  if (!content.trim()) {
+    return json({ error: "content is required" }, 400);
+  }
+  if (content.length > MAX_CONTENT_CHARS) {
+    return json({ error: "the message is too long" }, 413);
+  }
+  const message = await getMessageById(env, principal.user.google_sub, messageId);
+  if (!message || message.role !== "user") {
+    return json({ error: "only user messages can be edited" }, 403);
+  }
+  const data = parseData(message.data);
+  const updated = await updateMessage(env, principal.user.google_sub, messageId, {
+    content,
+    data: { ...data, edited: true },
+  });
+  if (!updated) return json({ error: "message not found" }, 404);
+  return json(mapMessage(updated));
+}
+
+async function handleDeleteMessage(
+  env: Env,
+  principal: Principal,
+  messageId: string,
+): Promise<Response> {
+  const message = await getMessageById(env, principal.user.google_sub, messageId);
+  if (!message || message.role !== "user") {
+    return json({ error: "only user messages can be deleted" }, 403);
+  }
+  const deleted = await deleteMessage(env, principal.user.google_sub, messageId);
+  if (!deleted) return json({ error: "message not found" }, 404);
+  return json({ ok: true });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Dispatcher                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -859,6 +970,27 @@ export async function handleChatRoutes(
       const conversation = await getConversation(env, principal.user.google_sub, conversationId);
       if (!conversation) return json({ error: "conversation not found" }, 404);
       return startTurn(request, env, principal, conversation);
+    }
+    return json({ error: "method not allowed" }, 405);
+  }
+
+  if (segments.length >= 4 && segments[2] === "messages") {
+    const messageId = segments[3] ? decodeURIComponent(segments[3]) : "";
+    if (!messageId) return json({ error: "message not found" }, 404);
+    const message = await getMessageById(env, principal.user.google_sub, messageId);
+    if (!message || message.conversation_id !== conversationId) {
+      return json({ error: "message not found" }, 404);
+    }
+    if (segments.length === 4) {
+      if (request.method === "PATCH") return handleEditMessage(env, principal, messageId, request);
+      if (request.method === "DELETE") return handleDeleteMessage(env, principal, messageId);
+      return json({ error: "method not allowed" }, 405);
+    }
+    if (segments.length === 5) {
+      if (segments[4] === "pin" && request.method === "POST") return handleTogglePin(env, principal, messageId);
+      if (segments[4] === "react" && request.method === "POST") return handleReact(env, principal, messageId, request);
+      if (segments[4] === "unreact" && request.method === "POST") return handleUnreact(env, principal, messageId, request);
+      if (segments[4] === "reply" && request.method === "POST") return handleSetReply(env, principal, messageId, request);
     }
     return json({ error: "method not allowed" }, 405);
   }

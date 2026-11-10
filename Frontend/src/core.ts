@@ -114,7 +114,7 @@ interface CoreState {
   loadMessages: (id: string) => Promise<void>;
   //: Returns false when the message was not dispatched (not connected, or a run
   //: is already in flight) so the caller can keep the draft and say why.
-  send: (text: string) => boolean;
+  send: (text: string, replyToId?: string) => boolean;
   stopRun: () => void;
   requestScreen: () => void;
   computerStart: () => Promise<void>;
@@ -126,6 +126,7 @@ interface CoreState {
   clearTerminal: () => void;
   setVmPath: (p: string) => void;
   setWeb: (title: string, url: string) => void;
+  setMessages: (threadId: string, updater: (messages: Message[]) => Message[]) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -454,7 +455,7 @@ function handleRunEvent(ev: RunEvents) {
    Worker-native chat over SSE
    ----------------------------------------------------------------------- */
 
-async function createThreadAndStream(text: string, localId: string): Promise<void> {
+async function createThreadAndStream(text: string, localId: string, replyToId?: string): Promise<void> {
   try {
     const response = await apiFetch("/threads", {
       method: "POST",
@@ -487,7 +488,7 @@ async function createThreadAndStream(text: string, localId: string): Promise<voi
       };
     });
     useCore.getState().refreshThreads();
-    await streamChat(threadId, text, localId);
+    await streamChat(threadId, text, localId, replyToId);
   } catch (error) {
     removePending("__new__", localId);
     patchRun({ phase: "done", cancel: true });
@@ -624,7 +625,7 @@ function handleChatEvent(type: string, payload: Record<string, unknown>, threadI
   }
 }
 
-async function streamChat(threadId: string, text: string, localId: string): Promise<void> {
+async function streamChat(threadId: string, text: string, localId: string, replyToId?: string): Promise<void> {
   const requestId = `req-${crypto.randomUUID()}`;
   const controller = new AbortController();
   chatAbort?.abort(new Error("superseded"));
@@ -633,7 +634,7 @@ async function streamChat(threadId: string, text: string, localId: string): Prom
     const response = await apiFetch(`/threads/${encodeURIComponent(threadId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text, request_id: requestId }),
+      body: JSON.stringify({ content: text, request_id: requestId, reply_to: replyToId }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -914,7 +915,7 @@ export const useCore = create<CoreState>((set, get) => ({
     }
   },
 
-  send(text) {
+  send(text, replyToId?) {
     const { activeThreadId, run } = get();
     if (!text.trim()) return false;
     const busy =
@@ -928,22 +929,23 @@ export const useCore = create<CoreState>((set, get) => ({
     }
     const localId = `local-${crypto.randomUUID()}`;
     const target = activeThreadId || "__new__";
+    const data = replyToId ? JSON.stringify({ reply_to: replyToId }) : "{}";
     pushMsg(target, {
       id: localId,
       thread_id: target,
       role: "user",
       agent: "user",
       content: text,
-      data: "{}",
+      data,
       seq: 0,
       created_at: Date.now() / 1000,
       pending: true,
     });
     setRun(target);
     if (activeThreadId) {
-      void streamChat(activeThreadId, text, localId);
+      void streamChat(activeThreadId, text, localId, replyToId);
     } else {
-      void createThreadAndStream(text, localId);
+      void createThreadAndStream(text, localId, replyToId);
     }
     return true;
   },
@@ -1061,6 +1063,13 @@ export const useCore = create<CoreState>((set, get) => ({
 
   setWeb(title, url) {
     set({ webTitle: title, webUrl: url });
+  },
+
+  setMessages(threadId, updater) {
+    set((s) => {
+      const list = s.messages[threadId] || [];
+      return { messages: { ...s.messages, [threadId]: updater(list) } };
+    });
   },
 }));
 
