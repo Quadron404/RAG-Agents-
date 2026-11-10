@@ -42,6 +42,20 @@ import {
   updateMessage,
   type ConversationRow,
   type MessageRow,
+  // Channel functions
+  archiveChannel,
+  createChannel,
+  ensureMainChannel,
+  getChannel,
+  getOrCreateActiveConversation,
+  listChannels,
+  listChannelsWithConversations,
+  mapChannel,
+  reorderChannels,
+  renameChannel,
+  restoreChannel,
+  setConversationChannel,
+  type ChannelRow,
 } from "./store";
 import { generateIncrementalHistory } from "./history";
 import { removeSummaryDoc, searchConfigured } from "./search";
@@ -112,7 +126,7 @@ function isRefusal(text: string): boolean {
 }
 
 export function isChatPath(path: string): boolean {
-  return path === "/threads" || path.startsWith("/threads/") || path === "/chat/status";
+  return path === "/threads" || path.startsWith("/threads/") || path === "/chat/status" || path === "/channels" || path.startsWith("/channels/") || path === "/channels/reorder";
 }
 
 function requireCsrf(request: Request, principal: Principal): Response | null {
@@ -292,12 +306,23 @@ async function handleCreate(
   request: Request,
 ): Promise<Response> {
   const body = await readJson(request);
-  const row = await createConversation(
-    env,
-    principal.user.google_sub,
-    principal.user.id,
-    createConversationTitle(body?.title),
-  );
+  const title = createConversationTitle(body?.title);
+  const channelId = typeof body?.channel_id === "string" ? body.channel_id : undefined;
+
+  let row: ConversationRow;
+  if (channelId) {
+    // Verify the channel exists and belongs to the user.
+    const channel = await getChannel(env, principal.user.google_sub, channelId);
+    if (!channel) return json({ error: "channel not found" }, 404);
+    row = await createConversation(env, principal.user.google_sub, principal.user.id, title);
+    // Update the conversation to belong to the channel.
+    await setConversationChannel(env, principal.user.google_sub, row.id, channelId);
+    // Re-fetch to get the updated row.
+    const updated = await getConversation(env, principal.user.google_sub, row.id);
+    if (updated) row = updated;
+  } else {
+    row = await createConversation(env, principal.user.google_sub, principal.user.id, title);
+  }
   return json(mapConversation(row), 201);
 }
 
@@ -808,6 +833,109 @@ async function runTurn(context: TurnContext, emit: Emitter, signal: AbortSignal)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Channel route handlers                                                      */
+/* -------------------------------------------------------------------------- */
+
+async function handleListChannels(
+  env: Env,
+  principal: Principal,
+): Promise<Response> {
+  // Ensure Main channel exists for this user.
+  await ensureMainChannel(env, principal.user.google_sub, principal.user.id);
+  const channels = await listChannelsWithConversations(env, principal.user.google_sub);
+  return json({ channels: channels.map(mapChannel) });
+}
+
+async function handleCreateChannel(
+  env: Env,
+  principal: Principal,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name) return json({ error: "channel name is required" }, 400);
+
+  // Ensure Main channel exists first.
+  await ensureMainChannel(env, principal.user.google_sub, principal.user.id);
+
+  const channel = await createChannel(env, principal.user.google_sub, principal.user.id, name);
+  return json(mapChannel(channel), 201);
+}
+
+async function handleGetChannel(
+  env: Env,
+  principal: Principal,
+  channelId: string,
+): Promise<Response> {
+  const channel = await getChannel(env, principal.user.google_sub, channelId);
+  if (!channel) return json({ error: "channel not found" }, 404);
+  return json(mapChannel(channel));
+}
+
+async function handleRenameChannel(
+  env: Env,
+  principal: Principal,
+  channelId: string,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name) return json({ error: "channel name is required" }, 400);
+
+  const channel = await renameChannel(env, principal.user.google_sub, channelId, name);
+  if (!channel) return json({ error: "channel not found" }, 404);
+  return json(mapChannel(channel));
+}
+
+async function handleArchiveChannel(
+  env: Env,
+  principal: Principal,
+  channelId: string,
+): Promise<Response> {
+  if (channelId === "main") return json({ error: "cannot archive Main channel" }, 400);
+  const ok = await archiveChannel(env, principal.user.google_sub, channelId);
+  if (!ok) return json({ error: "channel not found" }, 404);
+  return json({ ok: true });
+}
+
+async function handleRestoreChannel(
+  env: Env,
+  principal: Principal,
+  channelId: string,
+): Promise<Response> {
+  const ok = await restoreChannel(env, principal.user.google_sub, channelId);
+  if (!ok) return json({ error: "channel not found" }, 404);
+  return json({ ok: true });
+}
+
+async function handleReorderChannels(
+  env: Env,
+  principal: Principal,
+  request: Request,
+): Promise<Response> {
+  const body = await readJson(request);
+  const orderedIds = Array.isArray(body?.channel_ids) ? body.channel_ids.filter((x): x is string => typeof x === "string") : [];
+  if (!orderedIds.length) return json({ error: "channel_ids array is required" }, 400);
+
+  await reorderChannels(env, principal.user.google_sub, orderedIds);
+  return json({ ok: true });
+}
+
+async function handleActivateChannel(
+  env: Env,
+  principal: Principal,
+  channelId: string,
+): Promise<Response> {
+  const conversation = await getOrCreateActiveConversation(
+    env,
+    principal.user.google_sub,
+    principal.user.id,
+    channelId,
+  );
+  return json({ thread_id: conversation.id, ...mapConversation(conversation) });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Dispatcher                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -838,6 +966,40 @@ export async function handleChatRoutes(
     if (request.method === "GET") return handleList(env, principal);
     if (request.method === "POST") return handleCreate(env, principal, request);
     return json({ error: "method not allowed" }, 405);
+  }
+
+  if (path === "/channels") {
+    if (request.method === "GET") return handleListChannels(env, principal);
+    if (request.method === "POST") return handleCreateChannel(env, principal, request);
+    return json({ error: "method not allowed" }, 405);
+  }
+
+  if (path === "/channels/reorder") {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    return handleReorderChannels(env, principal, request);
+  }
+
+  // Handle /channels/:id/* paths
+  if (path.startsWith("/channels/")) {
+    const channelPath = path.slice("/channels/".length);
+    const channelSegments = channelPath.split("/").filter(Boolean);
+    const channelId = channelSegments[0] ? decodeURIComponent(channelSegments[0]) : "";
+    if (!channelId) return json({ error: "channel not found" }, 404);
+
+    if (channelSegments.length === 1) {
+      if (request.method === "GET") return handleGetChannel(env, principal, channelId);
+      if (request.method === "PATCH") return handleRenameChannel(env, principal, channelId, request);
+      if (request.method === "DELETE") return handleArchiveChannel(env, principal, channelId);
+      return json({ error: "method not allowed" }, 405);
+    }
+
+    if (channelSegments.length === 2) {
+      const action = channelSegments[1];
+      if (action === "archive" && request.method === "POST") return handleArchiveChannel(env, principal, channelId);
+      if (action === "restore" && request.method === "POST") return handleRestoreChannel(env, principal, channelId);
+      if (action === "activate" && request.method === "POST") return handleActivateChannel(env, principal, channelId);
+    }
+    return json({ error: "not found" }, 404);
   }
 
   const segments = parts(path);

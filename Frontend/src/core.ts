@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useUi, loadLastActiveThread, saveLastActiveThread, type ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState } from "./store";
+import { useUi, loadLastActiveThread, saveLastActiveThread, type ComputerState, ConnectionStatus, Message, Run, Step, SysInfo, TerminalLine, Thread, ToolCallState, Channel } from "./store";
 import { currentCsrf, currentUserId } from "./auth";
 
 /* ============================================================================
@@ -88,7 +88,9 @@ interface CoreState {
   status: ConnectionStatus;
   userId: string;
   threads: Thread[];
+  channels: Channel[];
   activeThreadId: string | null;
+  activeChannelId: string | null;
   messages: Record<string, Message[]>;
   run: Run | null;
   computer: ComputerState;
@@ -101,6 +103,7 @@ interface CoreState {
 
   connect: () => void;
   refreshThreads: () => Promise<void>;
+  refreshChannels: () => Promise<void>;
   restoreActiveThread: (threads: Thread[]) => Promise<void>;
   newChat: () => Promise<void>;
   generateHistory: (threadId: string) => Promise<void>;
@@ -126,6 +129,14 @@ interface CoreState {
   clearTerminal: () => void;
   setVmPath: (p: string) => void;
   setWeb: (title: string, url: string) => void;
+  // Channel actions
+  createChannel: (name: string) => Promise<void>;
+  renameChannel: (channelId: string, name: string) => Promise<void>;
+  archiveChannel: (channelId: string) => Promise<void>;
+  restoreChannel: (channelId: string) => Promise<void>;
+  reorderChannels: (channelIds: string[]) => Promise<void>;
+  activateChannel: (channelId: string) => Promise<void>;
+  setActiveChannel: (channelId: string | null) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -695,11 +706,13 @@ export const useCore = create<CoreState>((set, get) => ({
   status: "connecting",
   userId: currentUserId(),
   threads: [],
+  channels: [],
+  activeThreadId: null,
+  activeChannelId: null,
   generateHistoryStatus: "idle",
   generateHistoryError: null,
   generateHistorySource: null,
   generateHistorySummary: null,
-  activeThreadId: null,
   messages: {},
   run: null,
   computer: { running: false, booting: false, msg: "", error: "" },
@@ -718,6 +731,7 @@ export const useCore = create<CoreState>((set, get) => ({
     // Load the user's existing conversations immediately so the sidebar is
     // populated even before the WebSocket delivers its first event.
     void get().refreshThreads();
+    void get().refreshChannels();
     try {
       ws = new WebSocket(wsUrl(`/ws/${currentUserId()}`));
     } catch {
@@ -766,6 +780,26 @@ export const useCore = create<CoreState>((set, get) => ({
     }
   },
 
+  async refreshChannels() {
+    try {
+      const r = await apiFetch("/channels");
+      const d = await r.json();
+      set({ channels: d.channels || [] });
+      // If no active channel is set, default to Main (first channel with type 'main')
+      const { activeChannelId } = get();
+      if (!activeChannelId && d.channels?.length) {
+        const mainChannel = d.channels.find((c: Channel) => c.type === "main");
+        if (mainChannel) {
+          set({ activeChannelId: mainChannel.channel_id });
+        } else {
+          set({ activeChannelId: d.channels[0].channel_id });
+        }
+      }
+    } catch {
+      /* retry on next connect */
+    }
+  },
+
   /** Restore the user's last active channel without creating one.
    *
    * The backend's /session/active-thread is the source of truth.  A localStorage
@@ -805,11 +839,12 @@ export const useCore = create<CoreState>((set, get) => ({
   },
 
     async newChat() {
+      const { activeChannelId } = get();
       try {
         const r = await apiFetch("/threads", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: currentUserId(), title: "New conversation" }),
+          body: JSON.stringify({ user_id: currentUserId(), title: "New conversation", channel_id: activeChannelId }),
         });
         const d = await r.json();
         set({ activeThreadId: d.thread_id, run: null, screen: null });
@@ -866,8 +901,10 @@ export const useCore = create<CoreState>((set, get) => ({
       // reload.  The server already deleted the canonical records.
       set({
         threads: [],
+        channels: [],
         messages: {},
         activeThreadId: null,
+        activeChannelId: null,
         run: null,
         screen: null,
         generateHistoryStatus: "idle",
@@ -1061,6 +1098,110 @@ export const useCore = create<CoreState>((set, get) => ({
 
   setWeb(title, url) {
     set({ webTitle: title, webUrl: url });
+  },
+
+  setActiveChannel(channelId: string | null) {
+    set({ activeChannelId: channelId });
+  },
+
+  async createChannel(name: string) {
+    try {
+      const r = await apiFetch("/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to create channel");
+      await get().refreshChannels();
+      useUi.getState().toast(`Created channel "${d.name}"`, "ok");
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not create channel"), "err");
+    }
+  },
+
+  async renameChannel(channelId: string, name: string) {
+    try {
+      const r = await apiFetch(`/channels/${encodeURIComponent(channelId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to rename channel");
+      await get().refreshChannels();
+      useUi.getState().toast(`Renamed channel to "${d.name}"`, "ok");
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not rename channel"), "err");
+    }
+  },
+
+  async archiveChannel(channelId: string) {
+    try {
+      const r = await apiFetch(`/channels/${encodeURIComponent(channelId)}/archive`, {
+        method: "POST",
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to archive channel");
+      await get().refreshChannels();
+      // If the archived channel was active, switch to Main
+      const { activeChannelId, channels } = get();
+      if (activeChannelId === channelId) {
+        const mainChannel = channels.find((c) => c.type === "main");
+        set({ activeChannelId: mainChannel?.channel_id ?? channels[0]?.channel_id ?? null });
+      }
+      useUi.getState().toast("Channel archived", "ok");
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not archive channel"), "err");
+    }
+  },
+
+  async restoreChannel(channelId: string) {
+    try {
+      const r = await apiFetch(`/channels/${encodeURIComponent(channelId)}/restore`, {
+        method: "POST",
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to restore channel");
+      await get().refreshChannels();
+      useUi.getState().toast("Channel restored", "ok");
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not restore channel"), "err");
+    }
+  },
+
+  async reorderChannels(channelIds: string[]) {
+    try {
+      const r = await apiFetch("/channels/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel_ids: channelIds }),
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.error || "Failed to reorder channels");
+      }
+      await get().refreshChannels();
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not reorder channels"), "err");
+    }
+  },
+
+  async activateChannel(channelId: string) {
+    try {
+      const r = await apiFetch(`/channels/${encodeURIComponent(channelId)}/activate`, {
+        method: "POST",
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to activate channel");
+      const threadId = d.thread_id;
+      set({ activeChannelId: channelId, activeThreadId: threadId });
+      saveLastActiveThread(threadId);
+      useUi.getState().setView("chat");
+      await get().loadMessages(threadId);
+    } catch (e) {
+      useUi.getState().toast(String(e || "Could not activate channel"), "err");
+    }
   },
 }));
 

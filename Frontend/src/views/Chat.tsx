@@ -22,7 +22,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState } from "../store";
+import { BOT_BY_ID, botForRole, useUi, type Message, type Step, type ToolCallState, type Channel, type Thread } from "../store";
 import { useAuth } from "../auth";
 import { useCore } from "../core";
 import { activityLabel, stepActivity } from "../lib/agents";
@@ -155,7 +155,112 @@ function togglePin(threadId: string, msgId: string) {
 
 /* ============================ conversation list =========================== */
 
-function Row({ t }: { t: { thread_id: string; title: string; created_at: number } }) {
+function ChannelRow({
+  channel,
+  conversations,
+  isActive,
+  onActivate,
+  onCreateConversation,
+  onRename,
+  onArchive,
+  onRestore,
+}: {
+  channel: Channel;
+  conversations: Thread[];
+  isActive: boolean;
+  onActivate: (channelId: string) => void;
+  onCreateConversation: (channelId: string) => void;
+  onRename: (channelId: string) => void;
+  onArchive: (channelId: string) => void;
+  onRestore: (channelId: string) => void;
+}) {
+  const openMenu = useUi((s) => s.openMenu);
+  const [expanded, setExpanded] = useState(channel.type === "main");
+
+  const isMain = channel.type === "main";
+  const isArchived = channel.archived;
+
+  const menuItems: { label: string; icon?: string; danger?: boolean; onSelect: () => void }[] = [
+    {
+      label: isActive ? "Open" : "Open channel",
+      icon: "chat",
+      onSelect: () => onActivate(channel.channel_id),
+    },
+    {
+      label: expanded ? "Collapse" : "Expand",
+      icon: expanded ? "chevron-up" : "chevron-down",
+      onSelect: () => setExpanded(!expanded),
+    },
+    {
+      label: "New conversation",
+      icon: "plus",
+      onSelect: () => onCreateConversation(channel.channel_id),
+    },
+    {
+      label: isMain ? "Rename Main" : "Rename",
+      icon: "edit",
+      onSelect: () => onRename(channel.channel_id),
+    },
+    isArchived
+      ? {
+          label: "Restore",
+          icon: "rotate-ccw",
+          onSelect: () => onRestore(channel.channel_id),
+        }
+      : isMain
+      ? {
+          label: "Cannot archive Main",
+          icon: "archive",
+          danger: true,
+          onSelect: () => {},
+        }
+      : {
+          label: "Archive",
+          icon: "archive",
+          danger: true,
+          onSelect: () => onArchive(channel.channel_id),
+        },
+  ];
+
+  return (
+    <div className={`channel-row${isActive ? " channel-row--active" : ""}`}>
+      <button
+        className="channel-row__header"
+        onClick={() => onActivate(channel.channel_id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          openMenu(e.clientX, e.clientY, menuItems);
+        }}
+      >
+        <span className="channel-row__mark">{isMain ? "◆" : "◇"}</span>
+        <span className="channel-row__name">{channel.name}</span>
+        {isMain && <span className="channel-row__badge">Main</span>}
+        <span className="channel-row__toggle" onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}>
+          <ChevronRight size={14} style={{ transform: expanded ? "rotate(90deg)" : undefined, transition: "transform .15s" }} />
+        </span>
+      </button>
+      {expanded && (
+        <div className="channel-row__conversations">
+          {conversations.length === 0 ? (
+            <div className="channel-row__empty" onClick={() => onCreateConversation(channel.channel_id)}>
+              No conversations yet — click to create one
+            </div>
+          ) : (
+            conversations.map((t) => (
+              <ConversationRow key={t.thread_id} t={t} />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConversationRow({
+  t,
+}: {
+  t: Thread;
+}) {
   const active = useCore((s) => s.activeThreadId === t.thread_id);
   const open = useCore((s) => s.openThread);
   const toast = useUi((s) => s.toast);
@@ -197,7 +302,7 @@ function Row({ t }: { t: { thread_id: string; title: string; created_at: number 
         openMenu(e.clientX, e.clientY, menuItems);
       }}
     >
-      <span className="convrow__mark">◇</span>
+      <span className="convrow__mark">·</span>
       <span className="convrow__meta">
         <span className="convrow__title">{t.title}</span>
         <span className="convrow__prev">{relativeTime(t.created_at)}</span>
@@ -208,53 +313,137 @@ function Row({ t }: { t: { thread_id: string; title: string; created_at: number 
 }
 
 function ChatListPane() {
-  const threadsAll = useCore((s) => s.threads);
+  const channels = useCore((s) => s.channels);
+  const activeChannelId = useCore((s) => s.activeChannelId);
   const setConvOpen = useUi((s) => s.setConvOpen);
   const newChat = useCore((s) => s.newChat);
+  const createChannel = useCore((s) => s.createChannel);
+  const renameChannel = useCore((s) => s.renameChannel);
+  const archiveChannel = useCore((s) => s.archiveChannel);
+  const restoreChannel = useCore((s) => s.restoreChannel);
+  const activateChannel = useCore((s) => s.activateChannel);
+  const setActiveChannel = useCore((s) => s.setActiveChannel);
   const archived = useUi((s) => s.archived);
-  const pinnedConv = useUi((s) => s.pinnedConv);
   const status = useCore((s) => s.status);
   const [q, setQ] = useState("");
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
 
-  const threads = useMemo(() => {
-    let list = threadsAll.filter((t) => !archived.includes(t.thread_id));
+  const filteredChannels = useMemo(() => {
+    let list = channels.filter((c) => !c.archived);
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
-      list = list.filter((t) => t.title.toLowerCase().includes(needle));
+      list = list.filter((c) =>
+        c.name.toLowerCase().includes(needle) ||
+        c.conversations?.some((t) => t.title.toLowerCase().includes(needle))
+      );
     }
-    const pinned = list.find((t) => t.thread_id === pinnedConv);
-    const rest = list.filter((t) => t.thread_id !== pinnedConv);
-    return pinned ? [pinned, ...rest] : rest;
-  }, [threadsAll, archived, pinnedConv, q]);
+    return list;
+  }, [channels, q]);
+
+  const handleCreateChannel = () => {
+    if (!newChannelName.trim()) return;
+    createChannel(newChannelName.trim());
+    setNewChannelName("");
+    setShowCreateChannel(false);
+  };
+
+  const handleActivateChannel = (channelId: string) => {
+    setActiveChannel(channelId);
+    activateChannel(channelId);
+  };
+
+  const handleCreateConversation = (channelId: string) => {
+    setActiveChannel(channelId);
+    newChat();
+  };
+
+  const handleRenameChannel = (channelId: string) => {
+    const channel = channels.find((c) => c.channel_id === channelId);
+    if (!channel) return;
+    const newName = prompt("Rename channel:", channel.name);
+    if (newName && newName.trim() && newName.trim() !== channel.name) {
+      renameChannel(channelId, newName.trim());
+    }
+  };
+
+  const handleArchiveChannel = (channelId: string) => {
+    if (confirm("Archive this channel? Conversations will be hidden but not deleted.")) {
+      archiveChannel(channelId);
+    }
+  };
+
+  const handleRestoreChannel = (channelId: string) => {
+    restoreChannel(channelId);
+  };
 
   return (
     <div className="chatlist">
       <div className="chatlist__head">
-        <span className="chatlist__title">Chats</span>
-        <IconButton
-          icon={Plus}
-          className="icon-btn--mini"
-          onClick={() => {
-            haptic("medium");
-            newChat();
-          }}
-          title="New conversation"
-        />
+        <span className="chatlist__title">Channels</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          <IconButton
+            icon={Plus}
+            className="icon-btn--mini"
+            onClick={() => setShowCreateChannel(true)}
+            title="New channel"
+          />
+          <IconButton
+            icon={Plus}
+            className="icon-btn--mini"
+            onClick={() => {
+              haptic("medium");
+              newChat();
+            }}
+            title="New conversation in current channel"
+          />
+        </div>
       </div>
+      {showCreateChannel && (
+        <div className="chatlist__create-channel">
+          <input
+            value={newChannelName}
+            onChange={(e) => setNewChannelName(e.target.value)}
+            placeholder="Channel name"
+            aria-label="New channel name"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCreateChannel();
+              if (e.key === "Escape") setShowCreateChannel(false);
+            }}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+            <button className="btn btn--ghost btn-s" onClick={() => setShowCreateChannel(false)}>Cancel</button>
+            <button className="btn btn--primary btn-s" onClick={handleCreateChannel}>Create</button>
+          </div>
+        </div>
+      )}
       <div className="search">
         <Search size={15} />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search…"
+          placeholder="Search channels & conversations…"
           aria-label="Search"
         />
       </div>
       <div className="chatlist__scroll">
-        {threads.map((t) => <Row key={t.thread_id} t={t} />)}
-        {threads.length ? null : (
+        {filteredChannels.map((channel) => (
+          <ChannelRow
+            key={channel.channel_id}
+            channel={channel}
+            conversations={channel.conversations?.filter((t) => !archived.includes(t.thread_id)) ?? []}
+            isActive={activeChannelId === channel.channel_id}
+            onActivate={handleActivateChannel}
+            onCreateConversation={handleCreateConversation}
+            onRename={handleRenameChannel}
+            onArchive={handleArchiveChannel}
+            onRestore={handleRestoreChannel}
+          />
+        ))}
+        {filteredChannels.length === 0 && (
           <div className="chatlist__empty">
-            {status === "online" ? "No conversations yet." : "Connecting…"}
+            {status === "online" ? "No channels yet." : "Connecting…"}
           </div>
         )}
       </div>

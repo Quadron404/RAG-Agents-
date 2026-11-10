@@ -16,6 +16,7 @@ export interface ConversationRow {
   active_request_id: string;
   active_since: number | null;
   deleted_at: number | null;
+  channel_id: string | null;
 }
 
 export interface MessageRow {
@@ -96,7 +97,7 @@ export interface SummaryJobRow {
 }
 
 const CONVERSATION_COLUMNS =
-  "id, owner_sub, owner_id, title, created_at, updated_at, last_activity_at, summarized_through, summary_status, summary_due_at, active_request_id, active_since, deleted_at";
+  "id, owner_sub, owner_id, title, channel_id, created_at, updated_at, last_activity_at, summarized_through, summary_status, summary_due_at, active_request_id, active_since, deleted_at";
 
 const MESSAGE_COLUMNS =
   "seq, id, conversation_id, owner_sub, role, agent, content, data, hidden, request_id, created_at";
@@ -114,16 +115,17 @@ export async function createConversation(
   ownerSub: string,
   ownerId: string,
   title = "New chat",
+  channelId?: string,
 ): Promise<ConversationRow> {
   const now = nowMs();
   const id = newId();
   const row = await env.DB.prepare(
     `INSERT INTO conversations
-       (id, owner_sub, owner_id, title, created_at, updated_at, last_activity_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
+       (id, owner_sub, owner_id, title, channel_id, created_at, updated_at, last_activity_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
      RETURNING ${CONVERSATION_COLUMNS}`,
   )
-    .bind(id, ownerSub, ownerId, title.trim() || "New chat", now)
+    .bind(id, ownerSub, ownerId, title.trim() || "New chat", channelId ?? null, now)
     .first<ConversationRow>();
   if (!row) throw new Error("conversation insert returned no row");
   return row;
@@ -1247,6 +1249,7 @@ export function mapConversation(row: ConversationRow): Record<string, unknown> {
     updated_at: Math.floor(row.updated_at / 1000),
     summary_status: row.summary_status,
     summarized_through: row.summarized_through,
+    channel_id: row.channel_id,
   };
 }
 
@@ -1261,5 +1264,249 @@ export function mapMessage(row: MessageRow): Record<string, unknown> {
     seq: row.seq,
     created_at: Math.floor(row.created_at / 1000),
     request_id: row.request_id,
+  };
+}
+
+export interface ChannelRow {
+  id: string;
+  owner_sub: string;
+  name: string;
+  type: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+  sort_order: number;
+}
+
+const CHANNEL_COLUMNS =
+  "id, owner_sub, name, type, created_at, updated_at, archived_at, sort_order";
+
+export async function ensureMainChannel(
+  env: Env,
+  ownerSub: string,
+  ownerId: string,
+): Promise<ChannelRow> {
+  const existing = await env.DB.prepare(
+    `SELECT ${CHANNEL_COLUMNS} FROM channels
+     WHERE owner_sub = ?1 AND type = 'main' AND archived_at IS NULL`,
+  )
+    .bind(ownerSub)
+    .first<ChannelRow>();
+
+  if (existing) return existing;
+
+  const now = nowMs();
+  const id = newId();
+  const row = await env.DB.prepare(
+    `INSERT INTO channels (id, owner_sub, name, type, created_at, updated_at, sort_order)
+     VALUES (?1, ?2, 'Main', 'main', ?3, ?3, 0)
+     RETURNING ${CHANNEL_COLUMNS}`,
+  )
+    .bind(id, ownerSub, now)
+    .first<ChannelRow>();
+
+  if (!row) throw new Error("main channel insert returned no row");
+
+  // Attach any legacy conversations without channel_id to Main.
+  await env.DB.prepare(
+    `UPDATE conversations SET channel_id = ?1, updated_at = ?2
+     WHERE owner_sub = ?3 AND channel_id IS NULL AND deleted_at IS NULL`,
+  )
+    .bind(row.id, now, ownerSub)
+    .run();
+
+  return row;
+}
+
+export async function listChannels(env: Env, ownerSub: string): Promise<ChannelRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT ${CHANNEL_COLUMNS} FROM channels
+     WHERE owner_sub = ?1 AND archived_at IS NULL
+     ORDER BY sort_order ASC, created_at ASC`,
+  )
+    .bind(ownerSub)
+    .all<ChannelRow>();
+  return result.results ?? [];
+}
+
+export async function listChannelsWithConversations(
+  env: Env,
+  ownerSub: string,
+): Promise<Array<ChannelRow & { conversations: ConversationRow[] }>> {
+  const channels = await listChannels(env, ownerSub);
+  if (!channels.length) return [];
+
+  const placeholders = channels.map((_, i) => `?${i + 2}`).join(",");
+  const convs = await env.DB.prepare(
+    `SELECT ${CONVERSATION_COLUMNS} FROM conversations
+     WHERE owner_sub = ?1 AND channel_id IN (${placeholders}) AND deleted_at IS NULL
+     ORDER BY updated_at DESC`,
+  )
+    .bind(ownerSub, ...channels.map((c) => c.id))
+    .all<ConversationRow>();
+
+  const byChannel = new Map<string, ConversationRow[]>();
+  for (const c of convs.results ?? []) {
+    const list = byChannel.get(c.channel_id ?? "") ?? [];
+    list.push(c);
+    byChannel.set(c.channel_id ?? "", list);
+  }
+
+  return channels.map((ch) => ({
+    ...ch,
+    conversations: byChannel.get(ch.id) ?? [],
+  }));
+}
+
+export async function getChannel(
+  env: Env,
+  ownerSub: string,
+  id: string,
+): Promise<ChannelRow | null> {
+  return env.DB.prepare(
+    `SELECT ${CHANNEL_COLUMNS} FROM channels
+     WHERE id = ?1 AND owner_sub = ?2 AND archived_at IS NULL`,
+  )
+    .bind(id, ownerSub)
+    .first<ChannelRow>();
+}
+
+export async function createChannel(
+  env: Env,
+  ownerSub: string,
+  ownerId: string,
+  name: string,
+): Promise<ChannelRow> {
+  const main = await ensureMainChannel(env, ownerSub, ownerId);
+
+  const maxOrderRow = await env.DB.prepare(
+    "SELECT COALESCE(MAX(sort_order), 0) AS max_order FROM channels WHERE owner_sub = ?1 AND archived_at IS NULL",
+  )
+    .bind(ownerSub)
+    .first<{ max_order: number }>();
+
+  const now = nowMs();
+  const id = newId();
+  const row = await env.DB.prepare(
+    `INSERT INTO channels (id, owner_sub, name, type, created_at, updated_at, sort_order)
+     VALUES (?1, ?2, ?3, 'project', ?4, ?4, ?5)
+     RETURNING ${CHANNEL_COLUMNS}`,
+  )
+    .bind(id, ownerSub, name.trim().slice(0, 160) || "New channel", now, (maxOrderRow?.max_order ?? 0) + 1)
+    .first<ChannelRow>();
+
+  if (!row) throw new Error("channel insert returned no row");
+  return row;
+}
+
+export async function renameChannel(
+  env: Env,
+  ownerSub: string,
+  id: string,
+  name: string,
+): Promise<ChannelRow | null> {
+  return env.DB.prepare(
+    `UPDATE channels SET name = ?3, updated_at = ?4
+     WHERE id = ?1 AND owner_sub = ?2 AND archived_at IS NULL
+     RETURNING ${CHANNEL_COLUMNS}`,
+  )
+    .bind(id, ownerSub, name.trim().slice(0, 160) || "New channel", nowMs())
+    .first<ChannelRow>();
+}
+
+export async function archiveChannel(
+  env: Env,
+  ownerSub: string,
+  id: string,
+): Promise<boolean> {
+  if (id === "main") return false; // Main cannot be archived
+  const result = await env.DB.prepare(
+    `UPDATE channels SET archived_at = ?3, updated_at = ?3
+     WHERE id = ?1 AND owner_sub = ?2 AND archived_at IS NULL AND type = 'project'`,
+  )
+    .bind(id, ownerSub, nowMs())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function restoreChannel(
+  env: Env,
+  ownerSub: string,
+  id: string,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `UPDATE channels SET archived_at = NULL, updated_at = ?3
+     WHERE id = ?1 AND owner_sub = ?2 AND archived_at IS NOT NULL`,
+  )
+    .bind(id, ownerSub, nowMs())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function reorderChannels(
+  env: Env,
+  ownerSub: string,
+  orderedIds: string[],
+): Promise<void> {
+  const now = nowMs();
+  const statements = orderedIds.map((id, index) =>
+    env.DB.prepare(
+      `UPDATE channels SET sort_order = ?2, updated_at = ?3
+       WHERE id = ?1 AND owner_sub = ?4 AND archived_at IS NULL`,
+    ).bind(id, index, now, ownerSub),
+  );
+  await env.DB.batch(statements);
+}
+
+export async function setConversationChannel(
+  env: Env,
+  ownerSub: string,
+  conversationId: string,
+  channelId: string,
+): Promise<ConversationRow | null> {
+  return env.DB.prepare(
+    `UPDATE conversations SET channel_id = ?3, updated_at = ?4
+     WHERE id = ?1 AND owner_sub = ?2 AND deleted_at IS NULL
+     RETURNING ${CONVERSATION_COLUMNS}`,
+  )
+    .bind(conversationId, ownerSub, channelId, nowMs())
+    .first<ConversationRow>();
+}
+
+export async function getOrCreateActiveConversation(
+  env: Env,
+  ownerSub: string,
+  ownerId: string,
+  channelId: string,
+): Promise<ConversationRow> {
+  const channel = await getChannel(env, ownerSub, channelId);
+  if (!channel) throw new Error("channel not found");
+
+  // Try to find an existing active conversation in this channel.
+  const existing = await env.DB.prepare(
+    `SELECT ${CONVERSATION_COLUMNS} FROM conversations
+     WHERE owner_sub = ?1 AND channel_id = ?2 AND deleted_at IS NULL
+     ORDER BY last_activity_at DESC, updated_at DESC
+     LIMIT 1`,
+  )
+    .bind(ownerSub, channelId)
+    .first<ConversationRow>();
+
+  if (existing) return existing;
+
+  // Create a new conversation in this channel.
+  return createConversation(env, ownerSub, ownerId, "New chat", channelId);
+}
+
+export function mapChannel(row: ChannelRow): Record<string, unknown> {
+  return {
+    channel_id: row.id,
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    created_at: Math.floor(row.created_at / 1000),
+    updated_at: Math.floor(row.updated_at / 1000),
+    archived: !!row.archived_at,
+    sort_order: row.sort_order,
   };
 }

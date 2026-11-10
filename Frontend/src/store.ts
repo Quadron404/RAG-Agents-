@@ -15,6 +15,19 @@ export interface Thread {
   title: string;
   created_at: number;
   summarized_through: number;
+  channel_id?: string;
+}
+
+export interface Channel {
+  channel_id: string;
+  id: string;
+  name: string;
+  type: "main" | "project";
+  created_at: number;
+  updated_at: number;
+  archived: boolean;
+  sort_order: number;
+  conversations?: Thread[];
 }
 
 export interface Message {
