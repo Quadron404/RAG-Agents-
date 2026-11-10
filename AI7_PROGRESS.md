@@ -157,12 +157,12 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 
 - Re-fetched the current GitHub main branch and reviewed the current implementation queue, QA queue, progress ledger, README, Worker OAuth source/config contract, migration inventory, and production app through Firecrawl.
 - Main HEAD before this refresh: 74220d23c74302a73d692a92055cd6686719a601. No application-source implementation commit was observed after the 2026-11-10 source audit; the intervening commits were prompt/ledger maintenance.
-- Replaced prompt.txt in full with exactly 118 numbered implementation prompts. The refreshed file is 348,251 characters and focuses on the verified outstanding product gaps while requiring evidence-based skip-if-complete behavior.
+- Replaced prompt.txt in full with exactly 118 numbered implementation prompts. The refreshed file is 348,999 characters and focuses on the verified outstanding product gaps while requiring evidence-based skip-if-complete behavior.
   - Initial replacement commit: e3153d628323df2bb8d684ff04c88ce8c2c584e1.
   - Final wording correction commit: ac2305926a76ef559d184a0250831286f108a375.
   - Final content blob SHA: f998ffc848cc61dfcce4b25d0bab6a749d134147.
   - Every prompt explicitly includes the To-Do requirement, exact CLOUDFLARE_API_TOKEN export sourced from CLOUDFLARE_API_KEY, deployment safety rules, and a technically detailed report appended to query.txt. It also requires AI7_PROGRESS.md updates.
-- Replaced prompt2.txt in full with exactly 11 detailed feature-based Browserless QA/repair prompts. The file is 67,376 characters.
+- Replaced prompt2.txt in full with exactly 11 detailed feature-based Browserless QA/repair prompts. The file is 67,631 characters.
   - Commit: 9e5dbf94ba32503eb8fe7b1754b7b254766b9fc9.
   - Content blob SHA: 52c049af8ff45965b5deed5402371b7f26665f83.
   - The exact https://mcp.browserless.io/mcp endpoint appears once inside each of the 11 prompts. Every prompt repeats the AI7 import guidance, requires actual Browserless MCP invocation and session-ID preservation, includes the compulsory reproduce → root-cause fix → regression tests → Cloudflare deploy → same-session Browserless retest loop, and requires a detailed query.txt report.
@@ -172,7 +172,7 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
   - GET / returned HTTP 200 and the unauthenticated sign-in shell only. Browser inspection reported title “RAG Agents”, one visible “Continue with Google” link, desktop viewport/document 1920×993, and no horizontal overflow at that viewport. A mobile screenshot was also captured.
   - GET /auth/session returned HTTP 200 with authenticated:false, user:null, and Gmail status unknown.
   - GET /auth/login returned HTTP 503 with “Google sign-in is not configured”.
-  - worker/src/index.ts checks both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before starting OAuth; worker/src/env.ts declares the secret. The supplied runtime screenshot showed the client ID variable but did not establish whether the secret is configured. The actual missing/empty value was not independently identified, so no claim is made about which one is absent.
+  - worker/src/index.ts checks both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before starting OAuth. Direct Cloudflare Production environment settings inspection returned no secret bindings; worker/src/env.ts also declares SESSION_SECRET and RAG_INTERNAL_TOKEN, while the active Groq provider reads GROQ_API_KEY. The exact secret-binding gap and its downstream impact are recorded in the Cloudflare Production secret-binding verification section below.
   - No authenticated application journey was verified. Firecrawl inspection is not Browserless QA. The AI7 Browserless MCP must be used by Kilo for the authenticated QA queue; no Browserless pass is claimed here.
 - Claude Duet research refreshed from Anthropic's official product article (published 2026-10-21) and an independent hands-on UI/UX review (published 2026-10-26). Official product principles include one ongoing text/voice thread, carried-over memory/connectors, background work, proactive briefs, and approval before consequential actions. The review highlights polished mobile onboarding, channels, visible task lists, artifacts, and also notes follow-through, latency, desktop continuity, and team-sharing limitations. The prompts use these as product lessons, not as a visual clone.
 - The supplied Drive avatar share URL resolves through Firecrawl to an image/png response (HTTP 200); the binary image itself was not rendered for visual inspection in this run. The black-square 3×3 glowing-dot Chief avatar requirement remains explicit in both queues.
@@ -180,7 +180,7 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - No new schedule or automation was created or modified.
 - Next execution priorities: Kilo should begin with Prompt 1's production OAuth configuration diagnosis, then Prompt 2's production test-bypass audit, followed by the channel data model/migration and durable chat interactions. Execute prompt2.txt through the exact AI7 remote Browserless MCP after a valid test identity is available; never bypass authentication to force a pass.
 
-- Final read-back verification after the wording correction: 118/118 implementation prompts contain the exact report phrase, query.txt instruction, To-Do requirement, and Wrangler token-export line; 11/11 QA prompts contain the Browserless URL, compulsory repair loop, token-export line, and query.txt reporting requirement. query.txt remains 0 bytes.
+- Final read-back verification after the secret-baseline updates: 118/118 implementation prompts contain the exact report phrase, query.txt instruction, To-Do requirement, and Wrangler token-export line; 11/11 QA prompts contain the Browserless URL, compulsory repair loop, token-export line, and query.txt reporting requirement. query.txt remains 0 bytes.
 
 
 ## Cloudflare Production secret-binding verification — 2026-11-11
@@ -196,3 +196,5 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - Therefore the current Production environment appears to lack the required secret bindings, not merely a UI configuration display. Do not invent values or claim the app is fixed. The owner-provided CLOUDFLARE_API_KEY is a deployment credential, not a substitute for Google OAuth, session, internal proxy, or Groq secrets.
 - Updated prompt.txt Prompt 1 and the current baseline to require an exact secret-name audit, secure-source check, and explicit blocker reporting; updated prompt2.txt's live baseline accordingly. No secret values were read, printed, or changed.
 - This remains an external configuration blocker for authenticated production QA. Kilo should continue independent code/UI work, but must not create a production auth bypass or mark the app fully operational until the required secret bindings are supplied from a legitimate secure source and verified live.
+
+- Final prompt file verification after all Cloudflare baseline edits: prompt.txt has exactly 118 prompts (348,999 characters; blob e83f2d794b10f680690cd2ee1d29c1b58ddf0c37); prompt2.txt has exactly 11 prompts (67,631 characters; blob 0c5fd4fa80f5f3b441aec0dab92d17d77829cac3). All required per-prompt deployment/report/To-Do/Browserless checks pass, and query.txt remains empty.
