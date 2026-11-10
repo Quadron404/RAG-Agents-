@@ -179,3 +179,5 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - No application source code was changed and no Cloudflare deployment was performed in this run. This was a prompt/QA-queue refresh only; RAG Agents is not represented as complete or deployed by this work.
 - No new schedule or automation was created or modified.
 - Next execution priorities: Kilo should begin with Prompt 1's production OAuth configuration diagnosis, then Prompt 2's production test-bypass audit, followed by the channel data model/migration and durable chat interactions. Execute prompt2.txt through the exact AI7 remote Browserless MCP after a valid test identity is available; never bypass authentication to force a pass.
+
+- Final read-back verification after the wording correction: 118/118 implementation prompts contain the exact report phrase, query.txt instruction, To-Do requirement, and Wrangler token-export line; 11/11 QA prompts contain the Browserless URL, compulsory repair loop, token-export line, and query.txt reporting requirement. query.txt remains 0 bytes.
