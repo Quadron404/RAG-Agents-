@@ -151,3 +151,31 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
   4. Build the dedicated 3×3 Chief avatar and replace the violet-first theme with the original burgundy design system.
   5. Implement Gmail inbox reading and draft-only replies with locked, thread-derived recipients and explicit owner approval.
   6. Execute QA prompts 1–11 through the exact AI7 Browserless MCP remote server, fixing each issue in the mandatory reproduce → root-cause fix → tests → Cloudflare deploy → same-Browserless retest loop.
+
+
+## Manual Chief-of-Staff refresh — 2026-11-11
+
+- Re-fetched the current GitHub main branch and reviewed the current implementation queue, QA queue, progress ledger, README, Worker OAuth source/config contract, migration inventory, and production app through Firecrawl.
+- Main HEAD before this refresh: 74220d23c74302a73d692a92055cd6686719a601. No application-source implementation commit was observed after the 2026-11-10 source audit; the intervening commits were prompt/ledger maintenance.
+- Replaced prompt.txt in full with exactly 118 numbered implementation prompts. The refreshed file is 348,251 characters and focuses on the verified outstanding product gaps while requiring evidence-based skip-if-complete behavior.
+  - Initial replacement commit: e3153d628323df2bb8d684ff04c88ce8c2c584e1.
+  - Final wording correction commit: ac2305926a76ef559d184a0250831286f108a375.
+  - Final content blob SHA: f998ffc848cc61dfcce4b25d0bab6a749d134147.
+  - Every prompt explicitly includes the To-Do requirement, exact CLOUDFLARE_API_TOKEN export sourced from CLOUDFLARE_API_KEY, deployment safety rules, and a technically detailed report appended to query.txt. It also requires AI7_PROGRESS.md updates.
+- Replaced prompt2.txt in full with exactly 11 detailed feature-based Browserless QA/repair prompts. The file is 67,376 characters.
+  - Commit: 9e5dbf94ba32503eb8fe7b1754b7b254766b9fc9.
+  - Content blob SHA: 52c049af8ff45965b5deed5402371b7f26665f83.
+  - The exact https://mcp.browserless.io/mcp endpoint appears once inside each of the 11 prompts. Every prompt repeats the AI7 import guidance, requires actual Browserless MCP invocation and session-ID preservation, includes the compulsory reproduce → root-cause fix → regression tests → Cloudflare deploy → same-session Browserless retest loop, and requires a detailed query.txt report.
+- Verification after writes: 118 implementation prompts; 11 QA prompts; 118/118 implementation prompts contain the exact Wrangler token-export line, query.txt reporting requirement, and To-Do instruction; 11/11 QA prompts contain the exact Browserless endpoint, deployment export, and repair loop.
+- query.txt was read and was already empty (0 characters). The file was preserved and not deleted or rewritten.
+- Firecrawl production inspection:
+  - GET / returned HTTP 200 and the unauthenticated sign-in shell only. Browser inspection reported title “RAG Agents”, one visible “Continue with Google” link, desktop viewport/document 1920×993, and no horizontal overflow at that viewport. A mobile screenshot was also captured.
+  - GET /auth/session returned HTTP 200 with authenticated:false, user:null, and Gmail status unknown.
+  - GET /auth/login returned HTTP 503 with “Google sign-in is not configured”.
+  - worker/src/index.ts checks both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before starting OAuth; worker/src/env.ts declares the secret. The supplied runtime screenshot showed the client ID variable but did not establish whether the secret is configured. The actual missing/empty value was not independently identified, so no claim is made about which one is absent.
+  - No authenticated application journey was verified. Firecrawl inspection is not Browserless QA. The AI7 Browserless MCP must be used by Kilo for the authenticated QA queue; no Browserless pass is claimed here.
+- Claude Duet research refreshed from Anthropic's official product article (published 2026-10-21) and an independent hands-on UI/UX review (published 2026-10-26). Official product principles include one ongoing text/voice thread, carried-over memory/connectors, background work, proactive briefs, and approval before consequential actions. The review highlights polished mobile onboarding, channels, visible task lists, artifacts, and also notes follow-through, latency, desktop continuity, and team-sharing limitations. The prompts use these as product lessons, not as a visual clone.
+- The supplied Drive avatar share URL resolves through Firecrawl to an image/png response (HTTP 200); the binary image itself was not rendered for visual inspection in this run. The black-square 3×3 glowing-dot Chief avatar requirement remains explicit in both queues.
+- No application source code was changed and no Cloudflare deployment was performed in this run. This was a prompt/QA-queue refresh only; RAG Agents is not represented as complete or deployed by this work.
+- No new schedule or automation was created or modified.
+- Next execution priorities: Kilo should begin with Prompt 1's production OAuth configuration diagnosis, then Prompt 2's production test-bypass audit, followed by the channel data model/migration and durable chat interactions. Execute prompt2.txt through the exact AI7 remote Browserless MCP after a valid test identity is available; never bypass authentication to force a pass.
