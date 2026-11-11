@@ -1,6 +1,6 @@
 # RAG Agents — AI7 Progress Ledger
 
-Last updated: 2026-11-09 (Asia/Kolkata)
+Last updated: 2026-11-12 (Asia/Kolkata)
 Repository: https://github.com/Quadron404/RAG-Agents-
 Branch: main
 
@@ -198,3 +198,43 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - This remains an external configuration blocker for authenticated production QA. Kilo should continue independent code/UI work, but must not create a production auth bypass or mark the app fully operational until the required secret bindings are supplied from a legitimate secure source and verified live.
 
 - Final prompt file verification after all Cloudflare baseline edits: prompt.txt has exactly 118 prompts (348,999 characters; blob e83f2d794b10f680690cd2ee1d29c1b58ddf0c37); prompt2.txt has exactly 11 prompts (67,631 characters; blob 0c5fd4fa80f5f3b441aec0dab92d17d77829cac3). All required per-prompt deployment/report/To-Do/Browserless checks pass, and query.txt remains empty.
+
+
+## Manual Chief-of-Staff refresh — 2026-11-12
+
+- Re-fetched the current `main` branch and verified HEAD `27a68ffdc055c095ceaadbba82b767fffc5fe0b9`. The latest commit is a documentation-only AI7_PROGRESS.md change; no application-source implementation commit has landed since the previous source audit. The implementation queue therefore remains open. Do not mark any feature complete merely because it appears in a prompt or source file.
+- Re-inspected README.md, the current Worker OAuth/auth source, Worker conversation store/routes, D1 migration inventory, frontend chat/store/shell/AppIcon/theme, Gmail modules, tests, and both existing prompt files.
+- Current source-backed gaps reconfirmed:
+  - `ConversationRow` in `worker/src/chat/store.ts` has no `channel_id`; channel summary records/migrations are not a first-class channel entity or membership model.
+  - `Frontend/src/store.ts` persists conversation pin/archive state in localStorage. `Frontend/src/views/Chat.tsx` implements message edit/remove/pin through local client state/storage; durable cross-device server behavior is not established.
+  - `Frontend/src/components/AppIcon.tsx` defines dock app icons, not the dedicated animated 3×3 Chief avatar.
+  - README explicitly states that Gmail inbox reading and incoming-reply workflow are not implemented.
+  - Existing substantial code remains in place for Worker-native Chief chat/SSE, Google OIDC, D1 sessions, separate Gmail consent, routines/Cron, connector approvals, summaries/AI Search, Codespace Computer/noVNC/CDP, terminal, Files, and Settings. Test each feature end-to-end before changing or duplicating it.
+- Firecrawl live-browser verification on 2026-11-12:
+  - Captured production root at desktop 1440×960 and mobile 390×844. Both viewports expose only the unauthenticated “RAG Agents” sign-in shell and “Continue with Google” link; the authenticated product shell could not be reached.
+  - Clicked “Continue with Google” in the Firecrawl browser. The Worker returned JSON `{"error":"Google sign-in is not configured"}` at `/auth/login`, HTTP 503, rather than redirecting to Google.
+  - Direct Firecrawl endpoint checks: `GET /auth/session` HTTP 200 with `authenticated:false`, `user:null`; `GET /auth/login` HTTP 503.
+  - The Firecrawl browser session was closed after the inspection. This is Chief's independent baseline check, not Browserless QA and not a substitute for Kilo's AI7 Browserless MCP.
+- Direct Cloudflare API verification of the exact `rag-agents` Production environment:
+  - Production settings list the configured plain-text variables plus `DB` (D1), `AI_SEARCH`, and `ASSETS` bindings.
+  - The Worker script secret-list endpoint returned an empty list. No secret binding names were present; no secret values were retrieved.
+  - Source requires `GOOGLE_CLIENT_SECRET` to start Google OAuth; `worker/src/env.ts` declares `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, and `RAG_INTERNAL_TOKEN`; `worker/src/chat/providers.ts` reads `GROQ_API_KEY` for the configured Groq provider. These are distinct application secrets; `CLOUDFLARE_API_KEY` is only the deployment credential. Do not invent missing values or weaken authentication.
+  - Latest observed Production deployment: deployment `79b2631d-589e-4fc0-b6a6-dd2fc8afc123`, version `a1cf9c89-1dee-4732-84de-02ccab409855`, created `2026-11-11T08:59:51.946Z`.
+- Refreshed `prompt.txt` in full with the latest verified baseline while preserving exactly 118 distinct implementation prompts. Every prompt still requires its own To-Do item, the exact `export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"` deployment setup, preservation of Worker/assets configuration, live deployment verification, and a technically detailed report appended to `query.txt`.
+  - Commit: `c0e134555af14af28c1c713224f162f7a3a05f55`
+  - Content blob SHA: `664870c055235296b513a4946d40b9ddc942ae0f`
+  - Length: 349,805 characters; exactly 118 numbered prompt headings.
+- Refreshed `prompt2.txt` in full with the current production baseline. It retains exactly 11 feature-based live QA/repair prompts. Each prompt repeats the exact AI7 remote Browserless endpoint, explicit tool-invocation requirement, session-ID preservation, compulsory reproduce → root-cause fix → regression tests → Cloudflare deploy → same-session Browserless retest loop, and detailed `query.txt` report requirement. Added a hard evidence gate: no PASS without actual Browserless tool names, returned session ID, live URL, timestamps, viewport, DOM/screenshot evidence, console/network findings, and post-deploy retest evidence from the same session.
+  - Commit: `1cf532b3ce4c4b88f3ac5edaf182bc94038c6a25`
+  - Content blob SHA: `7f6f2686a8e15bbe328650f7b6b55f67ff15a798`
+  - Length: 75,375 characters; exactly 11 numbered QA prompts and 11 hard Browserless evidence gates.
+- Read `query.txt`; it contained zero bytes. It was already empty, so it was preserved without deletion or an unnecessary write. No Kilo report or blocker was available to clear in this run.
+- No application source code was changed, no Cloudflare deployment was performed, and no new schedule or automation was created. RAG Agents is not complete: production Google sign-in is currently blocked by missing Worker secret bindings, and authenticated product behavior has not been verified.
+- Next execution priorities: (1) Kilo verifies whether legitimate secure values exist for the missing Production secrets and reports any unavailable prerequisites without inventing them; (2) continue independent implementation work without adding an auth bypass; (3) build the first-class channel model and durable chat interactions; (4) deliver the original 3×3 Chief avatar and premium responsive shell; (5) execute all 11 QA prompts using AI7 → MCP → browserless → remote at `https://mcp.browserless.io/mcp`, with evidence-backed repair/retest loops.
+- No Browserless pass is claimed by this Chief run. Firecrawl was used only for the Chief's independent live baseline inspection; Kilo must invoke the AI7 Browserless MCP itself for QA.
+
+## Integrity check — 2026-11-12
+
+- `prompt.txt`: 118/118 prompt blocks contain the Wrangler token-export line, a `query.txt` instruction, the technically detailed report requirement, a To-Do requirement, and deployment instructions.
+- `prompt2.txt`: 11/11 prompt blocks contain the exact `https://mcp.browserless.io/mcp` endpoint, AI7 remote import instructions, mandatory actual Browserless invocation, the hard evidence gate, the compulsory repair loop, the Wrangler token-export line, and `query.txt` reporting.
+- `query.txt`: 0 bytes; file remains present.
