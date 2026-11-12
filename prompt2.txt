@@ -23,7 +23,7 @@ CURRENT VERIFIED BASELINE — 2026-11-13
 - Existing code exists for Worker-native SSE chat, OIDC/session storage, D1, routines/Cron, connector approvals, summaries/AI Search, Computer/noVNC/CDP, Terminal, Files, and Settings. Test actual behavior, not source presence.
 
 PREVIOUS REPORT COVERAGE
-The previous query ledger contained QA reports for prompts 1, 4, 5, 9, 10, and 11 only. It did not contain reports for prompts 2, 3, 6, 7, and 8 or for every implementation prompt. The Chief has reset query.txt after reviewing the old ledger. It is now a fresh append-only ledger. Never clear it again.
+The previous query ledger contained QA reports for prompts 1, 4, 5, 8, 9, 10, and 11. It did not contain reports for prompts 2, 3, 6, and 7 or for every implementation prompt. Prompt 8's report text is concatenated into the end of Prompt 5's section without a clean delimiter; treat it as malformed and rerun Prompt 8. The Chief has reset query.txt after reviewing the old ledger. It is now a fresh append-only ledger. Never clear it again. Two old branch reports claiming channels and durable message interactions were imported into the old ledger, but their source changes remain unmerged; test the actual current main deployment.
 
 CLAUDE DUET BENCHMARK
 Official guide: https://support.claude.com/en/articles/17631495-get-started-with-claude-duet
