@@ -1,52 +1,33 @@
 RAG AGENTS — 11 MANDATORY LIVE BROWSERLESS QA + REPAIR PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents-
-Branch: main
+Report branch: main
 Production origin: https://rag-agents.pratyakshrawat768.workers.dev
-Refresh date: 2026-11-13 (Asia/Kolkata)
+Refresh: 2026-11-13 (Asia/Kolkata)
 
 PURPOSE
-These are exhaustive real-user journeys and repair assignments, not smoke tests. Execute all 11 in order. Every prompt MUST invoke the configured AI7 remote Browserless MCP. Browserless is the only accepted live-browser evidence for this queue.
+These are exhaustive real-user journeys and repair assignments, not smoke tests. Execute all 11 in order, one at a time. Each prompt repeats the AI7 Browserless MCP import and hard-use requirement. Browserless is the only accepted live-browser evidence for this queue. The Chief's Firecrawl inspection is an independent baseline, not a substitute.
 
-CURRENT VERIFIED BASELINE — 2026-11-13
-- Firecrawl inspected production at desktop and mobile sizes. Both show only the unauthenticated RAG Agents sign-in shell and “Continue with Google”.
-- GET /auth/session returns HTTP 200 with authenticated:false and user:null.
-- Firecrawl clicked “Continue with Google”; the Worker redirected to Google's sign-in page. No credentials were entered and no callback/session was completed. OAuth redirect works; callback/session completion remains unverified.
-- Production root loaded without observed console errors or failed asset requests. This is the Chief's independent Firecrawl baseline, NOT a Browserless pass.
-- Latest observed Production Worker version: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba (version 36), deployed 2026-11-12T20:51:34Z.
-- Cloudflare Production has GOOGLE_CLIENT_SECRET, SESSION_SECRET, and RAG_INTERNAL_TOKEN secret bindings; DB (D1), AI_SEARCH, and ASSETS are present. No secret values were retrieved.
-- AGENT_PROVIDER/SUMMARY_PROVIDER are groq with model openai/gpt-oss-20b, but no GROQ_API_KEY binding was listed. Worker source returns no chat provider when that key is absent.
-- GITHUB_TOKEN was not listed on the Worker; CODESPACE_NAME exists but is empty. BACKEND_ORIGIN is configured.
-- GMAIL_SENDER_EMAIL and GMAIL_SENDER_REFRESH_TOKEN were not listed; GMAIL_SENDER_ALIAS is empty. README says Gmail inbox reading and incoming replies are not implemented.
-- Main source has no first-class channels table or channel_id on ConversationRow. Migration 0004 is conversation-scoped channel_daily_summaries, not a channel model. Worker routes expose thread/conversation operations, not a channel API.
-- Chat.tsx message edit/remove/pin are local; conversation pin/archive use localStorage. Durable cross-device actions and reactions are not established.
-- ChiefAvatar.tsx is absent; AppIcon.tsx is a dock icon component, not the animated 3×3 Chief avatar. Store still declares multiple bot identities.
-- Existing code exists for Worker-native SSE chat, OIDC/session storage, D1, routines/Cron, connector approvals, summaries/AI Search, Computer/noVNC/CDP, Terminal, Files, and Settings. Test actual behavior, not source presence.
+CURRENT VERIFIED BASELINE
+- Firecrawl desktop/mobile Production shows only the unauthenticated sign-in shell; no Skip Sign In/test control.
+- GET /auth/session returns HTTP 200 with authenticated:false, user:null.
+- GET /auth/login redirects to Google using /auth/callback, openid email profile, PKCE S256, state, nonce. No credentials entered; callback/session unverified.
+- Production Worker version 36: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba, deployed 2026-11-12T20:51:34Z.
+- Cloudflare has Google client secret, session secret, RAG internal token, D1, AI_SEARCH, ASSETS. No secret values read.
+- Production does not list GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN; CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty.
+- Main has no channel entity/API. Message edit/delete/pin and conversation pin/archive include local-only paths. Tasks are not proven durable. Computer, routines, Files, restricted browsing, memory, summaries, approvals have substantial source/tests but need real end-to-end verification.
+- query.txt is present and empty after previous review; it is now append-only.
 
-PREVIOUS REPORT COVERAGE
-The previous query ledger contained QA reports for prompts 1, 4, 5, 8, 9, 10, and 11. It did not contain reports for prompts 2, 3, 6, and 7 or for every implementation prompt. Prompt 8's report text is concatenated into the end of Prompt 5's section without a clean delimiter; treat it as malformed and rerun Prompt 8. The Chief has reset query.txt after reviewing the old ledger. It is now a fresh append-only ledger. Never clear it again. Two old branch reports claiming channels and durable message interactions were imported into the old ledger, but their source changes remain unmerged; test the actual current main deployment.
 
-CLAUDE DUET BENCHMARK
-Official guide: https://support.claude.com/en/articles/17631495-get-started-with-claude-duet
-Official product: https://claude.com/product/claude-duet
-Independent hands-on review: https://www.chatprd.ai/how-i-ai/claude-duet-review
-Test one persistent main thread, channels sharing user memory, visible tasks, artifacts, background work, connected apps, and approval before consequential actions. Improve on reported weaknesses: quiet follow-up, latency, desktop handoff, and limited team sharing. Do not copy Claude branding or exact screens.
-
-ABSOLUTE QA RULES
-- Use synthetic data only. Never send real email, make purchases, delete real files, reset a real account, or mutate a real connected service.
-- Never bypass production authentication. Use the preview-only AI TEST SESSION from implementation Prompt 1 only when isolated test resources are proven. Otherwise test public/protected routes, mark authenticated journeys BLOCKED, and continue safe tests.
-- Do not ask the owner for credentials or infer missing secrets from authenticated:false.
-- No Browserless evidence means no PASS.
-- Test desktop 1920×1080, 1440×900, 1280×800, 1024×768; tablet 768×1024; mobile 430×932, 390×844, 360×800, 320×640. Record actual dimensions.
-- Test keyboard/focus, reduced motion, touch targets, loading/empty/error/success states, refresh, and cross-device persistence.
-- Fix root causes; do not hide defects with CSS-only patches, fake data, swallowed exceptions, removed controls, weakened permissions, or fake progress.
-
-AFTER EACH QA PROMPT
-Immediately append its timestamped detailed report to query.txt on the working branch AND push the same report to GitHub main/query.txt before starting the next QA prompt. Use a separate report-only worktree based on latest origin/main; do not merge app source in that commit. Rebase/retry if main advances, read back main/query.txt, and verify the exact report. Update AI7_PROGRESS.md. If main sync fails, record the exact error and never claim success.
 
 Prompt 1 : Authentication, onboarding, and protected application shell
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Exercise signed-out home, Google OAuth initiation, preview-only AI test access, session state, logout, and protected routes. Live baseline: root shows only Continue with Google; /auth/session is unauthenticated; /auth/login redirects to Google. No callback is verified.
+
+MANDATORY TEST SCENARIO
+Open production at desktop/mobile sizes; inspect sign-in shell, focus, keyboard, responsive spacing, console/network. Click Continue with Google and verify redirect URI/scopes/PKCE/state/nonce without credentials. Test AI TEST SESSION only on verified isolated preview. Confirm production has no bypass and protected APIs/WebSockets reject unauthenticated access. Test logout and expiry.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -54,62 +35,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
-
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-RAG Agents is a Google-authenticated app. The Cloudflare Worker owns Google OIDC, D1 sessions, and the public frontend shell; Gmail consent is separate. Current live evidence: the root page is HTTP 200 and shows only “Continue with Google”; GET /auth/session returns authenticated:false; GET /auth/login now redirects to Google's authorization page; callback/session completion remains unverified.
-
-MANDATORY LIVE USER JOURNEY
-Use a fresh Browserless context and inspect the visible sign-in shell, accessibility tree, links, page dimensions, console, failed requests, response headers, and protected routes. Follow the Google link only far enough to inspect the redirect/state flow. Inspect the actual Production secret/config state and source; do not conclude credentials are missing from authenticated:false. Use the isolated preview-only AI TEST SESSION from implementation Prompt 1 only after verifying its dedicated D1/AI Search resources and visible banner. Never create or use a production bypass. Test real Google OAuth only with an already-authorized test identity; otherwise mark callback/session completion UNVERIFIED and continue safe tests. Test denied OAuth, wrong account, expired state, and direct unauthenticated API/Computer/Files routes.
-
-PASS CRITERIA
-PASS requires the real configured sign-in route to work, a verified session to persist safely, protected routes to reject unauthenticated requests, logout to revoke access, and no test-bypass control to be exposed. If the Google secret is genuinely unavailable, mark only the credential-dependent journey BLOCKED with exact non-secret evidence; do not fabricate credentials or bypass auth, and continue all public-surface/security tests.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
+Prompt 2 : Channels, shared memory, and one unified Chief chat
 
-======================================================================
+PURPOSE
+Test the real channel model and Main conversation. Current main has no channels table/channel_id/API; localStorage or branch-only reports are not proof.
 
-Prompt 2 : Persistent channels, shared memory, and one unified Chief chat
+MANDATORY TEST SCENARIO
+Create Main and two synthetic topic channels; rename, reorder, switch, archive, restore, deep-link, create conversations. Refresh, open second tab, change viewport. Verify one Chief, global memory where intended, channel-only facts stay scoped, unread counts are truthful, ownership enforced. Inspect D1/API.
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -117,62 +70,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-Channels are first-class project workspaces, not merely separate conversations. Main is the user's persistent default. Each channel owns its conversations, channel memory, tasks, artifacts, and read state; permitted user-level memory may be shared across channels. Chief remains the only visible assistant identity. The previous source audit found a conversation-centric schema without channel_id; channel-summary tables alone do not prove a real channel model.
-
-MANDATORY LIVE USER JOURNEY
-In Browserless, sign in with the authorized test identity and inspect the channel-first navigation on desktop and mobile. Verify Main is created once, create at least two project channels, rename one, change metadata/order, pin, archive, restore, and switch rapidly. Send unique synthetic facts into each channel. Reload and open a second Browserless context for the same test identity; verify membership, active channel, ordering, read cursors, deep links, tasks, and history converge. Test that user-level preferences can cross channels only by policy and project-only facts never leak. Test back/forward, deleted/archived channel routes, and switching while a response streams.
-
-PASS CRITERIA
-PASS requires server-authoritative channel state, safe legacy conversation membership, one stable Main, one Chief identity, channel-scoped context, permitted shared memory, cross-device consistency, and no cross-channel leakage.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 3 : Chief chat, composer, streaming, and message interactions
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Exercise full message lifecycle and composer against canonical Worker transcript. Current Chat.tsx has local-only edit/delete/pin paths.
+
+MANDATORY TEST SCENARIO
+Send short/long/Unicode/multiline/rapid messages; test Enter/Shift+Enter, paste, drafts, streaming, tool events, Stop, retry, mid-stream refresh, duplicate clicks, provider failure. Edit/delete/pin/react/reply/regenerate, refresh and open another tab. Test attachments/voice only if configured. No action claims success before server confirmation.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -180,62 +105,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-The chat canvas is the core interface. It must support a reliable message timeline, a responsive composer, streaming states, safe Markdown, attachments, message editing/deletion, pins, reactions, replies, and optional voice. The UI must always reflect durable server state rather than optimistic local-only controls.
-
-MANDATORY LIVE USER JOURNEY
-Send simple, long, and multi-step synthetic requests. Observe user message persistence, stream start, partial output, tool activity, completion, and failure. Double-click Send, refresh mid-stream, disconnect/reconnect, retry, and Stop. Edit and delete a synthetic message; pin/unpin messages and conversations; archive/restore; react and reply to a specific source; reload and verify all supported actions persist in another context. Test file attachment add/remove/upload, Markdown/code/table/link rendering, unsafe HTML rejection, keyboard shortcuts, IME composition, voice permission granted/denied, transcript correction, and narrow mobile composer behavior.
-
-PASS CRITERIA
-PASS requires no duplicate sends or tool actions, truthful stream/stop states, durable supported interactions, secure rendering, accessible keyboard/touch controls, and no UI state that claims an action succeeded before the server confirms it.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 4 : Chief orchestration, tools, approvals, and task activity
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Test plan → tool → approval → result and persistent task record. Specialists stay internal; one Chief is visible.
+
+MANDATORY TEST SCENARIO
+Run safe synthetic multi-step requests, read-only connector lookup, action requiring approval. Inspect plan, timeline, tool state, approval, expiry, denial, allow, cancellation, final task record. Refresh in each state. Use stubs; never send email or mutate real services.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -243,62 +140,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-Chief is the single user-facing coordinator. Internal specialists may handle research, coding, email, browser, or other capabilities, but must not appear as competing visible assistants. Complex requests should create a useful plan and durable task timeline. Consequential actions require explicit owner approval of the exact immutable action.
-
-MANDATORY LIVE USER JOURNEY
-Run simple chat, research, file, routine, Computer, and multi-step synthetic requests. Inspect tool selection, visible plan, timeline, specialist attribution, and final result. Trigger a harmless approval-required action in a safe test fixture. Inspect target, payload, scope, expiry, owner, and current state. Deny one request and approve a separate synthetic request; verify denial prevents execution and approval authorizes only the exact payload shown. Test stale cards, duplicate decisions, concurrent tabs, expired approvals, provider errors, task cancellation, retry, and partial-result preservation.
-
-PASS CRITERIA
-PASS requires one coherent Chief response, useful task progress, no fabricated tool success, approval-bound execution, no replay/duplicate side effects, and truthful waiting/completed/failed/cancelled states.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 5 : Memory, history, search, summaries, and provenance
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Verify global memory, channel context, historical retrieval, AI Search, summaries, citations without mixing private scopes.
+
+MANDATORY TEST SCENARIO
+Create synthetic facts in Main/other channels; query same/different channels. Search exact phrases/dates/names; inspect provenance. Trigger summary, add messages during generation, delete source, retry index failure. Ensure stale summaries cannot overwrite newer content and deleted/cross-owner data never appears.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -306,62 +175,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-RAG Agents must remember useful user-level preferences and channel-specific project context without leaking one project's private facts into another. History tools, Cloudflare AI Search, incremental summaries, rollups, and source provenance must stay consistent and fresh.
-
-MANDATORY LIVE USER JOURNEY
-Store synthetic user-level and channel-level facts in separate scopes. Ask Chief to retrieve them from the correct and incorrect channels. Test corrections and deletion. Search messages, channel names, summaries, tasks, and artifacts. Trigger summary generation, delay an older job, and verify it cannot overwrite a newer summary. Test daily/monthly rollups in a non-UTC timezone around date boundaries. Open citations/source chips and verify they point to the authorized source. Try prompt-injection text embedded in a file or page and confirm it remains untrusted data.
-
-PASS CRITERIA
-PASS requires correct retrieval, channel isolation, current summaries, idempotent indexing, accurate timestamps, source-grounded answers, and no secrets or unrelated transcript content in model context or telemetry.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 6 : Tasks, routines, scheduling, and notifications
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Exercise durable Tasks and Worker Cron routines. Production has empty CODESPACE_NAME and no Worker GITHUB_TOKEN binding; never claim wake without evidence.
+
+MANDATORY TEST SCENARIO
+Create synthetic one-time task and daily/weekly routine with IANA zone; edit/pause/resume/inspect/cancel. Test DST/month-end, duplicate cron, retry/backoff, backend unavailable, quiet hours. Confirm status survives refresh/restart. Missing wake bindings means truthful queued state and BLOCKED wake.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -369,62 +210,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-Tasks are durable work records independent of a transient chat view. Routines are server-authoritative recurring jobs driven by the Worker Cron scheduler, with IANA timezone recurrence, leases, bounded retries, and optional Codespace wake. Notifications should surface only useful completion, approval, or blocker events.
-
-MANDATORY LIVE USER JOURNEY
-Create synthetic tasks and verify queued, active, waiting-approval, completed, failed, and cancelled states. Create a daily or weekly test routine in a non-production test fixture; inspect next run, timezone, pause/resume/edit/delete, run history, and duplicate Cron protection. Test DST gap/repeat and month-end behavior in unit fixtures. Simulate backend unavailable, Codespace stopped, rate limits, expired leases, and retries. Verify notifications deep-link to the task and respect quiet hours/preferences. Never create real recurring work in the owner's account during QA.
-
-PASS CRITERIA
-PASS requires durable task/routine state, correct timezone calculation, idempotent run creation, bounded retry, truthful queued/waking/completed status, and useful non-spammy notifications.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 7 : Gmail inbox, drafts, approvals, and connected services
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Test Gmail as optional separate consent, not sign-in prerequisite. README says inbox reading missing; Production lacks GMAIL_SENDER_EMAIL and GMAIL_SENDER_REFRESH_TOKEN.
+
+MANDATORY TEST SCENARIO
+Verify connect/reconnect/disconnect, scopes, same-account binding, expiry/revocation, inbox/thread read if implemented. Draft against synthetic/stub thread and inspect sender/recipient/body/attachments in approval. Deny and verify no delivery. Stub/isolated mailbox only; no real email. Missing sender fails closed.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -432,62 +245,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-Google sign-in and Gmail connection are separate grants. The README documents the connection lifecycle and owner-only notification sending, but explicitly says inbox reading and incoming replies are not implemented. Gmail access must be owner-bound, read-only for inbox work, and protected by exact send approval; the model must never choose recipients or sender identity.
-
-MANDATORY LIVE USER JOURNEY
-Use a synthetic mailbox/test grant or mocked provider. Connect and disconnect Gmail separately from sign-in; inspect scopes, identity binding, status, refresh, revoke, and reconnect. Open inbox, search by sender/subject/date/label, inspect thread detail and attachment metadata, and draft a reply. Attempt to tamper with To/Cc/Bcc/From/Reply-To and confirm the server derives recipients from the selected thread. Inspect the approval card's exact sender, recipient, subject, body, and attachments. Deny a draft and approve a separate mocked send; never send a real external email.
-
-PASS CRITERIA
-PASS requires no accidental scope expansion, no cross-account mailbox, no token exposure, read-only inbox behavior, thread-derived recipient identity, immutable approval, one delivery per approved draft, and truthful provider-confirmed send status.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 8 : Computer, remote Chrome, terminal, and restricted browsing
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Test real Codespace Computer: readiness, live screen, same Chrome, CDP, Files, Terminal, restricted network boundary.
+
+MANDATORY TEST SCENARIO
+Open Computer, wait for health, inspect live noVNC, navigate harmless page, inspect DOM, click harmless control, verify Chrome changes. Test reconnect and terminal output/resize. Test allowed/denied hosts, redirects, private-IP block, raw socket/proxy bypass, owner isolation. No private accounts/destructive commands.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -495,62 +280,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-The Computer uses the real Codespace Chrome desktop, noVNC screen, CDP browser, terminal, and Files on the authorized workspace. Ordinary agents must use the separate restricted browser and gateway, not the user's personal Chrome. The Worker and backend must enforce the same authenticated owner boundary.
-
-MANDATORY LIVE USER JOURNEY
-Open Computer and inspect lifecycle, screen relay, resolution, reconnect, and persistent Chrome profile. Navigate and interact with a safe test page through CDP; test stale selectors, new tabs, wait conditions, and session recovery. Test terminal input/output/resize/reconnect. Verify ordinary-agent browse is restricted by the allowlist and cannot reach arbitrary hosts, direct IPs, raw sockets, or the personal browser. Test unauthenticated /websockify, /ws/screen, /cdp, and terminal paths. Use harmless synthetic actions only; do not delete real files or submit real external forms.
-
-PASS CRITERIA
-PASS requires a real ready workspace, stable authenticated screen/CDP/terminal behavior, owner isolation, default-deny restricted browsing, and no public screen or shell bypass.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 9 : Files, previews, generated artifacts, and sharing
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Exercise owner workspace file lifecycle and generated artifacts with strict path isolation.
+
+MANDATORY TEST SCENARIO
+Upload synthetic text/PDF/image, list/search/preview/rename/download/delete only that fixture after confirmation. Generate harmless artifact, inspect bytes/preview, create revision, compare, test expiring private share if implemented. Test traversal, symlink escape, malformed/oversized file, cross-owner access, HTML sanitization. Never touch real files.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -558,62 +315,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-Files are real workspace resources, not decorative chat attachments. The product must support safe listing, upload, download, rename, move, folder creation, delete, previews, and generated artifacts with owner/channel access boundaries. File content is untrusted input and must never execute in the browser.
-
-MANDATORY LIVE USER JOURNEY
-Create a synthetic test folder and files. Upload valid and invalid formats, inspect progress/cancel/retry, preview supported text/image/PDF/code, rename/move/download, and delete only the synthetic test file. Test duplicate names, nested paths, traversal attempts, large files, interrupted upload, malicious HTML/SVG, Unicode, and preview errors. Generate a small artifact from a test task and verify it appears in the correct channel and opens/downloads. Test export permissions and cross-owner access denial.
-
-PASS CRITERIA
-PASS requires correct filesystem results, safe path handling, accurate UI state, no executable preview content, authorized artifact ownership, and consistent behavior after reload and on mobile.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 10 : Premium visual quality, responsive behavior, and Chief identity
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Audit real UI as demanding product designer. Preserve RAG burgundy #4A0E17, black-square 3×3 glowing-dot Chief avatar, restrained liquid motion, one unified chat canvas.
+
+MANDATORY TEST SCENARIO
+Capture 1440/1280/768/390/360/320px and portrait/landscape. Test dark/light/system, keyboard, focus, reduced motion, touch targets, menus, loading/error/empty, long chat, channels, Tasks, Files, Computer, Settings. Verify avatar states idle/listening/thinking/working/approval/success/error/offline. Record screenshots/defects.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -621,62 +350,34 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-The visual benchmark is a polished mobile-first agent experience with clear channels, visible task progress, dedicated artifacts, responsive onboarding, and a fast working rhythm. Claude Duet's official material emphasizes an ongoing text/voice thread, proactive briefings, background work, connected apps, and approval before consequential actions; an independent review praises its mobile polish, channels, task lists, and artifacts but flags follow-through, latency, desktop continuity, and team-sharing gaps. RAG Agents must be original and stronger at cross-device continuity and closing work loops.
-
-MANDATORY LIVE USER JOURNEY
-Inspect the entire authenticated app on desktop, tablet, and mobile at 320, 390, 768, 1024, and wide desktop sizes. Check every primary view, navigation state, modal, menu, composer, task card, artifact, Computer panel, and Settings screen. Verify the #4A0E17 burgundy identity, precise typography/spacing, restrained surfaces, subtle fast transitions, accessible focus, touch targets, safe areas, and reduced-motion mode. Inspect the dedicated black-square 3×3 glowing-dot Chief avatar; test idle/listening/thinking/tool/success/error states. Compare before/after screenshots and note overflow, clipped content, slow transitions, and inconsistent state.
-
-PASS CRITERIA
-PASS requires a coherent premium original design, no horizontal overflow or clipped controls, usable mobile keyboard behavior, accessible interactions, reduced-motion support, truthful avatar states, and matching UI/logic across devices.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-======================================================================
 
 Prompt 11 : Full production regression, security, resilience, and release
 
-HARD START GATE — INVOKE BROWSERLESS BEFORE CODE WORK
-Open AI7 → MCP and use this exact remote configuration:
+PURPOSE
+Run full deployed regression after repairs. This is not a smoke test or source checklist.
+
+MANDATORY TEST SCENARIO
+Repeat all journeys plus auth, owner isolation, CSRF, XSS, prompt injection, SSRF, traversal, approval replay, duplicate send, stale jobs, provider 401/429/5xx, Worker/backend outage, reconnect, mobile accessibility. Verify builds, tests, migrations, deployment version, live endpoints. Retest every failure after repair. PASS only when required deployed journeys pass.
+
+MANDATORY AI7 BROWSERLESS MCP — THIS PROMPT MUST USE IT
 Import
 Only add servers you trust. Docker and absolute host paths are not supported.
 browserless
@@ -684,56 +385,22 @@ remote
 1
 https://mcp.browserless.io/mcp
 
-Immediately discover the actual Browserless MCP tool names exposed by AI7 and invoke the appropriate browser/session tool. A successful real Browserless call and returned session ID are required before this prompt can count as QA. Keep the same session ID across navigation, clicks, fills, snapshots, screenshots, console, and network calls. Use only discovered tool schemas; never invent tool names or arguments.
-
-If the call fails, inspect AI7 MCP connection status/tool discovery, reconnect, read Browserless recovery guidance, correct the call, and retry. Do not stop after one failed attempt. Firecrawl, local Chrome, Playwright, curl, and static screenshots cannot satisfy this requirement.
-
-Use Browserless for initial baseline, every in-scope interaction, and post-deployment retest. Capture actual tool names, session ID, live session URL, timestamps, viewport, DOM/accessibility snapshots, screenshots, console errors, failed requests, status codes, and expected-versus-actual results. Reuse the SAME session after deployment and repeat the exact failing scenario. No PASS without this evidence.
+HARD START GATE — DO NOT SKIP
+1. In AI7 inspect MCP → browserless → remote and the actual available tool list. Invoke the real Browserless tool now against https://rag-agents.pratyakshrawat768.workers.dev or a verified isolated preview URL for synthetic authenticated tests.
+2. QA has NOT started until a Browserless call succeeds and returns usable browser/session evidence. Preserve returned session ID across every subsequent call; reuse it for the journey and post-fix retest.
+3. Do not substitute Playwright, local Chrome, Firecrawl, screenshots alone, curl, or source inspection. None is accepted live-browser evidence for this queue.
+4. If Browserless refuses/unavailable: inspect AI7 MCP config and exposed schema; reconnect/retry existing remote server; read Browserless recovery instructions; inspect exact error, selector, timeout, endpoint, session state; preserve/reuse session ID. Do not claim credentials/OAuth secrets are missing from authenticated:false or failed login. Exhaust safe recovery before BLOCKED. Never invent credentials or bypass authentication.
+5. No production auth bypass. Use AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner.
 
 COMPULSORY REPAIR LOOP
-Reproduce in Browserless → isolate root cause → implement durable fix → add regression tests → run tests/typecheck/build → deploy frontend assets AND Worker → return to the SAME Browserless session → repeat the exact scenario and adjacent regressions. If any assertion fails, repeat until all in-scope assertions pass or a genuine external prerequisite is evidenced.
+- Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
+- Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
+- Add focused regression test; run relevant full suite; rebuild/typecheck.
+- Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
+- Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
+- Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
-REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
-
-FEATURE DESCRIPTION AND TEST OBJECTIVE
-This is the final integration gate across authentication, channels, Chief chat, memory, search, tasks, routines, Gmail, connectors, Computer, Files, artifacts, notifications, and responsive UX. Source presence or a passing build is not proof of a working product.
-
-MANDATORY LIVE USER JOURNEY
-Use Browserless to complete end-to-end user journeys from a clean authorized test context. Test first-run and returning sessions, channel/task continuity across devices, send/stream/stop/retry, approvals, routine status, Gmail draft-only behavior, Computer screen/browser/terminal, Files and artifacts, logout, and cross-owner isolation. Exercise provider/backend outage, network loss, stale sessions, duplicate requests, expired approvals, and recovery. Inspect console, failed network requests, accessibility tree, screenshots, and actual server responses. Run full Worker tests, backend tests, frontend typecheck/build, migration tests, and security checks. Deploy only verified fixes and repeat the exact Browserless failures on the deployed Worker.
-
-PASS CRITERIA
-PASS requires all critical journeys to pass on the deployed Worker, no critical/high security issue, no duplicate or unauthorized side effects, no misleading success states, and a release dossier with exact version, test evidence, and remaining non-blocking limitations.
-
-AI7 BROWSERLESS MCP — REQUIRED FOR THIS PROMPT (DO NOT SKIP)
-AI7 setup location: AI7 → MCP → browserless → remote.
-Use the exact configured remote MCP server:
-Import
-Only add servers you trust. Docker and absolute host paths are not supported.
-Server name: browserless
-Transport: remote
-Server URL: https://mcp.browserless.io/mcp
-
-You MUST actually connect to and invoke the Browserless MCP tools in the AI7 environment. Merely mentioning the server, reading its configuration, or using another browser does not count. First inspect the available MCP tool names and the Browserless connection status, then create or reuse a real Browserless browser session. Preserve the returned session ID across every navigation, click, fill, snapshot, screenshot, console, and network call in this prompt. Do not create a fresh session for every step. HARD PASS GATE: do not mark this prompt PASS or complete unless the report contains the actual Browserless MCP tool name(s) invoked, the returned session ID, the live session URL, timestamps, viewport sizes, DOM snapshots/screenshots, relevant console/network results, and the post-deployment retest performed in that same Browserless session. Merely stating that Browserless is configured, pasting its URL, or describing a planned test is a FAIL. Use accessible roles/names/labels and DOM snapshots; when selectors fail, follow Browserless recovery guidance, inspect the DOM/shadow DOM, refresh the snapshot, and use its vision fallback only when appropriate. Diagnose timeouts and retry the correct action rather than abandoning the run. Before declaring Browserless unavailable, inspect the AI7 MCP setup, reconnect, inspect tool discovery and transport errors, and retry using the exact discovered tool schema.
-
-Do NOT substitute Firecrawl, local Chrome, local Playwright, a built-in browser, curl, or static screenshots for Browserless. Those tools cannot satisfy this QA requirement. Firecrawl was used by the Chief only for independent research and the unauthenticated baseline; it is not the Kilo QA browser. If Browserless appears unavailable, inspect AI7 MCP setup, reconnect, inspect tool discovery/transport errors, retry with the correct tool contract, and preserve the session ID. Do not declare BLOCKED after one failed call. If a genuine external outage remains after these checks, record the exact non-secret error and continue all other safe tests; never claim a Browserless pass without a real Browserless run.
-
-COMPULSORY REPRODUCE → FIX → DEPLOY → RETEST LOOP
-1. Reproduce each failure against the live production origin in Browserless. Capture screenshots, accessible DOM/tree, console errors, failed network requests, response codes, viewport, and the exact user-visible mismatch. Use only synthetic test data and an authorized test identity.
-2. Write expected versus actual behavior and isolate the smallest reproducible failure. Trace the root cause to the actual frontend, Worker, D1, backend, Codespace, provider, or configuration. Do not guess.
-3. Implement a durable end-to-end fix. Never hide a defect with fake data, a CSS-only patch, a swallowed exception, a removed control, a production auth bypass, or weakened ownership/approval rules.
-4. Add regression tests at the correct layer; run focused tests, full relevant suites, typecheck, and production build.
-5. If app code/assets changed, deploy the frontend assets AND Worker through the existing Cloudflare configuration. Before every Wrangler deployment, explicitly run:
-   export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY"
-   Use CLOUDFLARE_API_KEY as the credential source. Preserve the existing assets binding and Worker configuration. Diagnose isolated API errors; never jump to manual script upload, Worker deletion, or asset-binding removal. Never expose secrets.
-6. Reuse the same Browserless session ID, navigate to the newly deployed production origin, and repeat the exact failing scenario. Then run adjacent regression cases and relevant desktop/mobile breakpoints.
-7. If any assertion still fails, return to step 1 and repeat. This loop is compulsory until every in-scope assertion passes or a genuine external prerequisite is evidenced. A passing build or local test alone is not a pass.
-8. Mark PASS only after the same Browserless scenario passes against the deployed Worker and regression tests pass. If blocked, write exact non-secret evidence to query.txt and continue independent tests.
-
-REPORTING AND SAFETY
-Append a technically detailed report block to query.txt for this prompt; do not overwrite earlier reports or delete the file. Update AI7_PROGRESS.md with prompt number, commit, Browserless session/run URL, screenshots/evidence, viewport sizes, console/network findings, tests, deployed Worker version, PASS/FAIL/BLOCKED, and remaining work. Never log secrets, cookies, OAuth codes, message bodies, or private tunnel URLs. Use only synthetic data: do not send real email, make purchases, delete real files, reset a real account, or modify real connected services. Never create schedules or ask the owner for a handoff.
-
-
-
-END OF 11 MANDATORY BROWSERLESS QA + REPAIR PROMPTS
+MANDATORY AI7 TO-DO + MAIN REPORT
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 END OF 11 MANDATORY BROWSERLESS QA + REPAIR PROMPTS
