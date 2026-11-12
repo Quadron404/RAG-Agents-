@@ -7,6 +7,14 @@ Refresh date: 2026-11-12 (Asia/Kolkata)
 MISSION
 Finish the existing RAG Agents product; do not start a replacement. Work through the numbered prompts in order, preferably in batches of ten, but keep each prompt a separate To-Do item and a separate verifiable change. The priorities are (1) premium, calm, iOS-quality UI/UX across desktop/tablet/mobile, (2) real end-to-end application logic, and (3) UI state that always matches server truth. Keep the single visible assistant identity Chief. Preserve the current Cloudflare Worker + D1 + AI Search + Codespace/backend architecture unless a measured technical reason requires a safe change.
 
+
+NON-NEGOTIABLE REPORTING + MAIN-SYNC GATE
+After THIS prompt finishes (or becomes blocked), append a timestamped, evidence-based report to query.txt on your working branch AND immediately append that same report to query.txt on GitHub main. Do not wait for the batch to finish. Do not overwrite, truncate, empty, or replace existing reports. Include prompt ID, status, exact files changed, tests and results, build result, deployment/version and live verification, blockers, and next action. If nothing changed, still record why. Never fabricate a pass or deployment.
+
+MAIN-BRANCH DELIVERY REQUIREMENT
+The working branch is not the reporting destination. Fetch origin/main and use a separate temporary git worktree based on the latest origin/main to append only this report to query.txt; commit and push that report commit to origin/main without merging or cherry-picking the working branch's application code. If main advances, fetch/rebase the report worktree and retry safely. Preserve all existing main/query.txt content. Verify the new report is visible on main before continuing to the next prompt. If push is denied or conflicts cannot be resolved safely, stop, record the exact blocker on the working branch, and explicitly report that main sync failed—never claim success.
+
+
 CURRENT LIVE BASELINE — RECHECK BEFORE IMPLEMENTING
 - 2026-11-12 Firecrawl live-browser inspection captured the production root at desktop 1440×960 and mobile 390×844. Both viewports exposed only the centered unauthenticated sign-in shell: “RAG Agents”, the sign-in explanation, and one “Continue with Google” link. The desktop browser clicked that link once; the Worker returned JSON from /auth/login rather than redirecting to Google.
 - GET /auth/session returned HTTP 200 with authenticated:false, user:null, and Gmail status unknown. GET /auth/login returned HTTP 503 with {"error":"Google sign-in is not configured"}.
@@ -14,7 +22,7 @@ CURRENT LIVE BASELINE — RECHECK BEFORE IMPLEMENTING
 - Latest verified Production deployment: version a1cf9c89-1dee-4732-84de-02ccab409855, deployed 2026-11-11T08:59:51.946Z. Latest GitHub main HEAD is 27a68ffdc055c095ceaadbba82b767fffc5fe0b9; its commit changes AI7_PROGRESS.md only. No new application-source implementation commit was observed after the prior source audit.
 - The current source audit still finds no first-class channel_id or channel entity in ConversationRow; channel-summary migrations are not a channel model. Frontend conversation pin/archive state is stored in localStorage, and Chat.tsx message edit/remove/pin actions mutate local client state rather than proving durable server behavior. AppIcon.tsx defines app dock icons, not the dedicated nine-dot Chief avatar. README explicitly says inbox reading and incoming-reply workflow are not implemented. Verify each behavior before changing or duplicating it.
 - Existing source already includes substantial Worker-native Chief chat/SSE, Google OIDC code, D1 sessions, routines/Cron, connector approvals, summaries/AI Search, Codespace Computer/noVNC/CDP, terminal, Files, and settings. Verify behavior before changing or duplicating anything.
-- query.txt was already empty at this audit. Preserve the file; do not delete it.
+- query.txt is the permanent append-only execution ledger. It already contains prior prompt reports; preserve every existing entry and append new reports only.
 - Claude Duet benchmark research: Anthropic's official product article describes one ongoing text/voice thread, carried-over memory/connectors, background work, proactive briefs, and approval before consequential actions. An independent hands-on review highlights polished mobile onboarding, task lists, artifacts, project channels, and also identifies follow-through, latency, desktop continuity, and team-sharing gaps. Use those as product lessons, not as a visual template. Build an original RAG identity around the burgundy #4A0E17 palette and the nine-dot Chief face.
   Official reference: https://claude.com/resources/articles/claude-duet
   Independent UI/UX review: https://www.chatprd.ai/how-i-ai/claude-duet-review
@@ -31,6 +39,7 @@ EXECUTION RULES
 ======================================================================
 
 Prompt 1 : Restore production Google sign-in configuration
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 The live production /auth/login returns HTTP 503 with “Google sign-in is not configured”; /auth/session returns a normal unauthenticated response. In worker/src/index.ts, the login guard requires both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET. The exact Cloudflare Production environment settings API previously returned no secret bindings. Re-query GET /accounts/{account_id}/workers/services/rag-agents/environments/production/settings and run wrangler secret list. Compare the returned secret names with worker/src/env.ts and worker/src/chat/providers.ts: GOOGLE_CLIENT_SECRET, SESSION_SECRET, and RAG_INTERNAL_TOKEN are declared secrets, and the active groq provider reads GROQ_API_KEY. Check whether the values exist in an already-authorized secure source. Never print, log, commit, or copy secret values into source.
@@ -52,6 +61,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 2 : Remove or isolate every production test-login bypass
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit frontend routes, Worker handlers, backend auth dependencies, developer mode, test fixtures, environment switches, and any `Skip Sign In` or impersonation controls. The latest Firecrawl production inspection showed only `Continue with Google`; older notes mentioned a test-login control, so inspect current code and deployed behavior rather than trusting stale notes.
@@ -74,6 +84,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 3 : Harden session cookies and session lifecycle
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Trace session creation, hashing, lookup, expiry, renewal, rotation, and revocation through `worker/src/http.ts`, `principal.ts`, `store.ts`, D1 migrations, and frontend bootstrap. Inspect cookie flags and session TTL against the production origin.
@@ -96,6 +107,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 4 : Close every CSRF and mutation boundary
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inventory every state-changing Worker and proxied backend route: chat, channel operations, settings, routines, approvals, Gmail, Files, Computer control, task actions, and WebSocket upgrades. Compare route methods, CSRF checks, origin handling, and authenticated principal resolution.
@@ -118,6 +130,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 5 : Complete owner and tenant data isolation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Build a route-by-route ownership matrix for users, conversations, messages, summaries, AI Search documents, routines, tasks, approvals, files, computer sessions, Gmail connections, and artifacts. Trace ownership from the verified Worker principal through backend identity headers and database queries.
@@ -140,6 +153,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 6 : Verify Google OIDC state, PKCE, nonce, and account binding
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit the complete authorization-code flow in `worker/src/google.ts`, `idtoken.ts`, `store.ts`, and callback routes. Verify state is one-time, nonce is checked, PKCE uses S256, redirect URIs are exact, issuer/audience/expiry/signature are validated, and `next` is safe.
@@ -162,6 +176,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 7 : Make logout and device revocation reliable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Trace the logout control from every app shell to `POST /auth/logout`, session revocation in D1, cookie clearing, socket closure, and backend access checks. Identify whether users can revoke other sessions or only the current session.
@@ -184,6 +199,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 8 : Add a production-safe security header policy
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inspect actual response headers for the app shell, API, OAuth redirects, file previews, screenshots, and Computer surfaces. Review inline scripts/styles, Vite build output, Worker asset serving, and third-party resources before choosing CSP directives.
@@ -206,6 +222,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 9 : Bound resource usage and abuse surfaces
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit body sizes, file uploads, chat completion tokens, history calls, tool loops, AI Search requests, routine creation, WebSocket message rates, computer actions, and long-running jobs. Identify unbounded loops, retry storms, and expensive fan-out.
@@ -228,6 +245,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 10 : Make export, deletion, and retention truthful
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Trace account export and deletion across D1, backend SQLite, AI Search, summaries, sessions, approvals, routines, Gmail token records, files, artifacts, and logs. Distinguish user-visible data from security audit records that must be retained.
@@ -250,6 +268,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 11 : Create a genuine first-class channel data model
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inspect `ConversationRow`, `worker/src/chat/types.ts`, `worker/src/chat/store.ts`, and migrations `0003_chat.sql` through `0011`. The previous source audit found conversation-centric records without `channel_id`; channel-summary tables alone are not a channel model.
@@ -272,6 +291,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 12 : Backfill existing conversations into Main safely
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 After the channel schema exists, design an idempotent migration that creates exactly one default Main channel per existing owner and assigns every legacy conversation to it. Preserve message order, summary references, AI Search keys, timestamps, and existing deep links.
@@ -294,6 +314,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 13 : Implement the authenticated channel API
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create owner-scoped Worker endpoints and typed client methods for list, create, rename, metadata update, reorder, archive, restore, and delete. Reuse existing route conventions, CSRF checks, response envelopes, and D1 transaction patterns.
@@ -316,6 +337,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 14 : Establish one stable Main channel and singular Chief identity
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Make Main the persistent default workspace for each user and keep one visible assistant identity, Chief, across all channels. Existing specialist agents may remain internal orchestration workers but must not appear as separate competing chat personalities.
@@ -338,6 +360,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 15 : Enforce channel ownership and conversation membership
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Define and enforce how a conversation belongs to one channel and one owner. Audit every chat, history, summary, search, task, file, and notification lookup that starts from a conversation ID.
@@ -360,6 +383,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 16 : Build the desktop channel navigation hierarchy
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Replace the conversation-only list with a clear channel-first workspace navigation while retaining a fast route to recent work. Show Main, project channels, active state, unread/activity indicators, and a compact create action.
@@ -382,6 +406,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 17 : Create a polished channel onboarding flow
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Build a focused create-channel flow with name, optional description, and a small set of useful templates such as Research, Project, and Personal. Explain what a channel isolates and what user-level memory can be shared.
@@ -404,6 +429,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 18 : Add durable channel settings and metadata
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement editing for channel name, description, icon/accent token, default instructions, and notification preference only where the backend can persist and enforce each field. Inspect current settings components before adding new controls.
@@ -426,6 +452,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 19 : Persist channel ordering, pinning, archive, and restore
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Move channel ordering and archive state from local-only UI preferences into owner-scoped server data. Define whether pinned channels remain above recency sorting and how archived channels are discovered.
@@ -448,6 +475,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 20 : Implement truthful unread and activity indicators
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Add per-channel read cursors and activity state based on persisted message sequence numbers or equivalent durable timestamps. Distinguish unread assistant replies, active work, waiting approval, and completed activity.
@@ -470,6 +498,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 21 : Add stable channel and conversation deep links
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Give channels and conversations owner-scoped URLs with safe routing and browser history support. Integrate route state with Main, selected channel, selected conversation, and deleted/archived resources.
@@ -492,6 +521,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 22 : Implement user-level memory shared safely across channels
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit current memory and history tools and define a durable user-level memory store for explicit stable preferences and project-wide facts. Store provenance, scope, confidence, and last-updated time.
@@ -514,6 +544,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 23 : Implement channel-specific memory isolation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a separate channel-scoped memory layer for project decisions, constraints, files, and summaries that must not leak into unrelated channels. Define precedence between system rules, user-level memory, and channel memory.
@@ -536,6 +567,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 24 : Make summaries and AI Search channel-aware
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Update incremental summaries, daily/monthly rollups, AI Search documents, metadata, and retrieval filters to carry both channel and conversation identity. Preserve existing summary keys during migration.
@@ -558,6 +590,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 25 : Synchronize channel state across devices and tabs
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Make channel list, order, archive, active channel, read cursors, membership, and selected conversation converge from the server. Audit optimistic updates, polling, SSE, and conflict handling.
@@ -580,6 +613,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 26 : Persist message editing on the server
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Replace the local-only edit path in `Frontend/src/views/Chat.tsx` with an authenticated edit endpoint and durable edit metadata. Preserve message identity, original creation time, and sequence ordering.
@@ -602,6 +636,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 27 : Implement safe durable message deletion
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Replace local-only removal with a server-authoritative deletion or tombstone policy. Define how a deleted user message affects paired assistant output, reply references, reactions, summaries, and indexed content.
@@ -624,6 +659,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 28 : Persist conversation pin and archive state
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Move conversation pin/archive behavior from localStorage to an owner-scoped Worker/D1 record. Keep the action semantics consistent with channel archive and conversation membership.
@@ -646,6 +682,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 29 : Persist message pins and build a useful pinned view
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Replace `rag.pins` localStorage with durable owner/conversation/message references. Add a compact pinned-message view with a jump-to-source action and safe handling when the source is deleted.
@@ -668,6 +705,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 30 : Add durable message reactions
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement an accessible reaction picker and persisted reaction records tied to owner, message, and conversation. Ensure repeated taps toggle predictably and reaction counts are server-derived.
@@ -690,6 +728,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 31 : Make reply references real and durable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Turn the current reply chip into a persisted parent-message reference with a short quoted preview and jump-to-source behavior. Validate that the referenced message belongs to the same authorized conversation or permitted context.
@@ -712,6 +751,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 32 : Unify the chat canvas around Chief
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Consolidate primary messaging into one consistent Chief chat surface across Main and project channels. Remove duplicate chat implementations and inconsistent interaction patterns while preserving existing route and state contracts.
@@ -734,6 +774,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 33 : Make streaming states complete and recoverable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Worker SSE and frontend handling for connecting, queued, thinking, tool execution, partial text, completed, interrupted, and failed states. Ensure the UI can distinguish each state truthfully.
@@ -756,6 +797,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 34 : Prevent duplicate sends and tool execution
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit request IDs, chat_requests, double taps, reconnects, browser refresh, retries, and Worker-to-backend dispatch. Add idempotency keys at every boundary where the same action could be replayed.
@@ -778,6 +820,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 35 : Make Stop and cancellation semantics real
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Trace the Stop button through SSE cancellation, provider abort signals, tool execution, and durable task state. Distinguish stopped, cancelled, completed, and failed outcomes.
@@ -800,6 +843,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 36 : Complete the attachment pipeline
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit file selection, drag/drop, upload validation, storage, metadata, retrieval, and model-visible context. Support only formats the existing stack can safely parse and preview.
@@ -822,6 +866,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 37 : Polish composer keyboard and touch behavior
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Refine multiline growth, Enter versus Shift+Enter, send/stop state, attachment chips, reply context, focus behavior, and mobile keyboard interaction. Respect IME composition and platform conventions.
@@ -844,6 +889,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 38 : Improve voice dictation and transcript correction
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit the current voice utility and implement truthful permission, listening, partial transcript, final transcript, pause, cancel, and error states. Allow correction before sending.
@@ -866,6 +912,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 39 : Build optional spoken Chief conversation mode
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement a deliberate spoken conversation mode using only supported existing providers and browser APIs. Provide clear start, mute, stop, transcript, and playback controls.
@@ -888,6 +935,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 40 : Secure and standardize rich message rendering
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Markdown, code, tables, links, images, and artifact rendering. Sanitize HTML and URLs, block scriptable schemes, and preserve safe code formatting and copy actions.
@@ -910,6 +958,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 41 : Improve Chief orchestration and specialist routing
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit the Commander/Chief workflow, tool registry, intent classification, and internal specialist routing. Preserve one visible Chief response while selecting appropriate internal capabilities.
@@ -932,6 +981,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 42 : Add structured plans for complex work
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Make Chief convert genuinely complex requests into a compact plan with dependencies, outputs, risk, and verification steps. Keep simple questions conversational without unnecessary task cards.
@@ -954,6 +1004,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 43 : Build a durable task activity timeline
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a user-visible timeline for task start, meaningful progress, tool use, waiting for approval, retry, completion, and failure. Store user-safe events linked to task, channel, and originating message.
@@ -976,6 +1027,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 44 : Create one unified approval center
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Unify approvals for consequential actions such as sending messages, modifying connected data, deleting files, and sensitive Computer actions. Show exact target, action, scope, and requested change.
@@ -998,6 +1050,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 45 : Harden approval expiry, replay, and concurrency
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit approval IDs, owner binding, immutable payload hashes, expiry, duplicate decisions, concurrent tabs, and execution claims. Make the lifecycle explicit: pending, approved, denied, expired, executing, completed, failed.
@@ -1020,6 +1073,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 46 : Make provider fallback resilient and transparent
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit provider selection and fallback for chat, summaries, and tools. Handle missing configuration, quota, timeout, malformed response, rate limits, and provider outages without losing request context.
@@ -1042,6 +1096,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 47 : Make model and capability settings truthful
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inspect Worker environment and Settings UI. Expose only model, provider, reasoning, and capability controls that the current backend actually supports.
@@ -1064,6 +1119,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 48 : Budget context and compact long conversations
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Review transcript loading, history retrieval, summaries, model token limits, and tool budgets. Prioritize current conversation, relevant channel memory, explicit user constraints, and recent messages.
@@ -1086,6 +1142,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 49 : Preserve source provenance in Chief responses
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 When Chief uses conversation history, AI Search, files, Gmail, connected services, or Computer results, preserve source identity and retrieval metadata through the tool result and final answer.
@@ -1108,6 +1165,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 50 : Normalize tool failures and recovery
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create stable error categories for permission denied, disconnected service, invalid input, timeout, rate limit, missing configuration, unavailable backend, and partial completion.
@@ -1130,6 +1188,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 51 : Create an inspectable user memory profile
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Build a durable profile for explicit preferences, stable project facts, and recurring constraints. Store source, scope, timestamp, and confidence; distinguish explicit user statements from inferred patterns.
@@ -1152,6 +1211,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 52 : Add memory inspection, correction, and deletion controls
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a user-facing memory manager that lists stored facts with source, scope, and last-updated time. Support edit, correct, and delete with clear confirmation and audit-safe behavior.
@@ -1174,6 +1234,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 53 : Improve history retrieval accuracy
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit history tools and prompts against prior user decisions, rejected options, settings, project constraints, errors, and routines. Identify where recency or semantic similarity causes wrong answers.
@@ -1196,6 +1257,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 54 : Complete AI Search indexing lifecycle
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Cloudflare AI Search upload, update, delete, retry, and metadata paths for conversations and summaries. Define pending, indexed, failed, retrying, stale, and removed states.
@@ -1218,6 +1280,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 55 : Protect summaries from stale jobs
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit summary scheduling, leases, transcript high-watermarks, and generation status. Ensure delayed or older jobs cannot overwrite a newer summary or publish an incomplete rollup.
@@ -1240,6 +1303,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 56 : Verify timezone-correct rollups
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Test daily, 30-day, monthly, and yearly rollups against each user's persisted IANA timezone, DST transitions, leap days, month-end, and year boundaries.
@@ -1262,6 +1326,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 57 : Prevent cross-channel retrieval leakage
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement retrieval that can combine current-channel context with explicitly permitted user-level memory and only those other channel summaries the request is authorized to use.
@@ -1284,6 +1349,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 58 : Strengthen prompt-injection boundaries
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit web pages, email, files, tool outputs, and connected app content as untrusted data. Separate retrieved content from trusted system instructions and tool policy.
@@ -1306,6 +1372,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 59 : Add portable conversation and channel export
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement user-controlled export for one conversation, one channel, or all authorized history in a documented format. Include messages, timestamps, source metadata, and linked artifact references where permitted.
@@ -1328,6 +1395,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 60 : Build unified search across workspaces
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Search channel names, conversations, messages, summaries, tasks, and authorized artifacts from one coherent search interface. Include scope filters and clear result context.
@@ -1350,6 +1418,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 61 : Introduce a durable task record
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create or complete a Worker-owned task entity independent of transient chat state. Link owner, channel, originating message, plan, status, timestamps, approvals, retries, and artifact outputs.
@@ -1372,6 +1441,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 62 : Turn Tasks into a useful work inbox
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Upgrade `Tasks.tsx` to show queued, active, waiting approval, completed, failed, and scheduled work with useful filters and search.
@@ -1394,6 +1464,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 63 : Deliver task progress events reliably
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Connect Worker/backend task events to the Tasks workspace and originating chat. Persist ordered events and deliver them through the existing real-time mechanism with reconnect support.
@@ -1416,6 +1487,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 64 : Implement safe task cancellation and compensation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Add cancellation for supported queued and running tasks, with explicit status and best-effort cleanup for resources already started. Define which actions cannot be reversed.
@@ -1438,6 +1510,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 65 : Add safe task retry and resume
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement retry/resume for failed or interrupted tasks. Preserve completed steps and artifacts, retry only idempotent or explicitly safe operations, and request fresh approval when the action payload changes.
@@ -1460,6 +1533,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 66 : Complete routine creation and management UX
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit `RoutinesPanel.tsx` and Worker routine tools. Make create, list, inspect, pause, resume, edit, delete, and run-status flows understandable and server-authoritative.
@@ -1482,6 +1556,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 67 : Verify recurrence and daylight-saving correctness
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit daily, weekly, monthly, and supported custom recurrence logic for IANA zones, DST gaps/repeats, leap years, and short-month clamping.
@@ -1504,6 +1579,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 68 : Harden durable routine execution and idempotency
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Cron materialization, D1 run leases, Codespace wake, dispatch, retry, and completion. Ensure each due routine creates one run and expired leases are reclaimed safely.
@@ -1526,6 +1602,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 69 : Make task-completion notifications actionable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Add reliable in-app notifications for completed work, approvals, failures, routine results, and artifacts needing review. Deep-link to the task or channel.
@@ -1548,6 +1625,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 70 : Build an attention queue for unresolved work
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a focused queue for approvals, blockers, decisions, and completed work requiring review. Do not surface every background event as an alert.
@@ -1570,6 +1648,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 71 : Create a useful morning briefing
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Generate a concise daily brief from authorized tasks, channel activity, connected-app signals, and upcoming routine results. Include source links and a small number of clear priorities.
@@ -1592,6 +1671,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 72 : Add notification preferences and quiet hours
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Add per-category notification controls for task completion, approvals, failures, routine results, and briefings. Support quiet hours in the user's IANA timezone.
@@ -1614,6 +1694,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 73 : Implement a safe read-only Gmail inbox foundation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 The README says Gmail connection exists but inbox reading and incoming replies are not implemented. Add the minimum read-only inbox API and UI using the existing separate Gmail grant and backend token lifecycle.
@@ -1636,6 +1717,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 74 : Add owner-scoped Gmail search and filters
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement safe Gmail search by sender, subject, date, label, and unread state. Validate query size and translate filters into supported provider queries rather than passing arbitrary model-generated API syntax.
@@ -1658,6 +1740,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 75 : Build Gmail thread detail and contextual reading
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a thread detail view that loads participants, timestamps, message bodies, and attachment metadata only after the user opens a thread. Preserve thread order and safe HTML rendering.
@@ -1680,6 +1763,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 76 : Draft replies without model-selected recipients
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Implement reply drafting from a selected Gmail thread. Derive recipient and reply headers mechanically from the original thread and verified mailbox; the model may write subject/body only.
@@ -1702,6 +1786,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 77 : Require explicit approval for outbound email
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Connect any permitted reply or notification send to the existing approval system. Display exact sender, recipient, subject, body, thread, and attachment list before sending.
@@ -1724,6 +1809,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 78 : Lock sender and recipient identity to trusted policy
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit every email tool schema and backend path. Ensure recipient and sender come from the verified owner, approved thread, or explicitly configured bot identity—not model arguments or page content.
@@ -1746,6 +1832,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 79 : Complete Gmail token refresh, revocation, and disconnect
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit separate consent, encryption, refresh, permanent `invalid_grant`, transient provider failure, reconnect, and disconnect flows. Verify the UI reports actual backend status rather than Worker's intentionally unknown Gmail field.
@@ -1768,6 +1855,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 80 : Audit the connector registry and capability contracts
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inventory every connected service, tool schema, capability, and provider implementation. Ensure the visible Settings state matches actual available tools and scopes.
@@ -1790,6 +1878,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 81 : Build clear connector onboarding and health states
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a coherent connect/disconnect flow with scope explanation, provider identity, last check, and reconnect path. Keep sign-in separate from optional app grants.
@@ -1812,6 +1901,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 82 : Harden connector approval lifecycle
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Unify pending approval listing, detail, allow/deny, expiry, and execution status across connectors. Bind each approval to owner, connector, exact action, immutable payload, and expiry.
@@ -1834,6 +1924,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 83 : Preserve provenance for connected-service results
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Attach provider, account identity, resource ID, retrieval time, and scope to each connector result. Surface only the minimum necessary context to Chief and the user.
@@ -1856,6 +1947,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 84 : Make OAuth consent and revocation recoverable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit all connector OAuth state, PKCE, callback validation, scope display, account binding, refresh, and revoke behavior beyond Google sign-in. Keep each grant independent.
@@ -1878,6 +1970,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 85 : Stabilize Computer workspace lifecycle
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit `WorkspaceManager`, Codespace boot/stop/recovery, backend health, persistent Chrome profile, and user-to-workspace binding. Preserve the existing Codespace architecture rather than introducing a new VM stack.
@@ -1900,6 +1993,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 86 : Harden the live screen and WebSocket relay
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Trace the noVNC screen from frontend through Worker `/websockify` or `/ws/screen` to the backend relay and local x11vnc. Verify auth, origin, binary frame handling, reconnect, and tunnel routing.
@@ -1922,6 +2016,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 87 : Make remote Chrome CDP interactions reliable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit the Browser/CDP tool path, target selection, page lifecycle, navigation waits, screenshots, selectors, and browser session ownership. Distinguish the user's live Computer browser from ordinary-agent restricted browsing.
@@ -1944,6 +2039,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 88 : Enforce approval for consequential Computer actions
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Classify Computer actions by risk. Require explicit owner approval for destructive or externally consequential operations while allowing safe navigation and inspection within policy.
@@ -1966,6 +2062,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 89 : Complete the Files workspace safely
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit file listing, upload, download, rename, move, delete, folder creation, permissions, and storage boundaries across the backend and UI. Preserve the actual Codespace filesystem contract.
@@ -1988,6 +2085,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 90 : Improve file previews and document rendering
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit `FilePreview.tsx` and supported preview formats. Add safe previews for supported text, images, PDFs, and code while preserving download and open-in-Computer actions.
@@ -2010,6 +2108,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 91 : Stabilize terminal lifecycle and interaction
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit terminal creation, resize, input, output streaming, reconnect, close, and session ownership. Ensure terminal output is not mixed across users or workspaces.
@@ -2032,6 +2131,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 92 : Add Computer task recovery and continuity
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Make long-running Computer tasks recover after browser refresh, tab closure, Codespace restart, and transient backend failure. Preserve task ID, step state, artifacts, and pending approval.
@@ -2054,6 +2154,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 93 : Strengthen workspace isolation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit filesystem paths, browser profiles, process ownership, WebSocket routes, terminal sessions, and workspace manager state. Verify one user's Computer cannot inspect another user's files or Chrome profile.
@@ -2076,6 +2177,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 94 : Complete restricted browser allowlist enforcement
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit `backend/app/restricted/`, the gateway, allowlist file, and Codespace sandbox. Verify ordinary agents use the restricted `browse` path and cannot reach the user's personal Chrome.
@@ -2098,6 +2200,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 95 : Close restricted-shell network bypasses
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit the ordinary-agent shell and restricted shell service. Verify shell execution is unavailable unless it runs inside the same no-external-route sandbox or through the controlled gateway.
@@ -2120,6 +2223,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 96 : Make Codespace wake and readiness reliable
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Worker scheduler wake calls, `GITHUB_TOKEN`, `CODESPACE_NAME`, GitHub API responses, readiness polling, timeout, and retry. Distinguish queued, waking, ready, and failed states.
@@ -2142,6 +2246,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 97 : Verify deployment and health as one release flow
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit Worker deployment scripts, frontend asset build, Wrangler configuration, D1 migrations, AI Search binding, Cron triggers, and production health checks. Preserve the existing `rag-agents` Worker and its asset binding.
@@ -2164,6 +2269,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 98 : Validate configuration and detect production drift
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Compare typed `Env`, `wrangler.jsonc`, documented variables, secret names, bindings, and runtime usage. Identify required, optional, obsolete, and missing configuration without exposing values.
@@ -2186,6 +2292,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 99 : Make D1 migrations and recovery safer
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit every migration, foreign key, index, uniqueness rule, and production application procedure. Document backup/export and rollback/forward-fix policy for Cloudflare D1.
@@ -2208,6 +2315,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 100 : Stabilize API contracts across frontend, Worker, and backend
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Inventory route payloads, response types, status codes, error envelopes, and WebSocket events. Remove duplicated or conflicting client-side assumptions.
@@ -2230,6 +2338,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 101 : Add privacy-safe error telemetry
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Instrument meaningful failures for chat latency, SSE drops, tool errors, routine delays, connector failures, Codespace readiness, and Worker exceptions.
@@ -2252,6 +2361,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 102 : Build actionable operational diagnostics
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create an owner/admin diagnostics view or safe health endpoint for Worker, D1, AI Search, backend, Codespace, provider, and connector status.
@@ -2274,6 +2384,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 103 : Create a truthful system status center
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Unify visible status for model/provider, tasks, routines, connectors, Computer, Files, and notifications. Make each status reflect an authoritative source rather than local assumptions.
@@ -2296,6 +2407,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 104 : Improve first-run onboarding and capability discovery
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Build a polished first-run flow that explains Chief, Main, channels, tasks, connected apps, Computer, Files, and approvals. Ask only for optional permissions when the user activates a capability.
@@ -2318,6 +2430,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 105 : Refine the desktop app shell
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit `App.tsx`, `Shell.tsx`, `Desktop.tsx`, `TopBar.tsx`, dock navigation, and route transitions. Create a coherent hierarchy for Chief chat, channels, Tasks, Computer, Files, and Settings.
@@ -2340,6 +2453,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 106 : Polish channel navigation and context transitions
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Refine channel switching, active state, recent activity, unread markers, context identity, and transitions between Main and project channels. Ensure switching never silently changes the current task's target channel.
@@ -2362,6 +2476,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 107 : Build the dedicated nine-dot Chief avatar
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create an original black-square avatar with a precise 3×3 grid of glowing dots. Use deliberate sequences for idle, listening, thinking, tool use, speaking, success, and error.
@@ -2384,6 +2499,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 108 : Create a coherent motion and interaction system
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Define consistent durations, easing, spring behavior, and reduced-motion fallbacks for channel transitions, message arrival, menus, sheets, task progress, and avatar states.
@@ -2406,6 +2522,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 109 : Complete the responsive design system
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit every primary view at 320, 360, 390, 430, 768, 1024, 1280, and wide desktop widths. Check orientation, safe areas, content density, and horizontal overflow.
@@ -2428,6 +2545,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 110 : Complete accessibility and keyboard-first operation
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit semantics, labels, focus order, visible focus, dialog trapping, Escape behavior, live regions, contrast, zoom, reduced motion, and screen-reader announcements.
@@ -2450,6 +2568,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 111 : Standardize loading, empty, error, and success states
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Create a shared state vocabulary and UI treatment for loading, no data, disconnected, permission required, retrying, success, partial success, and failed.
@@ -2472,6 +2591,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 112 : Fix mobile keyboard, safe areas, and touch ergonomics
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit viewport-fit, safe-area insets, virtual keyboard behavior, fixed navigation, composer height, sheets, context menus, and touch target sizes on iOS and Android browsers.
@@ -2494,6 +2614,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 113 : Improve frontend performance and rendering efficiency
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Profile initial load, chat history, channel switching, long transcripts, task lists, search, and noVNC rendering. Identify expensive renders, large bundles, and unbounded DOM growth.
@@ -2516,6 +2637,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 114 : Complete installable PWA and safe offline behavior
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit manifest, icons, service worker, install prompt, update lifecycle, and offline fallback. Cache only static assets and explicitly approved non-sensitive data.
@@ -2538,6 +2660,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 115 : Build frontend tests and reliable continuous integration
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Add/complete tests for critical components, stores, API clients, channel state, composer, approvals, responsive behavior, and accessibility. Inspect existing test conventions before introducing a new framework.
@@ -2560,6 +2683,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 116 : Improve observability without collecting private content
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Review Worker logs, backend logs, traces, metrics, and error reporting. Add request correlation across Worker/backend without storing user messages or sensitive files.
@@ -2582,6 +2706,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 117 : Add optional team collaboration with explicit permissions
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Design an opt-in shared-channel model with invitations, roles, membership, and per-channel permissions. Do not assume a single-user schema can be safely shared without migration.
@@ -2604,6 +2729,7 @@ MANDATORY DELIVERY CONTRACT — APPLY TO THIS PROMPT
 ======================================================================
 
 Prompt 118 : Run the final production release gate and handoff dossier
+REPORTING GATE: Before starting the next prompt, append this prompt's evidence-based completion/blocker report to query.txt on this branch AND sync the same report into GitHub main/query.txt using the separate-main-worktree procedure above. Verify main contains it; never overwrite or clear the ledger.
 
 OBJECTIVE
 Audit auth, channels, unified Chief chat, memory, search, tasks, routines, Gmail, connectors, Computer, Files, notifications, accessibility, performance, and deployment. Reconcile every feature against code, tests, and live evidence.
