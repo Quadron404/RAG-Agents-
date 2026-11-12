@@ -238,3 +238,39 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 - `prompt.txt`: 118/118 prompt blocks contain the Wrangler token-export line, a `query.txt` instruction, the technically detailed report requirement, a To-Do requirement, and deployment instructions.
 - `prompt2.txt`: 11/11 prompt blocks contain the exact `https://mcp.browserless.io/mcp` endpoint, AI7 remote import instructions, mandatory actual Browserless invocation, the hard evidence gate, the compulsory repair loop, the Wrangler token-export line, and `query.txt` reporting.
 - `query.txt`: 0 bytes; file remains present.
+
+## Chief refresh — 2026-11-13
+
+### Current production and configuration evidence
+- Firecrawl independently inspected the live Worker at desktop and mobile sizes. Both show only the unauthenticated RAG Agents sign-in shell. GET /auth/session returns HTTP 200 with authenticated:false and user:null.
+- Firecrawl clicked Continue with Google; the Worker redirected to Google's authorization page. No credentials were entered and no callback/session was completed. OAuth redirect is working; full sign-in remains unverified. The root page had no observed console or asset-load errors in this inspection. This is not Browserless QA.
+- Latest observed Production Worker version: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba (version 36, deployed 2026-11-12T20:51:34Z).
+- Cloudflare Production has GOOGLE_CLIENT_SECRET, SESSION_SECRET, and RAG_INTERNAL_TOKEN secret bindings; DB, AI_SEARCH, and ASSETS bindings are present.
+- No Worker GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN binding was listed. CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty. AGENT_PROVIDER/SUMMARY_PROVIDER are Groq with openai/gpt-oss-20b; source selectChatProvider() returns null without the configured provider key. Chat/summaries cannot be assumed operational. The central Gmail sender and Codespace wake path are also unverified.
+- Main source still has no first-class channels table/channel_id or /channels API. Migration 0004 is conversation-scoped summary storage, not a channel model. Chat.tsx message edit/remove/pin remains local; conversation pin/archive remains localStorage; durable reactions are not established. ChiefAvatar.tsx is absent and the store still declares multiple bot identities. README states Gmail inbox reading and incoming replies are not implemented.
+- The supplied Google Drive avatar reference returned HTTP 404 through Firecrawl in this run. The 3×3 glowing-dot description remains the design requirement; exact image could not be visually inspected.
+
+### Previous query.txt audit before reset
+- Main query.txt contained 106,453 characters / 2,014 lines. It was not empty, despite the older 2026-11-12 progress note saying 0 bytes.
+- Implementation report IDs present: 1–10 and 51 (11 report IDs). No reports existed for all 118 current implementation tasks.
+- QA report IDs present: 1, 4, 5, 8, 9, 10, and 11 (7 of 11). QA 2, 3, 6, and 7 had no report. The QA Prompt 8 report text was concatenated into the Prompt 5 section without a clean heading boundary, so it requires a clean rerun.
+- The Prompt 11 report says “ALL MET” but its own remaining-work section says authenticated chat/SSE, real OAuth completion, light theme, multi-device continuity, task/artifact/Computer/Settings journeys, and mobile emulation were not fully tested. Do not interpret that label as proof of a complete product.
+- Five non-main branches had query.txt: kilo/hyper-mill-qnb, kilo/mega-disk-400, kilo/ionic-spire-9q7, kilo/rosy-lake-4n7, and kilo/turbo-beacon-j2c. Their report content is represented on main; other checked branches had no query.txt. The older ionic-spire report differs in formatting but its non-empty report lines are present on main.
+- Imported branch report kilo/rosy-lake-4n7 claims a channels migration/API/UI and 15/15 tests, deployed version 0d16ab33-0d13-4f9b-a9c8-22fdc114e078. Imported branch report kilo/turbo-beacon-j2c claims durable message edit/delete/pin/reaction/reply APIs, deployed version f6e64f32-9a1f-4655-a407-09a291d5f2e1, but its authenticated Browserless QA was blocked. Both explicitly state their source changes were NOT merged into main. Current main source does not contain those implementations, and both reported deployments are older than current Production. Do not count them as done or merge them blindly.
+- The old query.txt ledger has now been reviewed and cleared to zero bytes while keeping the file present. It is a fresh ledger for the next Kilo run; Kilo must append a detailed report after every prompt and sync each one to main before continuing.
+
+### Prompt queue refresh
+- Replaced prompt.txt in full with 118 numbered implementation prompts. Previous implementation report tasks 1–10 and 51 were removed from the repeat queue because reports existed; their guarantees remain in the final release regression gate. A new fail-closed preview-only AI TEST SESSION is Prompt 1 so Browserless can exercise authenticated product flows without a production auth bypass. The remaining core channel/chat work follows, and ten new advanced capabilities are placed before the final release gate.
+- prompt.txt verification: exactly 118 headings, 118 per-prompt reporting gates, and the exact Wrangler token-export command appears in every prompt. Every prompt requires a technically detailed report on the working branch AND GitHub main/query.txt before the next prompt.
+- Replaced prompt2.txt in full with 11 detailed Browserless QA/repair prompts. Every prompt repeats the exact AI7 remote import block (browserless / remote / 1 / https://mcp.browserless.io/mcp), a hard start gate requiring an actual Browserless tool invocation before code work, session-ID preservation, a reproduce → fix → tests → deploy → same-session retest loop, and main/query.txt reporting.
+- Claude Duet research refreshed from Anthropic's official Help Center/product page and an independent hands-on review. Product lessons retained: persistent main thread, channels sharing user memory, visible tasks, artifacts, background work, connected apps, and approval before consequential actions. RAG Agents must outperform on follow-through, latency, desktop/mobile continuity, and optional collaboration without copying Claude branding.
+- GitHub prompt commits: prompt.txt latest content blob b7bf13e7a974484379f15620dde3ac952986f0a4; prompt2.txt latest content blob cef1bcafef4ed919cd0003fa6116dec116e177d2. No application source code was changed and no Cloudflare deployment was performed in this Chief refresh.
+
+### Next execution priorities
+1. Kilo starts Prompt 1 and provisions an isolated preview-only AI test workspace only if dedicated non-production D1/AI Search resources exist; never add a production bypass.
+2. Continue first-class channel schema/backfill/API/Main navigation, then durable message interactions and the singular Chief chat.
+3. Recheck authorized secure sources for GROQ_API_KEY and the other missing integration bindings. If unavailable, keep only the affected feature honestly blocked and continue independent work.
+4. Complete missing QA prompts 2, 3, 6, and 7; rerun QA prompt 8 with a clean report boundary; do not accept Prompt 11's “ALL MET” label while authenticated journeys remain untested.
+5. After every implementation/QA prompt, verify its detailed report is visible in main/query.txt before Kilo starts the next prompt.
+
+No app source change, Worker deployment, new schedule, or authenticated production login was performed by the Chief in this refresh.
