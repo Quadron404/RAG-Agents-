@@ -274,3 +274,34 @@ A daily automation named “Refresh RAG Agents implementation and QA prompts” 
 5. After every implementation/QA prompt, verify its detailed report is visible in main/query.txt before Kilo starts the next prompt.
 
 No app source change, Worker deployment, new schedule, or authenticated production login was performed by the Chief in this refresh.
+
+
+## Chief refresh — 2026-11-13 03:56 Asia/Kolkata
+
+### Current independent live and configuration audit
+- Firecrawl rechecked Production desktop/mobile. The app exposes only the Google sign-in shell; no production Skip Sign In / AI test button. GET /auth/session returns HTTP 200 with authenticated:false and user:null. GET /auth/login redirects to Google's sign-in page with /auth/callback, openid email profile, PKCE S256, state, nonce. No credentials entered and no callback/session completed.
+- Firecrawl inspected official Claude Duet announcement and support guide plus a hands-on review. Product principles: one ongoing main thread, topic channels sharing global memory, visible tasks/artifacts, cloud work after device closure, useful proactive messages, and approval before consequential actions. The independent review flags follow-through, latency, and desktop continuity as opportunities. Sources: https://claude.com/resources/articles/claude-duet ; https://support.claude.com/en/articles/17631495-get-started-with-claude-duet ; https://www.chatprd.ai/how-i-ai/claude-duet-review
+- Cloudflare API confirms Production Worker version 36: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba, deployment 3707b3c5-bf96-40aa-8c99-e4c12dc1806a, created 2026-11-12T20:51:34Z. Production retains D1, AI_SEARCH, ASSETS, and Google/session/internal-token secrets.
+- Production secret metadata does not list GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN. CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty. Worker source requires GROQ_API_KEY for configured Groq chat/summaries, so chat cannot be assumed operational. Kilo's GitHub token is separate from Worker Codespace-wake credentials.
+- Main source confirms no channels table/channel_id/API; chat remains conversation-centric. Chat.tsx still edits/deletes/pins locally and conversation pin/archive uses localStorage. Tasks view is transient Core run state. ChiefAvatar.tsx is absent. README says Gmail inbox reading/incoming replies are not implemented. Computer, routines, restricted browsing, Files, memory, summaries, and approvals have substantial code/tests and should be verified rather than rewritten.
+- query.txt was fetched from main and is present at zero bytes. No fresh Kilo reports exist after the previous clear.
+
+### Historical report coverage — NOT COMPLETE
+- Previous pre-clear audit found implementation report IDs 1–10 and 51 only: 11 report IDs, not 118/118.
+- Previous pre-clear QA audit found reports for prompts 1, 4, 5, 8, 9, 10, and 11: 7/11. QA 2, 3, 6, and 7 had no report; QA Prompt 8's report boundary was malformed and required a clean rerun.
+- These are historical counts before query.txt was cleared. Current query.txt is empty, so there are 0 fresh reports after reset. Do not claim all 118 implementation or 11 QA reports were received.
+
+### Prompt queue refresh
+- Rebuilt prompt.txt in full with exactly 118 gap-driven implementation prompts from current main source, tests, Production settings, and live audit. The queue prioritizes safe preview-only test access, OAuth/session, provider readiness, first-class channels, durable chat interactions, persistent tasks, integrations, Computer, artifacts, and premium nine-dot Chief UX. Every prompt repeats AI7 To-Do, Wrangler token export, deployment/live verification, detailed report, and main/query.txt readback requirements.
+- Rebuilt prompt2.txt in full with exactly 11 Browserless QA/repair prompts. Every prompt repeats the exact AI7 remote MCP import block for browserless at https://mcp.browserless.io/mcp, requires a real Browserless invocation, preserves session ID, forbids substitute browsers, and mandates reproduce → root-cause fix → tests → Cloudflare deploy → same-session Browserless retest until fixed. Every QA prompt requires a detailed main/query.txt report.
+- The supplied Drive avatar reference was previously inaccessible via public fetch (404); the 3×3 glowing-dot brief remains authoritative.
+- No application source or Cloudflare Production settings were modified by this Chief refresh. This run changes prompt queues and progress documentation only.
+
+### Next execution priorities
+1. AI7 starts implementation Prompt 1 and proves preview-only isolation; no production auth bypass.
+2. Resolve provider readiness honestly; do not claim Chief chat works while GROQ_API_KEY is absent from Worker and no tested fallback exists.
+3. Implement first-class channels and server-authoritative message actions before polishing the UI.
+4. Complete durable tasks, then test existing routines/Computer/Files/connectors instead of rewriting them.
+5. Execute QA prompts 1–11 through AI7 Browserless remote MCP. Each prompt must produce a verified main/query.txt report before the next begins.
+
+No new schedule, source-code change, secret change, or Cloudflare application deployment was performed.
