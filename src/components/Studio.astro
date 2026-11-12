@@ -1,12 +1,4 @@
 ---
-interface Props {
-  cards?: Array<{
-    id: string;
-    title: string;
-    description: string;
-    icon?: string;
-  }>;
-}
 ---
 <script is:inline>
   const track = document.querySelector('.studio-carousel-track');
@@ -16,6 +8,7 @@ interface Props {
   const pauseBtn = document.querySelector('[data-carousel-pause]');
   const pauseIcon = document.querySelector('[data-pause-icon]');
   const playIcon = document.querySelector('[data-play-icon]');
+  const indicators = document.querySelectorAll('[data-carousel-indicator]');
 
   if (track && seats.length > 0) {
     let currentIndex = 0;
@@ -59,6 +52,18 @@ interface Props {
         const btn = seat.querySelector('button');
         if (btn) {
           btn.setAttribute('aria-current', (index === i).toString());
+        }
+      });
+
+      indicators.forEach((indicator, i) => {
+        if (i === index) {
+          indicator.style.backgroundColor = 'var(--color-primary)';
+          indicator.style.width = '24px';
+          indicator.style.borderRadius = 'var(--radius-full)';
+        } else {
+          indicator.style.backgroundColor = 'var(--color-border-primary)';
+          indicator.style.width = '';
+          indicator.style.borderRadius = '';
         }
       });
 
@@ -150,11 +155,37 @@ interface Props {
 
       seat.setAttribute('tabindex', '0');
       seat.setAttribute('role', 'button');
-      seat.setAttribute('aria-label', `View ${seats.length > index ? seats[index].querySelector('.studio-portrait-title')?.textContent || `card ${index + 1}` : `card ${index + 1}`}`);
+      seat.setAttribute('aria-label', `View card ${index + 1}`);
       seat.setAttribute('aria-current', (index === 0).toString());
     });
 
-    // Pause on hover/focus
+    indicators.forEach((indicator, index) => {
+      indicator.addEventListener('click', () => {
+        if (index !== currentIndex) {
+          currentIndex = index;
+          updateCarousel(currentIndex);
+          stopAutoRotate();
+          if (!isPaused) startAutoRotate();
+        }
+      });
+
+      indicator.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (index !== currentIndex) {
+            currentIndex = index;
+            updateCarousel(currentIndex);
+            stopAutoRotate();
+            if (!isPaused) startAutoRotate();
+          }
+        }
+      });
+
+      indicator.setAttribute('tabindex', '0');
+      indicator.setAttribute('role', 'button');
+      indicator.setAttribute('aria-label', `Go to card ${index + 1}`);
+    });
+
     const carousel = document.querySelector('.studio-carousel');
     carousel?.addEventListener('mouseenter', () => {
       if (!isPaused) stopAutoRotate();
@@ -169,7 +200,6 @@ interface Props {
       if (!isPaused) startAutoRotate();
     });
 
-    // Keyboard navigation for carousel container
     carousel?.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight') {
         e.preventDefault();
@@ -189,48 +219,213 @@ interface Props {
 </script>
 
 <section class="studio-section py-16 lg:py-24 relative" aria-labelledby="studio-title">
-  <div class="container">
+  <div class="container-content">
     <header class="text-center mb-12 lg:mb-16">
-      <h2 id="studio-title" class="text-3xl lg:text-4xl font-display font-semibold text-text-primary mb-4 animate-fade-in stagger-1">
+      <h2 id="studio-title" class="text-text-primary type-section-title mb-4 animate-fade-in stagger-1">
         Government services at a glance
       </h2>
-      <p class="text-lg text-text-secondary max-w-2xl mx-auto animate-fade-in stagger-2">
+      <p class="text-text-secondary type-body-l max-w-2xl mx-auto animate-fade-in stagger-2">
         Explore key federal programs and services. Each card represents a gateway to official government resources.
       </p>
     </header>
 
     <div class="studio-carousel relative" role="region" aria-label="Government service cards" aria-roledescription="carousel">
       <div class="studio-carousel-track flex items-center justify-center gap-4 lg:gap-6 pb-8 lg:pb-12" role="list">
-        {(
-          Astro.props.cards || [
-            { id: 'medicare', title: 'Medicare', description: 'Health coverage for people 65+', icon: '🏥' },
-            { id: 'social-security', title: 'Social Security', description: 'Retirement, disability, and survivors benefits', icon: '💰' },
-            { id: 'veteran-care', title: 'Veteran Care', description: 'Health care and benefits for veterans', icon: '🎖️' },
-            { id: 'passport', title: 'Passports', description: 'Apply for or renew your US passport', icon: '📘' },
-            { id: 'national-park', title: 'National Parks', description: 'Explore America\'s national parks', icon: '🏞️' },
-            { id: 'new-job', title: 'New Job', description: 'Resources for job seekers', icon: '💼' },
-            { id: 'taxes', title: 'Taxes', description: 'File taxes and get refund info', icon: '📊' },
-            { id: 'student-aid', title: 'Student Aid', description: 'FAFSA and federal student loans', icon: '🎓' },
-            { id: 'small-business', title: 'Small Business', description: 'SBA loans and resources', icon: '🏪' },
-            { id: 'immigration', title: 'Immigration', description: 'Citizenship and visa services', icon: '🌍' },
-            { id: 'disaster-relief', title: 'Disaster Relief', description: 'FEMA assistance and recovery', icon: '🆘' },
-            { id: 'housing', title: 'Housing', description: 'HUD programs and fair housing', icon: '🏠' }
-          ]
-        ).map((card, index) => (
-          <article class="studio-portrait-seat group" role="listitem" style={index === 0 ? 'opacity: 1; transform: translateX(-50%) scale(1); z-index: 10;' : 'opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);'}>
-            <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label={`View ${card.title}`}>
-              <div class="absolute inset-0 bg-gradient-to-br from-accent-primary/5 to-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
-              <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
-                <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
-                  <span class="text-3xl lg:text-4xl">{card.icon}</span>
-                </div>
-                <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">{card.title}</h3>
-                <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">{card.description}</p>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 1; transform: translateX(-50%) scale(1); z-index: 10;">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Medicare">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
               </div>
-              <div class="studio-glow absolute inset-0 bg-gradient-to-t from-accent-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
-            </button>
-          </article>
-        ))}
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Medicare</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Health coverage for people 65+</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Social Security">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 10l6-6" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 18l6-6" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Social Security</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Retirement, disability, and survivors benefits</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Veteran Care">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Veteran Care</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Health care and benefits for veterans</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Passports">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2L2 7l10 5 10-5-10-5z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 17l10 5 10-5" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Passports</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Apply for or renew your US passport</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View National Parks">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2L2 7l10 5 10-5-10-5z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 17l10 5 10-5" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">National Parks</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Explore America's national parks</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View New Job">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h4v-2a2 2 0 0 0-2-2h-4v2zM7 20H5v-2a2 2 0 0 1 2-2h2v2zm8-12H5v-2a2 2 0 0 1 2-2h2v2zm8 0H5v-2a2 2 0 0 1 2-2h2v2z" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">New Job</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Resources for job seekers</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Taxes">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.85 1.07" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9h6l3-9h-2" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Taxes</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">File taxes and get refund info</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Student Aid">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Student Aid</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">FAFSA and federal student loans</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Small Business">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16a2 2 0 002 2h2m10 0h-4m4 0h4" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Small Business</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">SBA loans and resources</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Immigration">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Immigration</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">Citizenship and visa services</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Disaster Relief">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Disaster Relief</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">FEMA assistance and recovery</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
+        <div class="studio-portrait-seat group" role="listitem" style="opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);">
+          <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label="View Housing">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 to-green/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+            <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+              <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                <svg class="w-8 h-8 lg:w-10 lg:h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 22V12h6v10" />
+                </svg>
+              </div>
+              <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">Housing</h3>
+              <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">HUD programs and fair housing</p>
+            </div>
+            <div class="studio-glow absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+          </button>
+        </div>
       </div>
 
       <div class="carousel-controls flex items-center justify-center gap-4 mt-8 animate-fade-in stagger-3">
@@ -246,21 +441,18 @@ interface Props {
         </button>
 
         <div class="carousel-indicators flex items-center gap-1.5" aria-hidden="true">
-          {(
-            Astro.props.cards || [
-              { id: 'medicare' }, { id: 'social-security' }, { id: 'veteran-care' },
-              { id: 'passport' }, { id: 'national-park' }, { id: 'new-job' },
-              { id: 'taxes' }, { id: 'student-aid' }, { id: 'small-business' },
-              { id: 'immigration' }, { id: 'disaster-relief' }, { id: 'housing' }
-            ]
-          ).map((_, index) => (
-            <button
-              class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary"
-              data-carousel-indicator={index}
-              aria-label={`Go to card ${index + 1}`}
-              style={index === 0 ? 'background-color: var(--color-accent-primary); width: 24px; border-radius: var(--radius-full);' : ''}
-            ></button>
-          ))}
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="0" aria-label="Go to card 1" style="background-color: var(--color-primary); width: 24px; border-radius: var(--radius-full);"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="1" aria-label="Go to card 2"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="2" aria-label="Go to card 3"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="3" aria-label="Go to card 4"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="4" aria-label="Go to card 5"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="5" aria-label="Go to card 6"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="6" aria-label="Go to card 7"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="7" aria-label="Go to card 8"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="8" aria-label="Go to card 9"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="9" aria-label="Go to card 10"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="10" aria-label="Go to card 11"></button>
+          <button class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary" data-carousel-indicator="11" aria-label="Go to card 12"></button>
         </div>
 
         <button
@@ -292,52 +484,6 @@ interface Props {
     </div>
   </div>
 </section>
-
-<script is:inline>
-  // Indicator click handlers
-  document.querySelectorAll('[data-carousel-indicator]').forEach((indicator, index) => {
-    indicator.addEventListener('click', () => {
-      const carousel = indicator.closest('.studio-carousel');
-      if (carousel) {
-        // We need to trigger the carousel update
-        const track = carousel.querySelector('.studio-carousel-track');
-        const seats = carousel.querySelectorAll('.studio-portrait-seat');
-        if (track && seats.length > 0) {
-          // Dispatch a custom event that the main carousel script can listen to
-          carousel.dispatchEvent(new CustomEvent('carousel-navigate', { detail: { index } }));
-        }
-      }
-    });
-  });
-
-  // Listen for navigation events
-  document.querySelectorAll('.studio-carousel').forEach(carousel => {
-    carousel.addEventListener('carousel-navigate', (e) => {
-      const seats = carousel.querySelectorAll('.studio-portrait-seat');
-      const indicators = carousel.querySelectorAll('[data-carousel-indicator]');
-      const index = e.detail.index;
-
-      if (index >= 0 && index < seats.length) {
-        // Update indicators
-        indicators.forEach((ind, i) => {
-          if (i === index) {
-            ind.style.backgroundColor = 'var(--color-accent-primary)';
-            ind.style.width = '24px';
-            ind.style.borderRadius = 'var(--radius-full)';
-          } else {
-            ind.style.backgroundColor = 'var(--color-border-primary)';
-            ind.style.width = '';
-            ind.style.borderRadius = '';
-          }
-        });
-
-        // Update carousel (the main script handles this via global state)
-        // We'll just click the seat to trigger the existing logic
-        seats[index]?.click();
-      }
-    });
-  });
-</script>
 
 <style>
   .studio-portrait-seat {

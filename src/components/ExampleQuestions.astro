@@ -1,198 +1,212 @@
 ---
 ---
 <script is:inline>
-  const questions = [
-    "How do I replace my Social Security card?",
-    "I'm a veteran. How do I get care?",
-    "What are the requirements for a passport?",
-    "How do I apply for Medicare?",
-    "Where can I find national parks near me?",
-    "What benefits am I eligible for?",
-    "How do I file my taxes for free?",
-    "What student loans am I eligible for?",
-    "How do I start a small business?",
-    "What are my rights as a tenant?"
-  ];
+  const track = document.querySelector('[data-carousel-track]');
+  const viewport = document.querySelector('[data-carousel-viewport]');
+  const prevBtn = document.querySelector('[data-carousel-prev]');
+  const nextBtn = document.querySelector('[data-carousel-next]');
 
-  const display = document.querySelector('[data-questions-display]');
-  const prevBtn = document.querySelector('[data-questions-prev]');
-  const nextBtn = document.querySelector('[data-questions-next]');
-  const pauseBtn = document.querySelector('[data-questions-pause]');
-  const pauseIcon = document.querySelector('[data-questions-pause-icon]');
-  const playIcon = document.querySelector('[data-questions-play-icon]');
-  const counter = document.querySelector('[data-questions-counter]');
+  if (track && viewport && prevBtn && nextBtn) {
+    let isDragging = false;
+    let startX = 0;
+    let scrollLeft = 0;
+    let animationId = null;
 
-  if (display && prevBtn && nextBtn && pauseBtn) {
-    let currentIndex = 0;
-    let intervalId;
-    let isPaused = false;
-
-    function showQuestion(index) {
-      const question = questions[index];
-      display.style.opacity = '0';
-      display.style.transform = 'translateY(8px) scale(0.98)';
-
-      setTimeout(() => {
-        display.textContent = question;
-        display.style.opacity = '1';
-        display.style.transform = 'translateY(0) scale(1)';
-        if (counter) counter.textContent = `${index + 1} / ${questions.length}`;
-      }, 150);
+    function updateButtons() {
+      const maxScroll = track.scrollWidth - track.clientWidth;
+      prevBtn.style.opacity = track.scrollLeft > 10 ? '1' : '0';
+      prevBtn.style.pointerEvents = track.scrollLeft > 10 ? 'auto' : 'none';
+      nextBtn.style.opacity = track.scrollLeft < maxScroll - 10 ? '1' : '0';
+      nextBtn.style.pointerEvents = track.scrollLeft < maxScroll - 10 ? 'auto' : 'none';
     }
 
-    function nextQuestion() {
-      currentIndex = (currentIndex + 1) % questions.length;
-      showQuestion(currentIndex);
+    function scrollToNext() {
+      const cardWidth = 320 + 16;
+      track.scrollBy({ left: cardWidth, behavior: 'smooth' });
     }
 
-    function prevQuestion() {
-      currentIndex = (currentIndex - 1 + questions.length) % questions.length;
-      showQuestion(currentIndex);
+    function scrollToPrev() {
+      const cardWidth = 320 + 16;
+      track.scrollBy({ left: -cardWidth, behavior: 'smooth' });
     }
 
-    function startRotation() {
-      if (intervalId) clearInterval(intervalId);
-      intervalId = window.setInterval(nextQuestion, 5000);
-    }
+    prevBtn.addEventListener('click', scrollToPrev);
+    nextBtn.addEventListener('click', scrollToNext);
 
-    function stopRotation() {
-      if (intervalId) clearInterval(intervalId);
-    }
+    track.addEventListener('scroll', updateButtons, { passive: true });
 
-    function togglePause() {
-      isPaused = !isPaused;
-      if (isPaused) {
-        stopRotation();
-        pauseIcon?.classList.add('hidden');
-        playIcon?.classList.remove('hidden');
-        pauseBtn.setAttribute('aria-label', 'Resume example questions');
-      } else {
-        startRotation();
-        pauseIcon?.classList.remove('hidden');
-        playIcon?.classList.add('hidden');
-        pauseBtn.setAttribute('aria-label', 'Pause example questions');
-      }
-    }
-
-    prevBtn.addEventListener('click', () => {
-      prevQuestion();
-      stopRotation();
-      if (!isPaused) startRotation();
+    track.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.pageX - track.offsetLeft;
+      scrollLeft = track.scrollLeft;
+      track.style.cursor = 'grabbing';
     });
 
-    nextBtn.addEventListener('click', () => {
-      nextQuestion();
-      stopRotation();
-      if (!isPaused) startRotation();
+    track.addEventListener('mouseleave', () => {
+      isDragging = false;
+      track.style.cursor = 'grab';
     });
 
-    pauseBtn.addEventListener('click', togglePause);
+    track.addEventListener('mouseup', () => {
+      isDragging = false;
+      track.style.cursor = 'grab';
+    });
 
-    display.style.transition = 'opacity 200ms ease-out, transform 200ms ease-out';
-    showQuestion(0);
-    startRotation();
+    track.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      const x = e.pageX - track.offsetLeft;
+      const walk = (x - startX) * 2;
+      track.scrollLeft = scrollLeft - walk;
+    });
+
+    track.addEventListener('touchstart', (e) => {
+      isDragging = true;
+      startX = e.touches[0].pageX - track.offsetLeft;
+      scrollLeft = track.scrollLeft;
+    }, { passive: true });
+
+    track.addEventListener('touchend', () => {
+      isDragging = false;
+    }, { passive: true });
+
+    track.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+      const x = e.touches[0].pageX - track.offsetLeft;
+      const walk = (x - startX) * 2;
+      track.scrollLeft = scrollLeft - walk;
+    }, { passive: true });
+
+    updateButtons();
+    window.addEventListener('resize', updateButtons);
   }
 </script>
 
-<div class="example-questions-section py-12 lg:py-16 bg-background-secondary" aria-labelledby="example-questions-title">
-  <div class="container">
+<div class="example-questions-section py-16 lg:py-24 bg-background-muted" aria-labelledby="example-questions-title">
+  <div class="container-content">
     <header class="text-center mb-10 lg:mb-12">
-      <h2 id="example-questions-title" class="text-2xl lg:text-3xl font-display font-semibold text-text-primary mb-3 animate-fade-in stagger-1">
-        Try asking
+      <h2 id="example-questions-title" class="text-text-primary type-section-title mb-3 animate-fade-in stagger-1">
+        Popular questions
       </h2>
-      <p class="text-text-secondary max-w-xl mx-auto animate-fade-in stagger-2">
-        Not sure where to start? Here are some questions people commonly ask.
+      <p class="text-text-secondary type-body-l text-pretty max-w-prose animate-fade-in stagger-2">
+        See what others are asking about
       </p>
     </header>
 
-    <div class="example-questions-carousel relative max-w-3xl mx-auto animate-fade-in stagger-3">
-      <div class="bg-background-elevated rounded-2xl border border-border-primary p-6 lg:p-8 shadow-sm">
-        <div class="flex flex-col lg:flex-row items-center justify-between gap-6">
-          <div class="flex-1 lg:pr-8">
-            <div class="flex items-center gap-3 mb-4">
-              <svg class="w-6 h-6 text-accent-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+    <div class="relative w-full" data-slot="carousel">
+      <div class="flex w-full overflow-x-auto overscroll-x-contain scrollbar-hide pb-4 -mx-4 px-4 mobile:pb-0 mobile:mx-0 mobile:px-0" data-slot="carousel-track" data-carousel-track>
+        <div class="flex gap-4 min-w-max mobile:flex-nowrap" data-slot="carousel-viewport" data-carousel-viewport>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
               </svg>
-              <span class="text-xs font-semibold text-accent-primary uppercase tracking-wider">Example questions</span>
+              <span>Passport renewal</span>
             </div>
-            <p id="questions-display" data-questions-display class="text-lg lg:text-xl text-text-primary font-medium leading-relaxed min-h-[3rem] lg:min-h-[4rem]">
-              How do I replace my Social Security card?
-            </p>
-            <div class="flex items-center gap-3 mt-4 pt-4 border-t border-border-primary">
-              <span data-questions-counter class="text-sm text-text-tertiary font-mono">1 / 10</span>
-              <div class="flex-1 h-px bg-border-primary"></div>
+            <p class="text-text-primary type-body-m font-medium">How do I renew my U.S. passport?</p>
+          </button>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span>Social Security</span>
             </div>
-          </div>
-
-          <div class="flex flex-col lg:flex-row items-center gap-3 lg:ml-auto">
-            <button
-              data-questions-prev
-              type="button"
-              class="btn btn-secondary btn-icon p-2 lg:p-3 rounded-full"
-              aria-label="Previous example"
-            >
-              <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            <p class="text-text-primary type-body-m font-medium">How do I replace my Social Security card?</p>
+          </button>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="M2 10l6-6" />
+                <path d="M2 18l6-6" />
               </svg>
-            </button>
-
-            <button
-              data-questions-next
-              type="button"
-              class="btn btn-secondary btn-icon p-2 lg:p-3 rounded-full"
-              aria-label="Next example"
-            >
-              <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              <span>Medicare</span>
+            </div>
+            <p class="text-text-primary type-body-m font-medium">How do I apply for Medicare?</p>
+          </button>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
               </svg>
-            </button>
-
-            <button
-              data-questions-pause
-              type="button"
-              class="btn btn-ghost btn-icon p-2 lg:p-3 rounded-full"
-              aria-label="Pause example questions"
-            >
-              <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-questions-pause-icon>
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
+              <span>Taxes</span>
+            </div>
+            <p class="text-text-primary type-body-m font-medium">How do I file my taxes for free?</p>
+          </button>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
-              <svg class="w-5 h-5 lg:w-6 lg:h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-questions-play-icon>
-                <polygon points="5 3 19 12 5 21 5 3" />
+              <span>Veterans</span>
+            </div>
+            <p class="text-text-primary type-body-m font-medium">I'm a veteran. How do I get care?</p>
+          </button>
+          <button type="button" class="relative flex min-w-[280px] max-w-[320px] flex-1 flex-col gap-3 rounded-2xl bg-background-elevated p-5 border border-border-primary transition-shadow hover:shadow-card-hover focus-visible-ring" data-slot="carousel-slide">
+            <div class="flex items-center gap-2 text-text-tertiary type-label-m">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
-            </button>
-          </div>
+              <span>Small Business</span>
+            </div>
+            <p class="text-text-primary type-body-m font-medium">How do I start a small business?</p>
+          </button>
         </div>
       </div>
 
-      <div class="mt-6 flex items-center justify-center gap-2">
-        <p class="text-sm text-text-tertiary">Click any question to start chatting, or</p>
-        <a href="/chat" class="btn btn-primary btn-sm">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-          <span>Ask your own</span>
-        </a>
-      </div>
+      <button type="button" class="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex h-full w-16 items-center justify-center bg-gradient-to-r from-background-primary to-transparent opacity-0 pointer-events-none" data-slot="carousel-prev" data-carousel-prev aria-label="Previous">
+        <svg class="h-6 w-6 text-text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+
+      <button type="button" class="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex h-full w-16 items-center justify-center bg-gradient-to-l from-background-primary to-transparent opacity-0 pointer-events-none" data-slot="carousel-next" data-carousel-next aria-label="Next">
+        <svg class="h-6 w-6 text-text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
     </div>
   </div>
 </div>
 
+<script is:inline>
+  document.querySelectorAll('[data-example]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const textarea = document.querySelector('[data-chat-input]');
+      const form = document.querySelector('[data-chat-form]');
+      if (textarea && form) {
+        textarea.value = chip.dataset.example;
+        textarea.dispatchEvent(new Event('input'));
+        textarea.focus();
+        form.dispatchEvent(new Event('submit'));
+      }
+    });
+  });
+</script>
+
 <style>
-  .example-questions-carousel {
+  .example-questions-section {
     animation: scaleIn var(--duration-slower) var(--ease-spring);
   }
 
-  @media (max-width: 640px) {
-    .example-questions-carousel .flex {
+  @media (max-width: 768px) {
+    .example-questions-section .flex {
       flex-direction: column;
     }
 
-    .example-questions-carousel .lg\:pr-8 {
+    .example-questions-section .lg\:pr-8 {
       padding-right: 0;
     }
 
-    .example-questions-carousel .lg\:ml-auto {
+    .example-questions-section .lg\:ml-auto {
       margin-left: 0;
       width: 100%;
       justify-content: center;
