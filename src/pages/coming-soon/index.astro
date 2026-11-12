@@ -1,0 +1,72 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="Coming Soon | GovLink" pathname="/coming-soon">
+  <div class="max-w-3xl mx-auto px-4 py-16 mobile:py-12 text-center">
+    <div class="w-24 h-24 mx-auto mb-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-blue-600 dark:text-blue-400" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+    </div>
+
+    <h1 class="type-site-hero mb-4">More Coming in 2027</h1>
+    <p class="text-secondary text-lg mb-12 max-w-xl mx-auto">
+      We're building new features to make government services even more accessible.
+      Here's a preview of what's on the roadmap.
+    </p>
+
+    <div class="grid gap-6 mobile:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 text-left">
+      {[
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-blue-600 dark:text-blue-400" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 9h6v6H9z" /></svg>,
+          title: "Personal Dashboard",
+          desc: "Your benefits, deadlines, and saved searches in one place."
+        },
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-600 dark:text-emerald-400" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
+          title: "Benefit Eligibility",
+          desc: "Check what programs you qualify for based on your situation."
+        },
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-600 dark:text-amber-400" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>,
+          title: "Deadline Reminders",
+          desc: "Never miss a filing date, renewal, or enrollment period."
+        },
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple-600 dark:text-purple-400" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>,
+          title: "Family Profiles",
+          desc: "Manage benefits for dependents and household members."
+        },
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600 dark:text-red-400" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>,
+          title: "Status Tracking",
+          desc: "Real-time updates on applications, claims, and requests."
+        },
+        {
+          icon: <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-pink-600 dark:text-pink-400" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>,
+          title: "Verified Answers",
+          desc: "Cryptographic proof that answers come from official sources."
+        }
+      ].map(feature => (
+        <article class="bg-background-secondary rounded-2xl p-6 border border-border-primary hover:border-blue-500/50 transition-colors">
+          <div class="w-12 h-12 rounded-xl bg-background-tertiary flex items-center justify-center mb-4">{feature.icon}</div>
+          <h3 class="text-lg font-semibold mb-2">{feature.title}</h3>
+          <p class="text-secondary">{feature.desc}</p>
+        </article>
+      ))}
+    </div>
+
+    <div class="mt-16 pt-8 border-t border-border-primary">
+      <p class="text-secondary mb-4">Want to stay updated?</p>
+      <a href="/" class="inline-flex items-center gap-2 px-6 py-3 bg-blue-700 text-white rounded-full font-medium hover:bg-blue-800 transition-colors">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
+        Try GovLink Now
+      </a>
+    </div>
+  </div>
+</Layout>

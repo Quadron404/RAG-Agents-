@@ -1,0 +1,97 @@
+---
+import LanguageSelector from './LanguageSelector.astro';
+---
+<footer class="footer" role="contentinfo" aria-label="Footer">
+  <p class="footer-text">
+    <span>An official website of the </span>
+    <a href="https://gsa.gov" target="_blank" rel="noopener noreferrer" class="footer-link">
+      General Services Administration
+    </a>
+  </p>
+
+  <div class="footer-divider">
+    <span class="laurel laurel-left" aria-hidden="true"></span>
+    <p class="footer-text font-medium">Every federal agency, working together</p>
+    <span class="laurel laurel-right" aria-hidden="true"></span>
+  </div>
+
+  <div class="footer-bottom">
+    <a href="/privacy-policy" class="footer-link type-label-s">Privacy policy</a>
+    <a href="/terms" class="footer-link type-label-s">Terms of use</a>
+    <LanguageSelector currentLanguage="en" />
+  </div>
+</footer>
+
+<style>
+  .footer {
+    padding: 2rem var(--site-gutter);
+    text-align: center;
+  }
+
+  .footer-text {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .footer-link {
+    color: var(--color-text-secondary);
+    transition: color var(--duration-fast) var(--ease-out);
+  }
+
+  .footer-link:hover {
+    color: var(--color-text-primary);
+  }
+
+  .footer-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .laurel {
+    width: 24px;
+    height: 24px;
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
+    background-color: var(--color-text-tertiary);
+  }
+
+  .laurel-left {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M12 2L10.5 6.5L5 7L9.5 11L8 16.5L12 13L16 16.5L14.5 11L19 7L13.5 6.5L12 2Z' stroke='currentColor' stroke-width='1.5'/%3E%3C/svg%3E");
+  }
+
+  .laurel-right {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M12 2L13.5 6.5L19 7L14.5 11L16 16.5L12 13L8 16.5L9.5 11L5 7L10.5 6.5L12 2Z' stroke='currentColor' stroke-width='1.5'/%3E%3C/svg%3E");
+  }
+
+  .footer-bottom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem 1rem;
+    margin-top: 1rem;
+  }
+
+  .language-select {
+    padding: 0.375rem 2rem 0.375rem 0.75rem;
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background-color: var(--color-background-primary);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+  }
+
+  .language-select:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+</style>

@@ -1,0 +1,6 @@
+name = "govlink"
+compatibility_date = "2026-11-12"
+pages_build_output_dir = "./dist"
+
+[env.production]
+account_id = "01522829f05316893eff23bb4c630deb"

@@ -1,0 +1,53 @@
+---
+---
+<script is:inline>
+  const select = document.querySelector('[data-language-select]');
+  if (select) {
+    const storageKey = 'govlink:language';
+
+    // Set initial value from localStorage
+    const saved = localStorage.getItem(storageKey);
+    if (saved && ['en', 'fr', 'es'].includes(saved)) {
+      select.value = saved;
+    }
+
+    select.addEventListener('change', (e) => {
+      const target = e.target;
+      const lang = target.value;
+      localStorage.setItem(storageKey, lang);
+      window.location.reload();
+    });
+  }
+</script>
+
+<select
+  data-language-select
+  aria-label="Language"
+  class="language-select"
+  value="en"
+>
+  <option value="en">English</option>
+  <option value="fr">Français</option>
+  <option value="es">Español</option>
+</select>
+
+<style>
+  .language-select {
+    padding: 0.375rem 2rem 0.375rem 0.75rem;
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background-color: var(--color-background-primary);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+  }
+
+  .language-select:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+</style>

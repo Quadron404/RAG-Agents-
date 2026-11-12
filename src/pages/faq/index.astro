@@ -1,0 +1,76 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="Frequently Asked Questions | GovLink" pathname="/faq">
+  <div class="max-w-3xl mx-auto px-4 py-16 mobile:py-12">
+    <h1 class="type-site-hero text-center mb-8">Frequently Asked Questions</h1>
+
+    <div class="space-y-4" id="faq-accordion">
+      {[
+        {
+          q: "What is GovLink?",
+          a: "GovLink is a unified search and chat interface that helps you find answers from official U.S. government sources. We aggregate information from 29,000+ federal websites so you don't have to search each one individually."
+        },
+        {
+          q: "Is GovLink an official government website?",
+          a: "GovLink is a project of the National Design Studio at the General Services Administration (GSA), a U.S. federal agency. While we're built by government, we're a tool to help you navigate government services — not a replacement for any specific agency."
+        },
+        {
+          q: "Does GovLink collect my personal information?",
+          a: "No. We don't create accounts, track users, or collect personal data. Your questions are processed to find answers and then discarded. Theme and language preferences are stored only in your browser's localStorage."
+        },
+        {
+          q: "How does GovLink protect my privacy?",
+          a: "We use no analytics, tracking cookies, or advertising. Questions are sent directly to government APIs over encrypted connections. No third parties receive your data. See our <a href='/privacy-policy' class='text-blue-600 dark:text-blue-400 hover:underline'>Privacy Policy</a> for details."
+        },
+        {
+          q: "Can I trust the answers from GovLink?",
+          a: "Every answer cites its official .gov source. You can always click through to verify on the original agency website. However, government information changes — always verify critical details on the official site before making important decisions."
+        },
+        {
+          q: "Does GovLink work in languages other than English?",
+          a: "Yes! GovLink supports English, Spanish (Español), and French (Français). Use the language selector in the footer to switch."
+        },
+        {
+          q: "Do I need to download an app?",
+          a: "No. GovLink works in any modern web browser on any device — phone, tablet, or computer. No installation required."
+        },
+        {
+          q: "What if GovLink doesn't have my answer?",
+          a: "If we can't find an answer, we'll tell you and suggest the most relevant agency websites to visit directly. You can also use the 'See how it works' link to understand our coverage."
+        },
+        {
+          q: "Is GovLink accessible?",
+          a: "Yes. We follow WCAG 2.1 AA guidelines including keyboard navigation, screen reader support, sufficient contrast, and reduced motion preferences."
+        },
+        {
+          q: "How can I report a problem or give feedback?",
+          a: "Use the 'Submit feedback' button in the footer menu, or email us at <a href='mailto:feedback@govlink.example' class='text-blue-600 dark:text-blue-400 hover:underline'>feedback@govlink.example</a>."
+        }
+      ].map((faq, index) => (
+        <details class="group bg-background-secondary rounded-xl overflow-hidden border border-border-primary" open={index === 0}>
+          <summary class="flex items-center justify-between p-5 cursor-pointer list-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+            <h3 class="font-medium text-lg pr-4">{faq.q}</h3>
+            <svg class="w-5 h-5 text-tertiary transition-transform duration-200 group-open:rotate-180 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </summary>
+          <div class="px-5 pb-5 text-secondary leading-relaxed" style="animation: slideDown 200ms ease-out;">
+            {faq.a}
+          </div>
+        </details>
+      ))}
+    </div>
+  </div>
+
+  <style>
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    details summary::-webkit-details-marker { display: none; }
+    details summary::marker { display: none; }
+  </style>
+</Layout>

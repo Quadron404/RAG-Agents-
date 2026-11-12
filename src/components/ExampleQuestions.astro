@@ -1,0 +1,154 @@
+---
+interface Props {}
+---
+
+<div class="example-questions" aria-label="Example questions" role="region">
+  <div class="flex items-center justify-center gap-4">
+    <button
+      class="example-nav-button p-2 rounded-full bg-background-tertiary hover:bg-background-secondary transition-colors text-secondary hover:text-primary focus-visible-ring"
+      aria-label="Previous example"
+      data-action="prev"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <polyline points="15 18 9 12 15 6" />
+      </svg>
+    </button>
+
+    <div class="example-question-display flex-1 min-w-0 overflow-hidden" role="status" aria-live="polite">
+      <p class="example-question-text type-body-m text-secondary text-center truncate" data-question-index="0">
+        I'm a veteran. How do I get care?
+      </p>
+    </div>
+
+    <button
+      class="example-nav-button p-2 rounded-full bg-background-tertiary hover:bg-background-secondary transition-colors text-secondary hover:text-primary focus-visible-ring"
+      aria-label="Next example"
+      data-action="next"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <polyline points="9 18 15 12 9 6" />
+      </svg>
+    </button>
+
+    <button
+      class="example-pause-button p-2 rounded-full bg-background-tertiary hover:bg-background-secondary transition-colors text-secondary hover:text-primary focus-visible-ring"
+      aria-label="Pause the example questions"
+      data-action="pause"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" data-pause-icon>
+        <rect x="6" y="4" width="4" height="16" />
+        <rect x="14" y="4" width="4" height="16" />
+      </svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" data-play-icon class="hidden">
+        <polygon points="5 3 19 12 5 21 5 3" />
+      </svg>
+    </button>
+  </div>
+</div>
+
+<script is:inline>
+  const questions = [
+    "I'm a veteran. How do I get care?",
+    "How do I replace my Social Security card?",
+    "What are the requirements for a passport?",
+    "How do I apply for Medicare?",
+    "Where can I find national parks near me?",
+    "What benefits am I eligible for?"
+  ];
+
+  const display = document.querySelector('.example-question-text');
+  const prevButton = document.querySelector('[data-action="prev"]');
+  const nextButton = document.querySelector('[data-action="next"]');
+  const pauseButton = document.querySelector('[data-action="pause"]');
+  const pauseIcon = document.querySelector('[data-pause-icon]');
+  const playIcon = document.querySelector('[data-play-icon]');
+
+  if (display && prevButton && nextButton && pauseButton) {
+    let currentIndex = 0;
+    let intervalId;
+    let isPaused = false;
+
+    function showQuestion(index) {
+      display.style.opacity = '0';
+      display.style.transform = 'translateY(4px)';
+
+      setTimeout(() => {
+        display.textContent = questions[index];
+        display.style.opacity = '1';
+        display.style.transform = 'translateY(0)';
+      }, 150);
+    }
+
+    function nextQuestion() {
+      currentIndex = (currentIndex + 1) % questions.length;
+      showQuestion(currentIndex);
+    }
+
+    function prevQuestion() {
+      currentIndex = (currentIndex - 1 + questions.length) % questions.length;
+      showQuestion(currentIndex);
+    }
+
+    function startRotation() {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = window.setInterval(nextQuestion, 5000);
+    }
+
+    function stopRotation() {
+      if (intervalId) clearInterval(intervalId);
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      if (isPaused) {
+        stopRotation();
+        pauseIcon?.classList.add('hidden');
+        playIcon?.classList.remove('hidden');
+        pauseButton.setAttribute('aria-label', 'Resume the example questions');
+      } else {
+        startRotation();
+        pauseIcon?.classList.remove('hidden');
+        playIcon?.classList.add('hidden');
+        pauseButton.setAttribute('aria-label', 'Pause the example questions');
+      }
+    }
+
+    prevButton.addEventListener('click', () => {
+      prevQuestion();
+      stopRotation();
+      if (!isPaused) startRotation();
+    });
+
+    nextButton.addEventListener('click', () => {
+      nextQuestion();
+      stopRotation();
+      if (!isPaused) startRotation();
+    });
+
+    pauseButton.addEventListener('click', togglePause);
+
+    display.style.transition = 'opacity 150ms ease, transform 150ms ease';
+
+    startRotation();
+  }
+</script>
+
+<style>
+  .example-question-text {
+    transition: opacity 150ms ease, transform 150ms ease;
+  }
+
+  .example-nav-button,
+  .example-pause-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .example-question-text {
+      transition: none;
+    }
+  }
+</style>

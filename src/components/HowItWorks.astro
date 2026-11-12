@@ -1,0 +1,71 @@
+---
+interface Props {}
+---
+<section id="how-it-works" class="py-16 px-4 mobile:py-12" aria-labelledby="how-it-works-title">
+  <div class="max-w-site mx-auto">
+    <h2 id="how-it-works-title" class="sr-only">How it works</h2>
+
+    <div class="grid gap-8 mobile:gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
+        <div class="w-16 h-16 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-4">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-blue-600 dark:text-blue-400" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold mb-2">29,000 websites into one</h3>
+        <p class="text-secondary text-sm">Search across every federal agency from a single place.</p>
+        <a href="/how-it-works" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">See how it works →</a>
+      </article>
+
+      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
+        <div class="w-16 h-16 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-4">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-600 dark:text-emerald-400" aria-hidden="true">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold mb-2">Your data stays private</h3>
+        <p class="text-secondary text-sm">No tracking, no ads, no personal data collected.</p>
+        <a href="/privacy" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Learn about privacy →</a>
+      </article>
+
+      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
+        <div class="w-16 h-16 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-600 dark:text-amber-400" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold mb-2">Clear answers, official sources</h3>
+        <p class="text-secondary text-sm">Every answer cites its government source.</p>
+        <a href="/sources" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Learn about sources →</a>
+      </article>
+
+      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
+        <div class="w-16 h-16 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mb-4">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple-600 dark:text-purple-400" aria-hidden="true">
+            <rect x="5" y="2" width="14" height="20" rx="2" />
+            <line x1="12" y1="18" x2="12.01" y2="18" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold mb-2">No app to download</h3>
+        <p class="text-secondary text-sm">Works in any browser on any device.</p>
+        <button class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline" aria-label="Ask a question">Ask a question →</button>
+      </article>
+    </div>
+  </div>
+</section>
+
+<style>
+  @media (max-width: 768px) {
+    .sm\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .lg\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+</style>

@@ -1,0 +1,16 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Hero from '../../components/Hero.astro';
+---
+
+<Layout title="Chat | GovLink" pathname="/chat" isChatPage={true} description="Chat with GovLink to get answers from official government sources.">
+  <div data-slot="chat-page-frame" class="contents">
+    <div data-chrome-tone="light" data-chrome-canvas="light" class="flex flex-col min-h-dvh bg-background-primary text-primary">
+      <main class="flex flex-col gap-site-section mobile:gap-site-section-lg text-pretty outline-none" id="landing-main" tabindex="-1">
+        <div class="relative flex flex-col overflow-x-clip mobile:mx-auto mobile:w-(--site-frame-width)" data-slot="carousel" data-has-own-composer="">
+          <Hero isChatPage={true} />
+        </div>
+      </main>
+    </div>
+  </div>
+</Layout>

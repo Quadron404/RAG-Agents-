@@ -1,0 +1,50 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="Releases | GovLink" pathname="/releases">
+  <div class="max-w-3xl mx-auto px-4 py-16 mobile:py-12">
+    <h1 class="type-site-hero text-center mb-8">Releases</h1>
+
+    <div class="space-y-6">
+      {[
+        {
+          version: "v1.0.0",
+          date: "November 2026",
+          title: "Initial Release",
+          changes: [
+            "Unified search across 29,000+ federal websites",
+            "Chat interface with official source citations",
+            "Dark/light/system theme support",
+            "Multi-language: English, Spanish, French",
+            "Privacy-first architecture",
+            "Voice input support",
+            "File upload for document questions"
+          ]
+        },
+        {
+          version: "v1.1.0",
+          date: "Planned Q1 2027",
+          title: "Personalization",
+          changes: [
+            "User dashboard with saved searches",
+            "Benefit eligibility checker",
+            "Deadline reminders",
+            "Agency notification preferences"
+          ]
+        }
+      ].map(release => (
+        <article class="bg-background-secondary rounded-2xl p-6 border border-border-primary">
+          <div class="flex items-baseline justify-between gap-4 mb-4 flex-wrap">
+            <span class="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">{release.version}</span>
+            <time class="text-secondary text-sm">{release.date}</time>
+          </div>
+          <h2 class="text-xl font-semibold mb-3">{release.title}</h2>
+          <ul class="list-disc pl-6 space-y-2 text-secondary">
+            {release.changes.map(change => <li>{change}</li>)}
+          </ul>
+        </article>
+      ))}
+    </div>
+  </div>
+</Layout>

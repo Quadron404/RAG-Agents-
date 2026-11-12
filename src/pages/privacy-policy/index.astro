@@ -1,0 +1,55 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="Privacy Policy | GovLink" pathname="/privacy-policy">
+  <div class="max-w-3xl mx-auto px-4 py-16 mobile:py-12">
+    <h1 class="type-site-hero text-center mb-8">Privacy Policy</h1>
+
+    <div class="prose prose-invert max-w-none space-y-8">
+      <p class="text-secondary text-sm mb-8">Last updated: November 2026</p>
+
+      <h2 class="text-2xl font-semibold">Information We Collect</h2>
+      <p>GovLink collects minimal information to provide our service:</p>
+      <ul class="list-disc pl-6 space-y-2">
+        <li><strong>Questions you ask:</strong> Your queries are sent to government APIs to retrieve official answers.</li>
+        <li><strong>Technical data:</strong> Standard server logs (IP address, browser type, request time) for security and performance.</li>
+        <li><strong>Preferences:</strong> Theme (light/dark/system) and language choice, stored locally in your browser.</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">Information We Do NOT Collect</h2>
+      <ul class="list-disc pl-6 space-y-2">
+        <li>No personal identifiers (name, email, SSN, etc.)</li>
+        <li>No tracking cookies or analytics</li>
+        <li>No advertising identifiers</li>
+        <li>No behavioral profiles</li>
+        <li>No location data beyond what's needed for your query</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">How We Use Your Information</h2>
+      <ul class="list-disc pl-6 space-y-2">
+        <li>To answer your questions using official government sources</li>
+        <li>To remember your theme and language preferences</li>
+        <li>To ensure service security and availability</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">Data Sharing</h2>
+      <p>We share your questions only with the specific government APIs needed to answer them. We do not share data with third parties for advertising or analytics.</p>
+
+      <h2 class="text-2xl font-semibold">Data Retention</h2>
+      <p>Questions are processed in real-time and not stored after your session ends. Preference data (theme, language) persists in your browser's localStorage until you clear it.</p>
+
+      <h2 class="text-2xl font-semibold">Your Rights</h2>
+      <p>You can clear your local preferences at any time by clearing your browser data for govlink.example. Since we don't create accounts or store personal data, there's no account to delete.</p>
+
+      <h2 class="text-2xl font-semibold">Security</h2>
+      <p>All connections use HTTPS. Government API communications use authenticated, encrypted channels.</p>
+
+      <h2 class="text-2xl font-semibold">Changes to This Policy</h2>
+      <p>We'll post any changes here. The "Last updated" date above will reflect the most recent revision.</p>
+
+      <h2 class="text-2xl font-semibold">Contact</h2>
+      <p>Questions about this policy? Contact us at <a href="mailto:privacy@govlink.example" class="text-blue-600 dark:text-blue-400 hover:underline">privacy@govlink.example</a>.</p>
+    </div>
+  </div>
+</Layout>

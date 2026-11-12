@@ -1,0 +1,55 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="Sources | GovLink" pathname="/sources">
+  <div class="max-w-3xl mx-auto px-4 py-16 mobile:py-12">
+    <h1 class="type-site-hero text-center mb-8">Our Sources</h1>
+
+    <div class="prose prose-invert max-w-none space-y-8">
+      <p class="text-lg text-secondary">
+        GovLink aggregates information from official U.S. government sources. Every answer cites
+        its origin so you can verify the information directly.
+      </p>
+
+      <h2 class="text-2xl font-semibold">Primary Sources</h2>
+      <ul class="list-disc pl-6 space-y-3">
+        <li><strong>USA.gov</strong> — The official U.S. government web portal</li>
+        <li><strong>Benefits.gov</strong> — Official benefits information</li>
+        <li><strong>Medicare.gov</strong> — Medicare program information</li>
+        <li><strong>SocialSecurity.gov</strong> — Social Security Administration</li>
+        <li><strong>VA.gov</strong> — Department of Veterans Affairs</li>
+        <li><strong>IRS.gov</strong> — Internal Revenue Service</li>
+        <li><strong>Travel.State.Gov</strong> — Passports and international travel</li>
+        <li><strong>NPS.gov</strong> — National Park Service</li>
+        <li><strong>SBA.gov</strong> — Small Business Administration</li>
+        <li><strong>StudentAid.gov</strong> — Federal student aid</li>
+        <li><strong>HealthCare.gov</strong> — Health insurance marketplace</li>
+        <li><strong>USCIS.gov</strong> — Citizenship and immigration services</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">API Integrations</h2>
+      <p>We integrate with official government APIs including:</p>
+      <ul class="list-disc pl-6 space-y-2">
+        <li>USA.gov Search API</li>
+        <li>Benefits.gov API</li>
+        <li>Regulations.gov API</li>
+        <li>Agency-specific APIs (VA, SSA, CMS, etc.)</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">How We Verify Sources</h2>
+      <ul class="list-disc pl-6 space-y-2">
+        <li>Only .gov domains and official government APIs</li>
+        <li>Real-time queries — no cached or scraped content</li>
+        <li>Citation links point directly to the source page</li>
+        <li>Agency attribution on every answer</li>
+      </ul>
+
+      <h2 class="text-2xl font-semibold">Source Freshness</h2>
+      <p>Government information changes. We always query live sources, but agency websites may have delayed updates. For the most current information, especially on deadlines or policy changes, always check the cited .gov source directly.</p>
+
+      <h2 class="text-2xl font-semibold">Report a Source Issue</h2>
+      <p>If you find an outdated or incorrect citation, please <a href="mailto:sources@govlink.example" class="text-blue-600 dark:text-blue-400 hover:underline">let us know</a> with the question you asked and the citation in question.</p>
+    </div>
+  </div>
+</Layout>

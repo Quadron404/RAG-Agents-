@@ -1,0 +1,191 @@
+---
+interface Props {
+  cards?: Array<{
+    id: string;
+    title: string;
+    description: string;
+    image: string;
+  }>;
+}
+---
+
+<section class="studio-scene" style="--studio-scan: #8bb695;" data-studio-scene="home">
+  <div class="studio-art">
+    <div class="studio-art-plane">
+      <div class="studio-art-accessories" aria-hidden="true">
+        <svg class="studio-art-image" width="402" height="410" viewBox="0 0 402 410" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="studio-gradient" x1="0" y1="0" x2="402" y2="410" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#1e40af" stop-opacity="0.3"/>
+              <stop offset="50%" stop-color="#059669" stop-opacity="0.2"/>
+              <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0.3"/>
+            </linearGradient>
+            <radialGradient id="studio-glow" cx="201" cy="205" r="200" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#2563eb" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <rect width="402" height="410" rx="16" fill="url(#studio-gradient)"/>
+          <ellipse cx="201" cy="205" rx="180" ry="150" fill="url(#studio-glow)"/>
+          <circle cx="320" cy="80" r="80" fill="#2563eb" opacity="0.15"/>
+          <circle cx="80" cy="330" r="60" fill="#10b981" opacity="0.12"/>
+          <path d="M100 300 Q150 250 201 205 Q252 255 302 305" stroke="#2563eb" stroke-width="3" fill="none" opacity="0.3"/>
+          <path d="M100 200 Q150 180 201 180 Q252 180 302 200" stroke="#10b981" stroke-width="2" fill="none" opacity="0.2"/>
+        </svg>
+      </div>
+      <div class="studio-frame-scan" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <div class="studio-carousel" aria-label="Government service cards">
+    <div class="studio-carousel-track" role="list">
+      {(
+        Astro.props.cards || [
+          { id: 'medicare', title: 'Medicare', description: 'Health coverage for people 65+', image: '' },
+          { id: 'social-security', title: 'Social Security', description: 'Retirement, disability, and survivors benefits', image: '' },
+          { id: 'veteran-care', title: 'Veteran Care', description: 'Health care and benefits for veterans', image: '' },
+          { id: 'passport', title: 'Passports', description: 'Apply for or renew your US passport', image: '' },
+          { id: 'national-park', title: 'National Parks', description: 'Explore America\'s national parks', image: '' },
+          { id: 'new-job', title: 'New Job', description: 'Resources for job seekers', image: '' }
+        ]
+      ).map((card, index) => (
+        <div class="studio-portrait-seat" role="listitem" style={index === 0 ? 'opacity: 1; transform: translateX(-50%) scale(1); z-index: 10;' : 'opacity: 0.4; transform: translateX(-50%) scale(0.8); z-index: 1;'}>
+          <div class="studio-portrait-wrapper" style="border-radius: 16px; overflow: hidden; width: 100%; height: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.15);">
+            <svg class="studio-portrait" width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs>
+                <linearGradient id={`card-gradient-${card.id}`} x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#1e40af" stop-opacity="0.4"/>
+                  <stop offset="100%" stop-color="#059669" stop-opacity="0.3"/>
+                </linearGradient>
+              </defs>
+              <rect width="120" height="120" fill="url(#card-gradient-0)"/>
+              <text x="60" y="60" text-anchor="middle" dominant-baseline="middle" font-family="system-ui" font-size="10" font-weight="600" fill="white" opacity="0.9">{card.title}</text>
+            </svg>
+          </div>
+        </div>
+      ))}
+    </div>
+    <div class="studio-assess-scan" aria-hidden="true"></div>
+  </div>
+</section>
+
+<script is:inline>
+  const track = document.querySelector('.studio-carousel-track');
+  const seats = document.querySelectorAll('.studio-portrait-seat');
+  if (track && seats.length > 0) {
+    let currentIndex = 0;
+    const totalCards = seats.length;
+    let autoRotateInterval;
+    let isAnimating = false;
+
+    function updateCarousel(index) {
+      if (isAnimating) return;
+      isAnimating = true;
+
+      seats.forEach((seat, i) => {
+        const distance = (i - index + totalCards) % totalCards;
+        const normalizedDistance = distance > totalCards / 2 ? distance - totalCards : distance;
+        const absDistance = Math.abs(normalizedDistance);
+
+        let scale = 1 - absDistance * 0.15;
+        let opacity = 1 - absDistance * 0.3;
+        let zIndex = totalCards - absDistance;
+
+        if (absDistance > totalCards / 2) {
+          opacity = 0;
+          scale = 0.6;
+        }
+
+        seat.style.transition = 'transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms cubic-bezier(0.22, 1, 0.36, 1), z-index 0ms';
+        seat.style.transform = `translateX(-50%) scale(${scale})`;
+        seat.style.opacity = opacity.toString();
+        seat.style.zIndex = zIndex.toString();
+      });
+
+      setTimeout(() => { isAnimating = false; }, 400);
+    }
+
+    function nextCard() {
+      currentIndex = (currentIndex + 1) % totalCards;
+      updateCarousel(currentIndex);
+    }
+
+    function prevCard() {
+      currentIndex = (currentIndex - 1 + totalCards) % totalCards;
+      updateCarousel(currentIndex);
+    }
+
+    function startAutoRotate() {
+      autoRotateInterval = window.setInterval(nextCard, 5000);
+    }
+
+    function stopAutoRotate() {
+      if (autoRotateInterval) {
+        clearInterval(autoRotateInterval);
+      }
+    }
+
+    const carousel = document.querySelector('.studio-carousel');
+    carousel?.addEventListener('mouseenter', stopAutoRotate);
+    carousel?.addEventListener('mouseleave', startAutoRotate);
+    carousel?.addEventListener('focusin', stopAutoRotate);
+    carousel?.addEventListener('focusout', startAutoRotate);
+
+    seats.forEach((seat, index) => {
+      seat.addEventListener('click', () => {
+        if (index !== currentIndex) {
+          currentIndex = index;
+          updateCarousel(currentIndex);
+          stopAutoRotate();
+          startAutoRotate();
+        }
+      });
+
+      seat.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (index !== currentIndex) {
+            currentIndex = index;
+            updateCarousel(currentIndex);
+            stopAutoRotate();
+            startAutoRotate();
+          }
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          nextCard();
+          stopAutoRotate();
+          startAutoRotate();
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          prevCard();
+          stopAutoRotate();
+          startAutoRotate();
+        }
+      });
+
+      seat.setAttribute('tabindex', '0');
+      seat.setAttribute('role', 'button');
+      seat.setAttribute('aria-label', `View card ${index + 1}`);
+    });
+
+    updateCarousel(0);
+    startAutoRotate();
+  }
+</script>
+
+<style>
+  .studio-portrait-seat {
+    transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .studio-portrait-seat:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .studio-portrait-seat {
+      transition: none;
+    }
+  }
+</style>

@@ -1,0 +1,89 @@
+---
+interface Props {
+  currentTheme: 'light' | 'dark' | 'system';
+}
+---
+<script is:inline>
+  const button = document.querySelector('[data-theme-toggle]');
+  if (button) {
+    const storageKey = 'govlink:theme';
+    const themeColors = { dark: '#0b0d12', light: '#fff' };
+
+    function applyTheme(theme) {
+      const resolved = theme === 'system'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        : theme;
+
+      document.documentElement.dataset.theme = resolved;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColors[resolved]);
+      localStorage.setItem(storageKey, theme);
+
+      button.setAttribute('data-current-theme', theme);
+      updateButtonLabel(theme);
+    }
+
+    function updateButtonLabel(theme) {
+      const labels = {
+        light: 'Switch to dark mode',
+        dark: 'Switch to light mode',
+        system: 'Use system preference'
+      };
+      button.setAttribute('aria-label', labels[theme]);
+    }
+
+    button.addEventListener('click', () => {
+      const current = button.getAttribute('data-current-theme');
+      const next = current === 'light' ? 'dark' : current === 'dark' ? 'system' : 'light';
+      applyTheme(next);
+    });
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => {
+      const current = button.getAttribute('data-current-theme');
+      if (current === 'system') {
+        applyTheme('system');
+      }
+    };
+    mediaQuery.addEventListener('change', handler);
+  }
+</script>
+
+<button
+  data-theme-toggle
+  data-current-theme={currentTheme}
+  class="inline-flex items-center justify-center gap-2 rounded-full p-1.5 text-tertiary hover:text-primary transition-colors duration-200 focus-visible-ring"
+  aria-label={currentTheme === 'light' ? 'Switch to dark mode' : currentTheme === 'dark' ? 'Switch to light mode' : 'Use system preference'}
+>
+  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+  </svg>
+  <svg class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-dark-icon>
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+  </svg>
+  <svg class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-system-icon>
+    <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2" />
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 21h8M12 17v4" />
+  </svg>
+</button>
+
+<style>
+  [data-theme-toggle][data-current-theme="light"] [data-dark-icon],
+  [data-theme-toggle][data-current-theme="light"] [data-system-icon],
+  [data-theme-toggle][data-current-theme="dark"] [data-system-icon],
+  [data-theme-toggle][data-current-theme="system"] [data-dark-icon],
+  [data-theme-toggle][data-current-theme="system"] [data-system-icon] {
+    display: none;
+  }
+
+  [data-theme-toggle][data-current-theme="light"] svg:first-child {
+    display: block;
+  }
+
+  [data-theme-toggle][data-current-theme="dark"] [data-dark-icon] {
+    display: block;
+  }
+
+  [data-theme-toggle][data-current-theme="system"] [data-system-icon] {
+    display: block;
+  }
+</style>

@@ -1,0 +1,143 @@
+---
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  pathname: string;
+  isChatPage?: boolean;
+  chatReturn?: boolean;
+}
+
+const { title, description = 'Find answers from official government sources and clear next steps for the services you need with GovLink.', pathname, isChatPage = false, chatReturn = false } = Astro.props;
+
+// During static build, cookies may not be available, so use defaults
+const currentTheme = 'system';
+const currentLanguage = 'en';
+
+const canonicalUrl = new URL(pathname, Astro.site || 'https://govlink.example').toString();
+const ogImage = new URL('/images/social/govlink-og.png', Astro.site || 'https://govlink.example').toString();
+---
+
+<!DOCTYPE html>
+<html lang="en" dir="ltr" data-theme={currentTheme} data-govlink-app={''} class="astro-root">
+<head>
+  <meta charset="utf-8" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content={currentTheme === 'dark' ? '#0b0d12' : '#fff'} />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <link rel="preload" href="/fonts/helvetica-now-text-400.woff2" as="font" type="font/woff2" crossorigin="" />
+  <link rel="preload" href="/fonts/helvetica-now-text-500.woff2" as="font" type="font/woff2" crossorigin="" />
+  <link rel="preload" href="/fonts/helvetica-now-display-400.woff2" as="font" type="font/woff2" crossorigin="" />
+  <link rel="preload" href="/fonts/rhymes-text-regular.woff2" as="font" type="font/woff2" crossorigin="" />
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+  <meta name="apple-mobile-web-app-title" content="GovLink" />
+  <title data-site-en="GovLink" data-site-es="GovLink" data-site-fr="GovLink">{title}</title>
+
+  <script type="application/ld+json" set:html={JSON.stringify({
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': isChatPage ? 'WebPage' : 'WebSite',
+        'name': title,
+        'url': canonicalUrl,
+        'isPartOf': {
+          '@type': 'WebSite',
+          'name': 'GovLink',
+          'url': (Astro.site || 'https://govlink.example') + '/'
+        },
+        'publisher': {
+          '@type': 'GovernmentOrganization',
+          'name': 'GovLink',
+          'url': Astro.site || 'https://govlink.example',
+          'logo': new URL('/apple-touch-icon.png', Astro.site || 'https://govlink.example').toString(),
+          'parentOrganization': {
+            '@type': 'GovernmentOrganization',
+            'name': 'National Design Studio',
+            'url': 'https://ndstudio.gov/'
+          }
+        },
+        'description': description
+      },
+      {
+        '@type': 'GovernmentOrganization',
+        'name': 'GovLink',
+        'url': Astro.site || 'https://govlink.example',
+        'logo': new URL('/apple-touch-icon.png', Astro.site || 'https://govlink.example').toString(),
+        'parentOrganization': {
+          '@type': 'GovernmentOrganization',
+          'name': 'National Design Studio',
+          'url': 'https://ndstudio.gov/'
+        }
+      }
+    ]
+  })} />
+
+  <meta name="description" content={description} data-site-attribute="content" data-site-en={description} data-site-es="Encuentre respuestas de fuentes oficiales del gobierno y pasos claros para acceder a los servicios que necesita con GovLink." data-site-fr="Trouvez des réponses de sources gouvernementales officielles et les étapes à suivre pour accéder aux services dont vous avez besoin avec GovLink." />
+  <link rel="canonical" href={canonicalUrl} />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonicalUrl} />
+  <meta property="og:title" content={title} data-site-attribute="content" data-site-en={title} data-site-es={title} data-site-fr={title} />
+  <meta property="og:description" content={description} data-site-attribute="content" data-site-en={description} data-site-es="Encuentre respuestas de fuentes oficiales del gobierno y pasos claros para acceder a los servicios que necesita con GovLink." data-site-fr="Trouvez des réponses de sources gouvernementales officielles et les étapes à suivre pour accéder aux services dont vous avez besoin avec GovLink." />
+  <meta property="og:site_name" content="GovLink" />
+  <meta property="og:locale" content="en_US" data-site-attribute="content" data-site-en="en_US" data-site-fr="fr_FR" data-site-es="es_US" />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:image:secure_url" content={ogImage} />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="GovLink" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@ndstudio" />
+  <meta name="twitter:title" content={title} data-site-attribute="content" data-site-en={title} data-site-es={title} data-site-fr={title} />
+  <meta name="twitter:description" content={description} data-site-attribute="content" data-site-en={description} data-site-es="Encuentre respuestas de fuentes oficiales del gobierno y pasos claros para acceder a los servicios que necesita con GovLink." data-site-fr="Trouvez des réponses de sources gouvernementales officielles et les étapes à suivre pour accéder aux services dont vous avez besoin avec GovLink." />
+  <meta name="twitter:image" content={ogImage} />
+  <meta name="twitter:image:alt" content="GovLink" />
+
+  <meta http-equiv="content-security-policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; font-src 'self' data:; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob: data:; frame-src 'self'; script-src-attr 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
+
+  <script is:inline src="/scripts/pre-paint.js" />
+</head>
+<body class="font-body text-primary antialiased">
+  <style is:inline>
+    astro-island, astro-slot, astro-static-slot { display: contents; }
+  </style>
+
+  <a href="#landing-main" class="skip-link">Skip to main content</a>
+
+  <Header />
+
+  {chatReturn && (
+    <div class="chat-return-curtain" data-chat-return-curtain aria-hidden="true"></div>
+  )}
+
+  <main id="landing-main" tabindex="-1">
+    <slot />
+  </main>
+
+  <Footer />
+
+  <script is:inline>
+    (() => {
+      const handleChatReturn = () => {
+        const curtain = document.querySelector('[data-chat-return-curtain]');
+        if (curtain) {
+          curtain.classList.add('hidden');
+          setTimeout(() => curtain.remove(), 400);
+        }
+      };
+
+      if (document.documentElement.hasAttribute('data-chat-return')) {
+        handleChatReturn();
+      } else {
+        document.addEventListener('astro:after-swap', handleChatReturn, { once: true });
+      }
+    })();
+  </script>
+</body>
+</html>

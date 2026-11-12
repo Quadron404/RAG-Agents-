@@ -1,0 +1,296 @@
+---
+interface Props {
+  isChatPage?: boolean;
+}
+---
+
+<script is:inline>
+  const form = document.querySelector('[data-chat-form]');
+  const textarea = document.querySelector('[data-chat-input]');
+  const sendButton = document.querySelector('[data-chat-send]');
+  const dropZone = document.querySelector('[data-drop-zone]');
+  const fileInput = document.querySelector('[data-file-input]');
+  const uploadButton = document.querySelector('[data-upload-button]');
+  const voiceButton = document.querySelector('[data-voice-button]');
+
+  if (form && textarea && sendButton) {
+    function updateSendButton() {
+      const hasContent = textarea.value.trim().length > 0;
+      sendButton.disabled = !hasContent;
+      sendButton.setAttribute('aria-disabled', (!hasContent).toString());
+    }
+
+    function autoResize() {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+    }
+
+    textarea.addEventListener('input', () => {
+      updateSendButton();
+      autoResize();
+    });
+
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (textarea.value.trim()) {
+          form.dispatchEvent(new Event('submit'));
+        }
+      }
+    });
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const message = textarea.value.trim();
+      if (!message) return;
+
+      console.log('Sending message:', message);
+      textarea.value = '';
+      autoResize();
+      updateSendButton();
+    });
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropZone?.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone?.addEventListener(eventName, () => {
+        dropZone.classList.add('active');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone?.addEventListener(eventName, () => {
+        dropZone.classList.remove('active');
+      }, false);
+    });
+
+    dropZone?.addEventListener('drop', (e) => {
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        handleFiles(files);
+      }
+    }, false);
+
+    uploadButton?.addEventListener('click', () => {
+      fileInput?.click();
+    });
+
+    fileInput?.addEventListener('change', (e) => {
+      const target = e.target;
+      if (target.files && target.files.length > 0) {
+        handleFiles(target.files);
+        target.value = '';
+      }
+    });
+
+    function handleFiles(files) {
+      Array.from(files).forEach(file => {
+        console.log('File uploaded:', file.name, file.type, file.size);
+      });
+    }
+
+    voiceButton?.addEventListener('click', () => {
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          voiceButton.classList.add('listening');
+          voiceButton.setAttribute('aria-label', 'Stop voice input');
+        };
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          textarea.value = transcript;
+          textarea.dispatchEvent(new Event('input'));
+        };
+
+        recognition.onerror = () => {
+          voiceButton.classList.remove('listening');
+          voiceButton.setAttribute('aria-label', 'Voice input');
+        };
+
+        recognition.onend = () => {
+          voiceButton.classList.remove('listening');
+          voiceButton.setAttribute('aria-label', 'Voice input');
+        };
+
+        if (voiceButton.classList.contains('listening')) {
+          recognition.stop();
+        } else {
+          recognition.start();
+        }
+      } else {
+        alert('Voice input is not supported in this browser.');
+      }
+    });
+
+    updateSendButton();
+    autoResize();
+  }
+</script>
+
+<section class="hero-section" data-slot="carousel" data-has-own-composer="">
+  <div class="hero-background" aria-hidden="true">
+    <div class="hero-background-image" style="opacity: 1;">
+      <svg width="2000" height="1332" viewBox="0 0 2000 1332" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="hero-gradient-1" x1="0" y1="0" x2="2000" y2="1332" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#1e40af" stop-opacity="0.15"/>
+            <stop offset="50%" stop-color="#059669" stop-opacity="0.1"/>
+            <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0.15"/>
+          </linearGradient>
+          <radialGradient id="hero-glow-1" cx="50%" cy="50%" r="50%" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#2563eb" stop-opacity="0.2"/>
+            <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="2000" height="1332" fill="url(#hero-gradient-1)"/>
+        <ellipse cx="1000" cy="666" rx="800" ry="400" fill="url(#hero-glow-1)"/>
+        <circle cx="1600" cy="200" r="300" fill="#2563eb" opacity="0.08"/>
+        <circle cx="400" cy="1100" r="250" fill="#10b981" opacity="0.06"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="flex w-full justify-center mobile:mx-auto mobile:grid mobile:max-w-[1024px] mobile:grid-cols-[repeat(12,minmax(0,1fr))] mobile:gap-x-6">
+    <div class="flex w-[687.5px] flex-col items-center gap-[62px] mobile:col-span-full mobile:w-full mobile:gap-12 site-desktop-col-span-8 site-desktop-col-start-3">
+      <div class="landing-heading flex w-full flex-col items-center gap-4 text-center px-8 mobile:gap-5 mobile:px-0">
+        <div data-home-reveal="" data-site-hero-enter="0">
+          <h1 class="text-text-primary type-site-hero max-mobile:text-[clamp(36px,12vw,48px)]">
+            Hello,<br />
+            <span class="font-semibold">America</span>
+          </h1>
+        </div>
+        <div data-home-reveal="" data-site-hero-enter="1">
+          <p class="text-text-secondary type-home-supporting">
+            Whatever you need from government, start here.
+          </p>
+        </div>
+      </div>
+
+      <div data-home-reveal="" data-site-hero-enter="2" data-slot="hero-ask-pill" class="w-full">
+        <div data-slot="chat-input-surface" class="relative rounded-32 mobile-rounded-48">
+          <div class="relative">
+            <div class="w-full relative">
+              <form data-chat-form data-slot="chat-input-shell" aria-label="Describe what you need" class="chat-input-shell">
+                <div class="contents">
+                  <label id="chat-label" class="sr-only" for="chat-input">Describe what you need</label>
+
+                  <div class="w-full shrink-0 overflow-visible drop-shadow-[0_10px_20px_rgba(1,14,36,0.08)]" style="height:auto">
+                    <div class="flex items-start gap-2 overflow-x-auto overscroll-x-contain scrollbar-hide -ml-4">
+                    </div>
+                  </div>
+
+                  <div data-slot="chat-input-row" style="opacity:1;filter:blur(0px)">
+                    <textarea
+                      data-chat-input
+                      id="chat-input"
+                      class="chat-input-field w-full min-h-[2.5rem] max-h-[200px] resize-none"
+                      placeholder="How do I replace my Social Security card?"
+                      aria-describedby="chat-label"
+                      spellcheck="false"
+                    ></textarea>
+
+                    <div class="chat-input-actions flex items-center gap-1">
+                      <button
+                        data-upload-button
+                        type="button"
+                        class="chat-action-button"
+                        aria-label="Upload PDF"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                          <line x1="16" y1="13" x2="8" y2="13" />
+                          <line x1="16" y1="17" x2="8" y2="17" />
+                          <polyline points="10 9 9 9 8 9" />
+                        </svg>
+                      </button>
+
+                      <button
+                        data-voice-button
+                        type="button"
+                        class="chat-action-button"
+                        aria-label="Voice input"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                          <line x1="12" y1="19" x2="12" y2="22" />
+                        </svg>
+                      </button>
+
+                      <button
+                        data-chat-send
+                        type="submit"
+                        class="chat-send-button"
+                        disabled
+                        aria-label="Send message"
+                        aria-disabled="true"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div data-slot="chat-input-drop-zone" class="chat-drop-zone" aria-hidden="true">
+                    <div class="flex h-full items-center justify-center gap-2 text-tertiary type-label-s">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span>Drop files here or click to upload</span>
+                    </div>
+                  </div>
+
+                  <input
+                    data-file-input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
+                    multiple
+                    class="sr-only"
+                    aria-hidden="true"
+                  />
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .chat-action-button.listening {
+    color: var(--color-emerald-500);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+</style>

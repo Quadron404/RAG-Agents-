@@ -1,74 +1,24 @@
-# --- secrets -------------------------------------------------------------
-# Real credentials never go in the repo. The Cloudflare tunnel token is the
-# important one here: it is a bearer credential for the live screen, so anyone
-# holding it can publish the remote machine from anywhere.
-.env
-.env.local
-*.env
-!backend/.env.example
+# build output
+dist/
+# generated types
+.astro/
 
-# --- runtime logs and debug output ---------------------------------------
-# Uvicorn output and the raw framebuffer dumps (.ppm) that the old VM debugging
-# produced.  The dumps were 30 MB each and contained actual screen content.
-*.log
-*.ppm
-run_*.txt
-.playwright-mcp/
-.png
-!Frontend/**/*.png
-!docs/**/*.png
-*.jpg
-*.jpeg
-
-# --- generated tunnel config ---------------------------------------------
-# start-tunnel.sh generates this from COMPUTER_HOSTNAME. It holds no secrets
-# and is safe to commit, but keeping it out avoids two copies of the hostname
-# drifting apart.
-codespace/cloudflared/config.yml
-
-# --- build output ---------------------------------------------------------
-Frontend/dist/
-Frontend/node_modules/
+# dependencies
 node_modules/
-*.tsbuildinfo
 
-# --- python --------------------------------------------------------------
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# --- runtime data ---------------------------------------------------------
-# SQLite databases: threads, messages, agent runs.  This is user content, not
-# source, and a committed copy would leak conversation history.
-*.db
-*.db-journal
-*.sqlite
-*.sqlite3
-backend/data/
-data/
-backend/data-test/
 
-# --- archived local VM ----------------------------------------------------
-# 4 GB of QEMU binaries, a disk image and a private key. See the README there.
-# Ignored a second time on purpose, in case this file is ever replaced.
-backend/_vm-archive/
+# environment variables
+.env
+.env.production
 
-# --- local tooling --------------------------------------------------------
-.opencode/
-
-# --- editors and OS -------------------------------------------------------
-.vscode/
-.idea/
+# macOS-specific files
 .DS_Store
-Thumbs.db
-*.swp
 
-# --- runtime tunnel state -------------------------------------------------
-# The tunnel script writes the live trycloudflare URL here, and the backend
-# reads it. It is machine state, changes on every restart, and has no business
-# in version control.
-public-url
+# jetbrains setting folder
+.idea/

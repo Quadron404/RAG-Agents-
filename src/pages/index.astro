@@ -1,0 +1,24 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Hero from '../components/Hero.astro';
+import Studio from '../components/Studio.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Upcoming from '../components/Upcoming.astro';
+import ExampleQuestions from '../components/ExampleQuestions.astro';
+---
+
+<Layout title="GovLink" pathname="/">
+  <div data-slot="home-landing" data-app-native-home="" class="flex min-h-0 flex-1 flex-col">
+    <main class="flex flex-col gap-site-section mobile:gap-site-section-lg text-pretty outline-none" id="landing-main" tabindex="-1">
+      <Hero />
+
+      <Studio />
+
+      <HowItWorks />
+
+      <ExampleQuestions />
+
+      <Upcoming />
+    </main>
+  </div>
+</Layout>
