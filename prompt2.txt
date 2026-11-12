@@ -16,9 +16,16 @@ CURRENT LIVE BASELINE — RECHECK BEFORE EACH PROMPT
 - Existing source includes substantial Worker chat/SSE, OIDC, D1, routines/Cron, connector approvals, history/summaries/AI Search, Codespace Computer/noVNC/CDP, terminal, Files, and Settings. Test actual behavior, not source presence.
 - Claude Duet research references: https://claude.com/resources/articles/claude-duet and https://www.chatprd.ai/how-i-ai/claude-duet-review. Use its product lessons (persistent conversation, channels, visible tasks/artifacts, mobile polish, connected apps, approvals) as a benchmark, while differentiating through reliable follow-through, low latency, desktop/mobile continuity, optional collaboration, and an original RAG visual identity.
 
+
+NON-NEGOTIABLE QA REPORT + MAIN-SYNC GATE
+After THIS QA prompt finishes (or is blocked), append a timestamped report to query.txt on your working branch AND immediately append the same report to GitHub main/query.txt before proceeding. Record browser session/evidence, route and viewport, actions, expected vs actual results, console/network errors, repairs, tests, build, deployment/version, live re-test, and blockers. Never claim a test passed without browser evidence. Preserve all existing reports; append only.
+
+For main sync, fetch origin/main and use a separate temporary worktree from the latest origin/main. Append only this QA report to query.txt, commit, and push origin HEAD to main; do not merge/cherry-pick application code from the QA branch. If main moved, rebase the report worktree and retry. Verify the report on main before starting the next QA prompt. If the push fails, stop and report the exact failure; do not claim synced.
+
 ======================================================================
 
 PROMPT 1: Authentication, onboarding, and protected application shell
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 RAG Agents is a Google-authenticated app. The Cloudflare Worker owns Google OIDC, D1 sessions, and the public frontend shell; Gmail consent is separate. Current live evidence: the root page is HTTP 200 and shows only “Continue with Google”; GET /auth/session returns authenticated:false; GET /auth/login returns HTTP 503 with “Google sign-in is not configured”. Source worker/src/index.ts returns this 503 when GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is falsey, and worker/src/env.ts declares the secret. The direct Cloudflare Production settings query returned no secret bindings; recheck the exact service/environment and do not infer or invent secret values.
@@ -62,6 +69,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 2: Persistent channels, shared memory, and one unified Chief chat
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 Channels are first-class project workspaces, not merely separate conversations. Main is the user's persistent default. Each channel owns its conversations, channel memory, tasks, artifacts, and read state; permitted user-level memory may be shared across channels. Chief remains the only visible assistant identity. The previous source audit found a conversation-centric schema without channel_id; channel-summary tables alone do not prove a real channel model.
@@ -105,6 +113,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 3: Chief chat, composer, streaming, and message interactions
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 The chat canvas is the core interface. It must support a reliable message timeline, a responsive composer, streaming states, safe Markdown, attachments, message editing/deletion, pins, reactions, replies, and optional voice. The UI must always reflect durable server state rather than optimistic local-only controls.
@@ -148,6 +157,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 4: Chief orchestration, tools, approvals, and task activity
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 Chief is the single user-facing coordinator. Internal specialists may handle research, coding, email, browser, or other capabilities, but must not appear as competing visible assistants. Complex requests should create a useful plan and durable task timeline. Consequential actions require explicit owner approval of the exact immutable action.
@@ -191,6 +201,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 5: Memory, history, search, summaries, and provenance
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 RAG Agents must remember useful user-level preferences and channel-specific project context without leaking one project's private facts into another. History tools, Cloudflare AI Search, incremental summaries, rollups, and source provenance must stay consistent and fresh.
@@ -234,6 +245,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 6: Tasks, routines, scheduling, and notifications
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 Tasks are durable work records independent of a transient chat view. Routines are server-authoritative recurring jobs driven by the Worker Cron scheduler, with IANA timezone recurrence, leases, bounded retries, and optional Codespace wake. Notifications should surface only useful completion, approval, or blocker events.
@@ -277,6 +289,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 7: Gmail inbox, drafts, approvals, and connected services
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 Google sign-in and Gmail connection are separate grants. The README documents the connection lifecycle and owner-only notification sending, but explicitly says inbox reading and incoming replies are not implemented. Gmail access must be owner-bound, read-only for inbox work, and protected by exact send approval; the model must never choose recipients or sender identity.
@@ -320,6 +333,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 8: Computer, remote Chrome, terminal, and restricted browsing
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 The Computer uses the real Codespace Chrome desktop, noVNC screen, CDP browser, terminal, and Files on the authorized workspace. Ordinary agents must use the separate restricted browser and gateway, not the user's personal Chrome. The Worker and backend must enforce the same authenticated owner boundary.
@@ -363,6 +377,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 9: Files, previews, generated artifacts, and sharing
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 Files are real workspace resources, not decorative chat attachments. The product must support safe listing, upload, download, rename, move, folder creation, delete, previews, and generated artifacts with owner/channel access boundaries. File content is untrusted input and must never execute in the browser.
@@ -406,6 +421,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 10: Premium visual quality, responsive behavior, and Chief identity
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 The visual benchmark is a polished mobile-first agent experience with clear channels, visible task progress, dedicated artifacts, responsive onboarding, and a fast working rhythm. Claude Duet's official material emphasizes an ongoing text/voice thread, proactive briefings, background work, connected apps, and approval before consequential actions; an independent review praises its mobile polish, channels, task lists, and artifacts but flags follow-through, latency, desktop continuity, and team-sharing gaps. RAG Agents must be original and stronger at cross-device continuity and closing work loops.
@@ -449,6 +465,7 @@ Append a technically detailed report block to query.txt for this prompt; do not 
 ======================================================================
 
 PROMPT 11: Full production regression, security, resilience, and release
+REPORTING GATE: Before proceeding to the next QA prompt, append this prompt's evidence report to query.txt on this branch AND sync it to GitHub main/query.txt using the separate-main-worktree procedure above. Verify it on main; never overwrite or clear the ledger.
 
 FEATURE DESCRIPTION AND TEST OBJECTIVE
 This is the final integration gate across authentication, channels, Chief chat, memory, search, tasks, routines, Gmail, connectors, Computer, Files, artifacts, notifications, and responsive UX. Source presence or a passing build is not proof of a working product.
