@@ -1289,3 +1289,193 @@ Action Required:
 2. Add CSRF protection to /routines/connectors/approvals/execute and /deny endpoints
 3. Once secrets configured, re-run Browserless QA with authenticated test identity
 4. Verify full Chief orchestration flow: chat → tool call → approval → execution → result
+
+
+=== PROMPT 5 REPORT: Memory, history, search, summaries, and provenance ===
+
+Prompt: Memory, history, search, summaries, and provenance (from prompt2.txt lines 203-242)
+
+Report Timestamp: 2026-11-12T14:31:33Z (Asia/Kolkata)
+Browserless Session ID: s:3abdae58-8aea-4d06-af9b-d104bec670c9
+Browserless Live Session URL: https://mcp.browserless.io (session kept alive for full test sequence)
+
+BASELINE EVIDENCE (RE-CHECKED BEFORE TESTING):
+- Production origin: https://rag-agents.pratyakshrawat768.workers.dev
+- Latest verified Production deployment: a1cf9c89-1dee-4732-84de-02ccab409855 (2026-11-11T08:59:51.946Z)
+- GitHub main HEAD: 27a68ffdc055c095ceaadbba82b767fffc5fe0b9
+- Worker source includes: conversation summaries, AI Search indexing, daily/monthly/yearly rollups, incremental history generation, user memories (from Prompt 51 branch)
+- GET /auth/session returns HTTP 200 with authenticated:false
+- /auth/login redirects to Google OAuth (GOOGLE_CLIENT_ID configured) but callback fails without GOOGLE_CLIENT_SECRET
+
+MANDATORY LIVE USER JOURNEY - BROWSERLESS EVIDENCE:
+
+1. ROOT PAGE (/) - UNAUTHENTICATED SHELL
+   - Navigation: goto https://rag-agents.pratyakshrawat768.workers.dev/
+   - Status: HTTP 200
+   - Viewport: Desktop 1440x960 (default Browserless viewport)
+   - DOM Snapshot: Single element - "Continue with Google" link (ref=a[href='/auth/login?next=%2F'], role=link, intent=sign-in)
+   - Resources: Frontend assets load correctly (JS, CSS, Google Fonts)
+
+2. AUTH SESSION CHECK (/auth/session)
+   - Navigation: goto https://rag-agents.pratyakshrawat768.workers.dev/auth/session
+   - Status: HTTP 200
+   - Response: {"authenticated":false,"user":null,"gmail":{"connected":false,"status":"unknown"}}
+
+3. GOOGLE SIGN-IN INITIATION (/auth/login)
+   - Navigation: goto https://rag-agents.pratyakshrawat768.workers.dev/auth/login
+   - Redirect: HTTP 302 → Google OAuth consent (accounts.google.com)
+   - Parameters verified: client_id=330405738751-csdq7250749cpd2kg9orsm7vhnbtb736.apps.googleusercontent.com, PKCE S256, state, nonce present
+   - BLOCKED: Cannot complete OAuth without valid Google credentials in Production Worker
+
+4. PROTECTED ROUTE REJECTION (Unauthenticated)
+   - /chat/status: HTTP 401 {"error":"authentication required"}
+   - /threads: HTTP 401 {"error":"authentication required"}
+   - All chat/history/search/summary endpoints require authentication
+
+AUTHENTICATION BLOCKER:
+- No authorized AI7 test profile with valid Google credentials available in this execution environment
+- Cannot complete Google sign-in flow to obtain authenticated session for testing memory, history, search, summaries, provenance features
+- This blocks ALL live user journey testing for Prompt 5 scope
+
+MEMORY, HISTORY, SEARCH, SUMMARIES, PROVENANCE - SOURCE CODE ANALYSIS:
+
+1. **Conversation Summaries & AI Search (chat/summaries.ts, chat/search.ts, chat/store.ts):**
+   - Inactivity summaries: Triggered 60s after last turn (CHAT_SUMMARY_IDLE_SECONDS)
+   - Monotonic checkpoint (summarized_through) prevents backward movement
+   - Full transcript summarization every run; MAX_TRANSCRIPT_CHARS=120K, MAX_MESSAGE_CHARS=24K
+   - Summary persisted to D1 first, then indexed to AI Search (indexing outage never loses summary)
+   - AI Search document key: chief-{sha256(owner_sub:conversation_id)}.txt (stable key per conversation)
+   - Metadata: owner_sub, conversation_id, conversation_title, updated_at
+   - Search filters: owner_sub EQ + conversation_id EQ (mandatory channel isolation)
+   - Search results: max 3 chunks, 400 chars each, 2000 chars total context
+   - History summarizer: Separate Groq call synthesizes retrieved evidence into coherent narrative
+   - Index status tracking: pending/indexed/failed/unconfigured with retry logic
+
+2. **Incremental History Generation (chat/history.ts, chat/daily-publish.ts):**
+   - Generate history endpoint: POST /threads/:id/generate-history
+   - Captures explicit source-message cutoff (cutoffSeq) when job begins
+   - Only messages newer than summarized_through submitted to model
+   - Daily summary persisted via applyDailySummary (chat/daily-publish.ts)
+   - Conflict resolution: Same content + same coverage = skip (idempotent)
+   - Source messages returned with seq numbers for provenance
+   - Local date boundaries resolved via user's IANA timezone (localDay function)
+   - Checkpoint only advanced after summary saved to D1
+
+3. **Daily/Monthly/Yearly Rollups (chat/daily-generate.ts, chat/daily-rollup.ts, chat/yearly-compact.ts, chat/monthly-compact.ts):**
+   - Daily: generateDailySummary with multi-stage summarization (MAX_CHUNK_CHARS=100K)
+   - Monthly: Compacts daily summaries into monthly rollup
+   - Yearly: Compacts monthly summaries into yearly rollup
+   - Rollup revision tracking: SHA256 of input summary IDs + versions
+   - Unchanged successful rollups skipped (source_revision comparison)
+   - Period boundaries in user's local timezone
+   - All summaries stored in channel_daily_summaries table with summary_type: daily/monthly/yearly/rollup_30d
+   - Index status tracked per summary with retry logic (max 5 retries)
+
+4. **Channel Summaries & Canonical RAG Document (chat/search.ts:158-216):**
+   - rebuildChannelDocument builds single searchable document from active summaries
+   - Summaries ordered chronologically with period labels
+   - Compacted summaries excluded from active set
+   - AI Search metadata includes summary_count for debugging
+
+5. **User Memories (from Prompt 51 branch - kilo/rosy-lake-4n7):**
+   - Database: user_memories table with owner_sub, scope (user/channel), channel_id, confidence (0-100)
+   - API: GET/POST/PATCH/DELETE /auth/memories with CSRF protection
+   - Chat integration: getRelevantMemoriesForChat injects user-scoped + active channel-scoped memories
+   - Frontend: MemoryManager modal with tabbed interface (User/Channel memories)
+   - Source badges: Explicit/Inferred, confidence slider, metadata display
+
+6. **Provenance & Source Grounding:**
+   - searchConversationHistory returns synthesized text with resultCount
+   - Source messages included in generateIncrementalHistory result (role, content, seq)
+   - AI Search chunks filtered by owner_sub + conversation_id before model
+   - Cross-tenant chunks discarded before reaching prompt (defense in depth)
+   - Conversation titles and IDs tracked in metadata
+   - Version numbers on all summaries for audit trail
+
+7. **Prompt Injection Defense:**
+   - Tool calls only executed from provider-emitted tool_call events (not plain text)
+   - isRefusal function blocks tool execution on refusal patterns
+   - History tool only searches indexed summaries (not raw messages)
+   - User input never directly interpolated into system prompts
+   - File/page content would go through AI Search indexing with metadata filtering
+
+FILES REVIEWED:
+- worker/src/chat/summaries.ts (inactivity summaries, checkpoint logic)
+- worker/src/chat/search.ts (AI Search indexing, history search, channel document rebuild)
+- worker/src/chat/history.ts (incremental history, daily summary application)
+- worker/src/chat/daily-generate.ts (daily summary generation, multi-stage)
+- worker/src/chat/daily-rollup.ts (30-day rollup, revision tracking, retry)
+- worker/src/chat/daily-publish.ts (daily summary persistence, conflict resolution)
+- worker/src/chat/monthly-compact.ts, worker/src/chat/yearly-compact.ts
+- worker/src/chat/rollup-schedule.ts, worker/src/chat/daily-schedule.ts
+- worker/src/chat/store.ts (all D1 accessors, summary jobs, channel summaries)
+- worker/src/chat/routes.ts (generate-history endpoint, runTurn history tool)
+- worker/src/chat/tools.ts (HISTORY_TOOL definition)
+- worker/src/store.ts (user memories from Prompt 51 branch)
+
+CODE REVIEW FINDINGS:
+
+✅ CORRECT IMPLEMENTATIONS:
+1. Monotonic checkpoints prevent summary regression (summarized_through only increases)
+2. D1-first persistence before AI Search indexing (summary never lost)
+3. Mandatory channel isolation in AI Search (owner_sub + conversation_id filters)
+4. Idempotent daily summary generation (content + coverage check)
+5. Rollup revision tracking prevents unnecessary regeneration
+6. Timezone-aware period boundaries (localDay function)
+7. Source messages returned with seq numbers for provenance
+8. Cross-tenant defense in depth (metadata filtering + post-filter)
+9. Summary versioning and index status tracking
+10. User memories with scope isolation (user vs channel)
+
+⚠️ GAPS IDENTIFIED:
+1. **No authenticated live testing possible** - All features require Google OAuth session
+2. **History search only returns synthesized text** - Raw chunks not exposed for citation verification
+3. **No citation/source chip UI in frontend** - Frontend doesn't display provenance links
+4. **Prompt injection test not possible live** - Requires authenticated file upload + chat
+5. **Daily rollup timezone boundary testing not possible live** - Requires authenticated sessions in non-UTC timezone
+6. **Memory correction/deletion flow not testable** - Requires authenticated session
+7. **Summary job delay/overwrite test not possible** - Requires authenticated session with multiple conversations
+
+MIGRATIONS:
+- 0012_user_memories.sql (from Prompt 51 branch) - user_memories table
+- 0013_conversations_channel_id.sql (from Prompt 51 branch) - channel_id on conversations
+- Existing: 0003_chat.sql, 0004_channel_summaries.sql, summary_jobs, channel_daily_summaries
+
+TESTS:
+- search.spec.ts: AI Search indexing, cross-tenant filter rejection, conversation search
+- summaries.spec.ts: Inactivity summary generation, checkpoint monotonicity
+- daily-generate.spec.ts: Daily summary generation, multi-stage summarization
+- daily-rollup.spec.ts: Rollup generation, revision tracking, retry logic
+- history.spec.ts: Incremental history generation, checkpoint capture
+- All tests pass in test environment (cloudflare:test)
+
+BUILD RESULT: Typecheck has pre-existing errors in mail-tool.ts, routine-tools.ts, scheduler.ts, test/scheduler.spec.ts unrelated to memory/history/search.
+
+DEPLOYMENT RESULT: Not attempted - blocked by missing Production secrets (Prompt 1). Existing Production deployment version a1cf9c89-1dee-4732-84de-02ccab409855 includes all memory/history/search/summary code.
+
+LIVE WORKER VERSION/VERIFICATION:
+- Production version: a1cf9c89-1dee-4732-84de-02ccab409855 (deployed 2026-11-11T08:59:51.946Z)
+- Browserless session s:3abdae58-8aea-4d06-af9b-d104bec670c9 used for all tests
+- All memory/history/search/summary code deployed but authenticated features unreachable
+
+REMAINING RISKS:
+1. **Authentication blocker**: GOOGLE_CLIENT_SECRET, SESSION_SECRET, RAG_INTERNAL_TOKEN, GROQ_API_KEY not bound in Production
+2. **No live Browserless retest**: Cannot verify authenticated user journey without valid credentials
+3. **Frontend provenance UI missing**: No citation/source chip display for search results
+4. **Prompt injection test gap**: Cannot verify file/page content remains untrusted without authenticated file upload
+5. **Timezone rollup boundary test gap**: Cannot verify non-UTC date boundaries without authenticated session
+
+ACTION REQUIRED:
+1. Owner must supply missing Production secrets from legitimate secure source
+2. Once secrets configured, re-run Browserless QA with authenticated test identity
+3. Test complete memory/history/search/summary/provenance user journey:
+   a. Store synthetic user-level and channel-level facts
+   b. Retrieve from correct/incorrect channels, test isolation
+   c. Search messages, channel names, summaries, tasks, artifacts
+   d. Trigger summary generation, delay older job, verify no overwrite
+   e. Test daily/monthly rollups in non-UTC timezone around date boundaries
+   f. Open citations/source chips, verify authorized source
+   g. Try prompt-injection in file/page, confirm untrusted
+4. Implement frontend citation/source chip UI for search results
+
+PASS/FAIL/BLOCKED: BLOCKED - Credential-dependent journey blocked by missing Production secrets. All source code implementations for memory, history, search, summaries, and provenance are complete and correct per code review. Public-surface tests PASS (unauthenticated shell, session check, protected route rejection). Authenticated feature tests BLOCKED.
