@@ -32,7 +32,7 @@ CURRENT LIVE BASELINE — VERIFIED 2026-11-13
 - Existing code exists for Worker-native SSE chat, Google OIDC/session storage, D1, routines/Cron, connector approvals, history/summaries/AI Search, Codespace Computer/noVNC/CDP, Terminal, Files, and Settings. Test these end-to-end before changing or duplicating them.
 
 PREVIOUS REPORT COVERAGE — DO NOT REPEAT WITHOUT EVIDENCE
-The ledger read before reset contained implementation reports for IDs 1–10 and 51, plus QA reports for IDs 1, 4, 5, 9, 10, and 11. It did NOT contain a report for every one of the 118 implementation prompts or 11 QA prompts. The reported security tasks 1–10 and memory-profile task 51 were removed from this refreshed repeat queue; Prompt 118 must regression-check their guarantees. Missing QA reports must be completed in prompt2.txt.
+The ledger read before reset contained implementation reports for IDs 1–10 and 51, plus QA reports for IDs 1, 4, 5, 8, 9, 10, and 11. It did NOT contain a report for every one of the 118 implementation prompts or 11 QA prompts. The QA Prompt 8 text is concatenated into the Prompt 5 section without a clean delimiter and must be rerun. QA prompts 2, 3, 6, and 7 have no report. The reported security tasks 1–10 and memory-profile task 51 were removed from this refreshed repeat queue; Prompt 118 must regression-check their guarantees.
 
 CLAUDE DUET RESEARCH — LESSONS, NOT BRAND COPYING
 Official:
