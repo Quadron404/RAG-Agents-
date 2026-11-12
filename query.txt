@@ -905,3 +905,57 @@ Recommended Enhancements:
 7. Add user-facing deletion confirmation UI with progress
 8. Distinguish user data (delete) vs audit data (retain with anonymization)
 
+
+
+=== IMPORTED BRANCH REPORT — kilo/rosy-lake-4n7 (NOT A SOURCE MERGE) ===
+Source branch query.txt blob: e42d58c36502b79833c5b1bbc642dc6d7f88a2fa
+
+DEPLOYMENT SUCCESSFUL: Worker deployed to https://rag-agents.pratyakshrawat768.workers.dev
+
+Key findings:
+- The CLOUDFLARE_API_KEY works when used as CLOUDFLARE_API_TOKEN environment variable (not CF_API_TOKEN)
+- Worker deployed successfully with assets (7 files uploaded)
+- Channels API endpoints are active at /channels (requires auth)
+- Version ID: 0d16ab33-0d13-4f9b-a9c8-22fdc114e078
+- All channel tests pass (15/15)
+
+Implementation complete for Prompt 2:
+- D1 migration for channels table and channel_id on conversations
+- Channel store functions (CRUD, Main channel auto-creation, legacy attachment)
+- Channel routes (list, create, rename, archive, restore, reorder, activate)
+- Frontend Channel type, core API methods, ChatListPane with hierarchical navigation
+- Unit/integration tests (15 tests passing)
+
+Provenance note: This report was copied from the branch's query.txt into main for centralized reporting. Its source-code changes remain on kilo/rosy-lake-4n7 and are NOT represented as merged into main. Verify/merge code separately through normal review.
+
+
+=== IMPORTED BRANCH REPORT — kilo/turbo-beacon-j2c (NOT A SOURCE MERGE) ===
+Source branch query.txt blob: 4d5e4cd983f4db021bc4dd6b64fc835e1c107205
+
+BROWSERLESS AUTHENTICATION BLOCKED - Google sign-in not configured on deployed Worker
+
+The deployed RAG Agents application at https://rag-agents.pratyakshrawat768.workers.dev:
+1. Loaded the unauthenticated shell (shows only "Continue with Google" link)
+2. Verified GET /auth/session returns authenticated:false
+3. Clicked "Continue with Google" → navigated to /auth/login?next=%
+4. Page returns: {"error":"Google sign-in is not configured"}
+
+ROOT CAUSE: The Cloudflare Worker is missing Google OAuth configuration (GOOGLE_CLIENT_SECRET and/or GOOGLE_CLIENT_ID not properly set as secrets). The wrangler.jsonc has GOOGLE_CLIENT_ID as a var but GOOGLE_CLIENT_SECRET would need to be a secret (wrangler secret put).
+
+This is a production deployment configuration issue, not a code issue.
+
+WORKAROUND: Cannot proceed with authenticated Browserless QA for Prompt 3 without Google OAuth configured on the Worker.
+
+IMPLEMENTATION STATUS: Code changes for Prompt 3 are complete and deployed (version f6e64f32-9a1f-4655-a407-09a291d5f2e1):
+- Worker store/routes: message edit, delete, pin, reactions, reply-to APIs
+- Frontend: server-persisted operations, reaction badges, reply-to indicators, composer reply_to field
+
+REQUIRED TO UNBLOCK: Configure Google OAuth credentials on Cloudflare Worker:
+- GOOGLE_CLIENT_SECRET as wrangler secret
+- Verify GOOGLE_CLIENT_ID is correct
+- Verify GOOGLE_AUTH_URL, GOOGLE_TOKEN_URL, GOOGLE_JWKS_URL
+- Verify SESSION_TTL_SECONDS
+
+BLOCKED: Authenticated Browserless QA for Prompt 3 and subsequent prompts.
+
+Provenance note: This report was copied from the branch's query.txt into main for centralized reporting. Its source-code changes remain on kilo/turbo-beacon-j2c and are NOT represented as merged into main. Its Google OAuth blocker description is historical branch evidence; recheck current production configuration before acting.
