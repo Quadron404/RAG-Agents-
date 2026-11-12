@@ -1634,3 +1634,151 @@ Remaining Risks:
 - WebSocket reconnection behavior on network interruption not tested
 
 Action Required: Configure authorized test Google identity for production Browserless authenticated QA completion.
+=== PROMPT 9 REPORT: Files, previews, generated artifacts, and sharing ===
+
+Prompt: Files, previews, generated artifacts, and sharing
+
+Baseline Evidence:
+- Production origin: https://rag-agents.pratyakshrawat768.workers.dev
+- Browserless session ID: s:d05fd545-4da0-4f3f-a36a-020944a73ae6
+- Test date: 2026-11-12
+- Current auth state: Unauthenticated (GET /auth/session returns authenticated:false)
+- Google OAuth flow functional (redirects to accounts.google.com) but credentials not available for test
+- Worker /file endpoint proxies to backend (index.ts:436, proxy.ts)
+- Backend /file endpoint in main.py:1130-1158 relays to Codespace workspace
+- VM agent /file endpoint in daemon.py:3969-3983 serves files from WORKSPACE
+- Frontend Files.tsx:55-210 and FilePreview.tsx:1-315 handle UI
+
+Browserless Live Evidence:
+1. **Unauthenticated access blocked correctly**: GET /file?path=/workspace returns 401 {"error":"authentication required"}
+2. **Root page shows only sign-in shell**: Single "Continue with Google" link (ref=a[href='/auth/login?next=%2F'])
+3. **Google OAuth initiation works**: Clicking link navigates to accounts.google.com with proper PKCE params (state, nonce, code_challenge)
+4. **Auth endpoints accessible**: 
+   - GET /auth/session → 200 {"authenticated":false,"user":null,"gmail":{"connected":false,"status":"unknown"}}
+   - GET /auth/login → 302 redirect to Google OAuth
+   - GET /auth/callback → handles OAuth return
+5. **No authenticated test identity available**: Cannot test Files UI without valid Google credentials
+
+Code Architecture Analysis:
+
+**Frontend Files View (Files.tsx:55-210):**
+- Uses useCore hook for callTool("list_dir") and setVmPath/vmPath
+- Favorites: Workspace, Backend root, Home, Drive C:
+- Grid view with icons (folder, image, text, file) colored by type
+- Breadcrumbs navigation with clickable path segments
+- Selection state (fs-cell--sel)
+- Double-click to enter directories
+- FilePreview overlay on file click
+
+**FilePreview Component (FilePreview.tsx:1-315):**
+- Type detection via kindFor(): image, pdf, docx, text, unsupported
+- Image: zoom/pan with transform (compositor-based), fit/reset
+- PDF: browser iframe (native renderer)
+- DOCX: mammoth.js conversion to HTML (lazy-loaded)
+- Text: <pre> with 2MB render cap (truncation notice)
+- Unsupported: download-only with descriptive message
+- Always shows Download button with original bytes
+- Escape key closes preview
+- No executable content in previews (safe rendering)
+
+**Backend File Proxy (main.py:1130-1158):**
+- GET /file?path=...&download=1
+- Relays to Codespace workspace_base_url
+- download=1 adds Content-Disposition attachment
+- Sanitizes filename for header (removes \r\n"\\)
+- Streams bytes unchanged (no re-encoding)
+- 30s timeout
+
+**VM Agent File Server (daemon.py:3969-3983):**
+- GET /file?path=...
+- safe_path() prevents traversal (WORKSPACE root)
+- Serves raw file with guessed MIME type
+- Cache-Control: no-store
+- CORS headers
+
+**Worker Proxy Chain (index.ts:436, proxy.ts:25-57):**
+- /file proxied via proxyApi with requireAuth=true
+- CSRF checked for non-SAFE methods
+- Injects x-rag-internal-token + identity headers
+- Strips spoofable headers
+
+Security Analysis:
+✓ Path traversal prevented by safe_path() in daemon.py:111-118
+✓ Authentication required at Worker edge (401 if no session)
+✓ CSRF protection on state-changing operations
+✓ File bytes never re-encoded (download = original)
+✓ Preview renders safely: images/img, PDF/iframe, DOCX/sanitized HTML, text/pre
+✓ Content-Disposition attachment only on download=1
+✓ No directory listing via /file (only list_dir tool)
+✓ MIME type guessed from extension (not user-controlled)
+✓ 2MB text render cap prevents DOM wedge
+
+Gaps Identified:
+1. **No upload UI in Frontend**: Files.tsx only reads (list_dir), no write_file tool integration
+2. **No folder creation UI**: No mkdir tool exposed to UI
+3. **No rename/move/delete UI**: Only preview and download
+4. **No file type validation on upload**: Backend write_file tool exists but not exposed
+5. **No preview for code files with syntax highlighting**: Text preview is plain <pre>
+6. **No generated artifact tracking**: Artifacts from tasks not surfaced in Files view
+7. **No sharing/export permissions UI**: Cross-owner access not testable
+8. **No large file upload progress/cancel/retry**: Not implemented
+9. **No malicious file detection**: SVG/HTML served as-is (iframe for PDF, but HTML could execute if opened directly)
+10. **No file search**: Only directory browsing
+
+Missing Test Coverage (require authenticated session):
+- File listing, navigation, preview (image/PDF/DOCX/text)
+- Download with correct filename
+- Path traversal attempts
+- Large file handling
+- Malicious file preview (HTML, SVG, executable)
+- Unicode filenames
+- Interrupted upload (not implemented)
+- Generated artifact appearance
+- Cross-owner access denial
+
+Required Secret Blockers:
+- GOOGLE_CLIENT_SECRET, GOOGLE_CLIENT_ID, SESSION_SECRET, RAG_INTERNAL_TOKEN, GROQ_API_KEY not bound in Production
+- Cannot complete authenticated user journey without credentials
+
+Files Changed: None (blocked by missing auth credentials)
+
+Logic/UI Decisions:
+- FilePreview correctly treats file content as untrusted input
+- Download always available as escape hatch
+- Rendering per-type rather than uniform (security + UX)
+- 2MB text cap prevents browser freeze
+- mammoth.js lazy-loaded for DOCX only
+
+Migrations: None required.
+
+Tests: 
+- No existing tests for Files view or FilePreview
+- No tests for file upload/download/preview
+- backend/vm_agent/daemon.py has list_dir tool tests but not HTTP /file endpoint
+
+Build Result: Typecheck has pre-existing errors unrelated to Files.
+
+Deployment Result: Not applicable - no changes made.
+
+Live Worker Version/Verification: Production version a1cf9c89-1dee-4732-84de-02ccab409855. Files feature code deployed but untestable without auth.
+
+Remaining Risks:
+1. **Cannot verify Files UI behavior** without authenticated test identity
+2. **Upload/write/mkdir/rename/delete not exposed in UI** - read-only file browser
+3. **Generated artifacts from tasks not integrated** with Files view
+4. **No file search or metadata display** (size, modified time shown but not searchable)
+5. **HTML/SVG files could execute if downloaded and opened** - no sandbox preview
+6. **No access control UI** for sharing/permissions
+7. **No progress indication** for large file operations
+8. **Missing test identity** prevents live verification
+
+Action Required:
+1. Owner must supply Google OAuth credentials to enable authenticated testing
+2. Implement file upload UI with drag-drop, progress, cancel/retry
+3. Add folder creation, rename, move, delete actions
+4. Add generated artifact tracking and display
+5. Add file search functionality
+6. Implement safe HTML/SVG preview (sandboxed iframe or static render)
+7. Add sharing/export permissions UI
+8. Add comprehensive test coverage for Files feature
+
