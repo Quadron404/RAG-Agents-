@@ -3,7 +3,7 @@ import ThemeToggle from './ThemeToggle.astro';
 import LanguageSelector from './LanguageSelector.astro';
 ---
 <header class="site-header" data-chrome-tone="light">
-  <div class="gov-banner" role="region" aria-label="U.S. Government Websites">
+  <div class="gov-banner" role="region" aria-label="GovLink">
     <div class="mx-auto flex min-h-10 py-3 max-w-site items-center justify-center gap-2 page-gutter">
       <button
         type="button"
@@ -11,11 +11,11 @@ import LanguageSelector from './LanguageSelector.astro';
         tabindex="0"
         aria-haspopup="dialog"
         aria-expanded="false"
+        aria-label="GovLink information"
       >
         <span class="flex items-center gap-1">
           <span class="flex items-center pt-px">
             <span class="type-label-s flex h-2.5 items-end text-secondary transition-colors duration-200 group-hover-text-primary">
-              An official website of the United States government
             </span>
           </span>
           <span class="flex size-4 shrink-0 items-center justify-center text-tertiary transition-colors duration-200 group-hover-text-primary">
