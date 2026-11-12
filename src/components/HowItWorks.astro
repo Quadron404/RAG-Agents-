@@ -1,71 +1,136 @@
 ---
 interface Props {}
 ---
-<section id="how-it-works" class="py-16 px-4 mobile:py-12" aria-labelledby="how-it-works-title">
-  <div class="max-w-site mx-auto">
-    <h2 id="how-it-works-title" class="sr-only">How it works</h2>
+<section class="how-it-works py-16 lg:py-24" aria-labelledby="how-it-works-title">
+  <div class="container">
+    <header class="text-center mb-16 lg:mb-20">
+      <h2 id="how-it-works-title" class="text-3xl lg:text-4xl font-display font-semibold text-text-primary mb-4 animate-fade-in stagger-1">
+        How GovLink works
+      </h2>
+      <p class="text-lg text-text-secondary max-w-2xl mx-auto animate-fade-in stagger-2">
+        Four simple steps to get answers from official government sources.
+      </p>
+    </header>
 
-    <div class="grid gap-8 mobile:gap-6 sm:grid-cols-2 lg:grid-cols-4">
-      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
-        <div class="w-16 h-16 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-4">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-blue-600 dark:text-blue-400" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-semibold mb-2">29,000 websites into one</h3>
-        <p class="text-secondary text-sm">Search across every federal agency from a single place.</p>
-        <a href="/how-it-works" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">See how it works →</a>
-      </article>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+      {[
+        {
+          number: '01',
+          title: 'Ask your question',
+          description: 'Type or speak your question in plain language. No need to know which agency handles what.',
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+        },
+        {
+          number: '02',
+          title: 'We search official sources',
+          description: 'GovLink queries 29,000+ federal websites and APIs in real-time so you don\'t have to.',
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        },
+        {
+          number: '03',
+          title: 'Get cited answers',
+          description: 'Every answer includes links to the official .gov source so you can verify yourself.',
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+        },
+        {
+          number: '04',
+          title: 'Clear next steps',
+          description: 'Beyond the answer, we show you what to do next: forms, deadlines, offices to contact.',
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 01-2-2V6a2 2 0 012-2h2a2 2 0 012 2v2m0 0H9a2 2 0 01-2-2V6a2 2 0 012-2h2a2 2 0 012 2v2m0 0H9a2 2 0 01-2-2V6a2 2 0 012-2h2a2 2 0 012 2v2" /></svg>
+        }
+      ].map((step, index) => (
+        <article class="how-step card p-6 lg:p-8 group animate-fade-in stagger-3" style={{animationDelay: `${(index + 1) * 100}ms`}}>
+          <div class="flex flex-col items-center text-center h-full">
+            <div class="step-number w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-accent-primary/10 flex items-center justify-center font-display font-semibold text-accent-primary text-lg lg:text-xl mb-6 group-hover:bg-accent-primary group-hover:text-white transition-colors duration-300">
+              {step.number}
+            </div>
 
-      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
-        <div class="w-16 h-16 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-4">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-600 dark:text-emerald-400" aria-hidden="true">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-semibold mb-2">Your data stays private</h3>
-        <p class="text-secondary text-sm">No tracking, no ads, no personal data collected.</p>
-        <a href="/privacy" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Learn about privacy →</a>
-      </article>
+            <div class="step-icon w-12 h-12 lg:w-14 lg:h-14 rounded-xl bg-background-tertiary flex items-center justify-center mx-auto mb-6 text-accent-primary group-hover:bg-accent-primary group-hover:text-white transition-colors duration-300">
+              {step.icon}
+            </div>
 
-      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
-        <div class="w-16 h-16 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-600 dark:text-amber-400" aria-hidden="true">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-semibold mb-2">Clear answers, official sources</h3>
-        <p class="text-secondary text-sm">Every answer cites its government source.</p>
-        <a href="/sources" class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Learn about sources →</a>
-      </article>
+            <h3 class="text-xl lg:text-2xl font-display font-semibold text-text-primary mb-3">{step.title}</h3>
+            <p class="text-text-secondary leading-relaxed">{step.description}</p>
+          </div>
 
-      <article class="flex flex-col items-center text-center p-6 rounded-2xl bg-background-secondary hover:bg-background-tertiary transition-colors duration-200">
-        <div class="w-16 h-16 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mb-4">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple-600 dark:text-purple-400" aria-hidden="true">
-            <rect x="5" y="2" width="14" height="20" rx="2" />
-            <line x1="12" y1="18" x2="12.01" y2="18" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-semibold mb-2">No app to download</h3>
-        <p class="text-secondary text-sm">Works in any browser on any device.</p>
-        <button class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline" aria-label="Ask a question">Ask a question →</button>
-      </article>
+          <div class="step-connector hidden lg:block absolute top-[60px] right-0 w-full h-px bg-gradient-to-r from-accent-primary/30 to-transparent" aria-hidden="true"></div>
+        </article>
+      ))}
+    </div>
+
+    <div class="mt-16 lg:mt-20 pt-12 lg:pt-16 border-t border-border-primary">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
+        {[
+          {
+            title: 'Privacy by design',
+            description: 'No tracking, no ads, no personal data collected. Your questions are processed and discarded.',
+            icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+          },
+          {
+            title: 'Official sources only',
+            description: 'Every answer cites its .gov source. No third-party content, no hallucinations.',
+            icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          },
+          {
+            title: 'Works everywhere',
+            description: 'No app to download. Works in any browser on any device. Voice input supported.',
+            icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+          }
+        ].map((feature, index) => (
+          <article class="feature-card card p-6 lg:p-8 animate-fade-in stagger-3" style={{animationDelay: `${(index + 1) * 100}ms`}}>
+            <div class="feature-icon w-12 h-12 rounded-xl bg-accent-primary/10 flex items-center justify-center text-accent-primary mb-4">
+              {feature.icon}
+            </div>
+            <h3 class="text-lg font-semibold text-text-primary mb-2">{feature.title}</h3>
+            <p class="text-text-secondary">{feature.description}</p>
+          </article>
+        ))}
+      </div>
     </div>
   </div>
 </section>
 
 <style>
-  @media (max-width: 768px) {
-    .sm\:grid-cols-2 {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+  .how-step {
+    position: relative;
+  }
+
+  .how-step:not(:last-child) .step-connector {
+    display: block;
+  }
+
+  .how-step:last-child .step-connector {
+    display: none;
+  }
+
+  .feature-card {
+    transition: all var(--duration-normal) var(--ease-out);
+  }
+
+  .feature-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-xl);
+  }
+
+  @media (max-width: 1024px) {
+    .how-step .step-connector {
+      display: none;
     }
   }
 
-  @media (min-width: 1024px) {
-    .lg\:grid-cols-4 {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+  @media (max-width: 640px) {
+    .how-step {
+      padding: var(--space-5);
+    }
+
+    .step-number {
+      width: 2.5rem;
+      height: 2.5rem;
+    }
+
+    .step-icon {
+      width: 3rem;
+      height: 3rem;
     }
   }
 </style>

@@ -1,137 +1,178 @@
 ---
 import ThemeToggle from './ThemeToggle.astro';
 import LanguageSelector from './LanguageSelector.astro';
+
+interface Props {
+  currentTheme: 'light' | 'dark' | 'system';
+  currentLanguage: 'en' | 'fr' | 'es';
+}
+
+const { currentTheme, currentLanguage } = Astro.props;
 ---
-<header class="site-header" data-chrome-tone="light">
-  <div class="gov-banner" role="region" aria-label="U.S. Government Websites">
-    <div class="mx-auto flex min-h-10 py-3 max-w-site items-center justify-center gap-2 page-gutter">
+<header class="site-header fixed top-0 left-0 right-0 z-[var(--z-sticky)] bg-background-primary/80 backdrop-blur-md border-b border-border-primary" data-site-header>
+  <div class="gov-banner bg-blue-50 dark:bg-blue-950/50 border-b border-border-primary">
+    <div class="container flex min-h-[2.5rem] items-center justify-center gap-2">
       <button
         type="button"
-        class="gov-banner-button group flex cursor-pointer items-center gap-1.5 rounded-full focus-visible-ring"
-        tabindex="0"
-        aria-haspopup="dialog"
+        class="gov-banner-trigger flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors focus-visible-ring"
         aria-expanded="false"
+        aria-controls="gov-banner-panel"
+        aria-label="U.S. Government Websites"
       >
-        <span class="flex items-center gap-1">
-          <span class="flex items-center pt-px">
-            <span class="type-label-s flex h-2.5 items-end text-secondary transition-colors duration-200 group-hover-text-primary">
-              An official website of the United States government
-            </span>
-          </span>
-          <span class="flex size-4 shrink-0 items-center justify-center text-tertiary transition-colors duration-200 group-hover-text-primary">
-            <svg fill="none" height="16" viewBox="0 0 20 20" width="16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M11 15H9V9H11V15Z" fill="currentColor" />
-              <path d="M11.2 6.2C11.2 6.86 10.9 7.4 10 7.4C9.1 7.4 8.8 6.86 8.8 6.2C8.8 5.54 9.1 5 10 5C10.9 5 11.2 5.54 11.2 6.2Z" fill="currentColor" />
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M10 1C5 1 1 5 1 10C1 15 5 19 10 19C15 19 19 15 19 10C19 5 15 1 10 1ZM10 3C13.9 3 17 6.1 17 10C17 13.9 13.9 17 10 17C6.1 17 3 13.9 3 10C3 6.1 6.1 3 10 3Z" fill="currentColor" />
-            </svg>
-          </span>
-        </span>
+        <svg class="w-4 h-4 flex-shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span>An official website of the United States government</span>
+        <svg class="w-4 h-4 flex-shrink-0 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
       </button>
+    </div>
+
+    <div id="gov-banner-panel" class="gov-banner-panel hidden container py-3" role="region" aria-label="U.S. Government Websites">
+      <div class="flex flex-wrap items-center justify-center gap-2 text-sm text-text-secondary">
+        <a href="https://www.usa.gov" target="_blank" rel="noopener noreferrer" class="hover:text-text-primary transition-colors">USA.gov</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://www.gsa.gov" target="_blank" rel="noopener noreferrer" class="hover:text-text-primary transition-colors">GSA.gov</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://www.whitehouse.gov" target="_blank" rel="noopener noreferrer" class="hover:text-text-primary transition-colors">WhiteHouse.gov</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://www.congress.gov" target="_blank" rel="noopener noreferrer" class="hover:text-text-primary transition-colors">Congress.gov</a>
+      </div>
     </div>
   </div>
 
-  <div class="absolute inset-x-0 top-full">
-    <header class="relative items-center p-6 grid grid-cols-[minmax(0,1fr)_auto] gap-3 max-[320px]:grid-cols-1 site-header mx-auto w-[calc(100%-2*var(--site-header-inset))] [--site-header-inset:0.75rem]">
-      <div class="relative flex min-w-0 flex-1 items-center gap-2">
-        <a href="/" aria-label="GovLink home" class="flex min-w-0 max-w-full items-center gap-2.5 site-home-link">
-          <svg aria-hidden="true" class="text-primary h-auto w-[156px] max-w-full overflow-visible" width="159" height="23" viewBox="0 0 159 23" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <g data-slot="header-flag">
-              <g class="pointer-events-none">
-                <image href="data:image/svg+xml,%3csvg%20preserveAspectRatio='none'%20overflow='visible'%20style='display:%20block;'%20width='30'%20height='17'%20viewBox='0%200%2030%2017'%20fill='none'%20xmlns='http://www.w3.org/2000/svg'%3e%3cg%20id='Flag'%20clip-path='url(%23clip0_0_9)'%3e%3crect%20width='30'%20height='17'%20fill='white'/%3e%3cg%20id='Stripes'%3e%3cpath%20d='M30%200H13.08V1.31H30V0Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%202.62H13.08V3.93H30V2.62Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%205.23H13.08V6.54H30V5.23Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%207.85H13.08V9.16H30V7.85Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%2010.46H0V11.77H30V10.46Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%2013.08H0V14.39H30V13.08Z'%20fill='%23FB2823'/%3e%3cpath%20d='M30%2015.69H0V17H30V15.69Z'%20fill='%23FB2823'/%3e%3c/g%3e%3cpath%20id='Stars'%20d='M0%200V9.15H13.08V0H0ZM11.12%202.62L10.47%203.27L9.82%202.62L10.47%201.97L11.12%202.62ZM10.46%204.58L11.11%205.23L10.46%205.88L9.81%205.23L10.46%204.58ZM9.15%204.58L8.5%203.93L9.15%203.28L9.8%203.93L9.15%204.58ZM9.15%200.65L9.8%201.3L9.15%201.95L8.5%201.3L9.15%200.65ZM8.5%202.62L7.85%203.27L7.2%202.62L7.85%201.97L8.5%202.62ZM7.85%204.58L8.5%205.23L7.85%205.88L7.2%205.23L7.85%204.58ZM6.54%204.58L5.89%203.93L6.54%203.28L7.19%203.93L6.54%204.58ZM6.54%200.65L7.19%201.3L6.54%201.95L5.89%201.3L6.54%200.65ZM5.88%202.62L5.23%203.27L4.58%202.62L5.23%201.97L5.88%202.62ZM5.23%204.58L5.88%205.23L5.23%205.88L4.58%205.23L5.23%204.58ZM3.92%204.58L3.27%203.93L3.92%203.28L4.57%203.93L3.92%204.58ZM3.92%200.65L4.57%201.3L3.92%201.95L3.27%201.3L3.92%200.65ZM3.27%202.62L2.62%203.27L1.97%202.62L2.62%201.97L3.27%202.62ZM3.27%205.23L2.62%205.88L1.97%205.23L2.62%204.58L3.27%205.23ZM1.31%200.65L1.96%201.3L1.31%201.95L0.66%201.3L1.31%200.65ZM1.31%203.27L1.96%203.92L1.31%204.57L0.66%203.92L1.31%203.27ZM0.65%206.54L1.3%205.89L1.95%206.54L1.3%207.19L0.65%206.54ZM2.62%208.5L1.97%207.85L2.62%207.2L3.27%207.85L2.62%208.5ZM3.27%206.54L3.92%205.89L4.57%206.54..." />
-              </g>
-              <rect width="31" height="17" y="1" fill="transparent" />
-            </g>
-            <svg x="37" y="0" width="121.058" height="22.25" viewBox="0 0 121.058 22.25" fill="currentColor">
-              <path d="M41.5724 16.102C40.3881 16.102 39.5069 15.657 38.8131 14.6689C38.1397 13.7101 37.7664 12.3853 37.7664 10.8381V10.6859H45.3783L45.5247 10.5395C45.5613 9.14299 45.1163 7.7026 44.2716 6.83602C43.4724 6.01628 42.398 5.5625 41.1332 5.5625C38.0885 5.5625 35.8635 8.21933 35.8635 11.8525C35.8635 13.7086 36.3114 15.2983 37.159 16.4518C38.0416 17.6522 39.3488 18.2977 40.8405 18.2977C42.9747 18.2977 44.6215 16.8441 45.6711 14.199L45.0811 13.9062C44.2599 15.373 42.9586 16.102 41.5724 16.102ZM40.6941 6.73355C42.1213 6.73355 43.0391 7.74651 43.1826 9.66118H37.7664C38.2129 6.98679 40.0032 6.73355 40.6941 6.73355Z" />
-              <path d="M66.1645 16.102C63.7711 16.102 62.3703 14.1522 62.3703 11.0035C62.3703 8.86194 63.433 6.73355 65.7253 6.73355C66.7661 6.73355 67.3355 7.06291 67.3355 7.9046V8.63651C67.3355 9.46357 67.8698 10.1003 68.653 10.1003C69.2736 10.1003 69.9704 9.62605 69.9704 8.75655C69.9704 6.87115 68.2153 5.5625 65.8717 5.5625C64.4342 5.5625 63.0539 6.10265 62.0409 7.1727C60.9079 8.37156 60.3092 10.0476 60.3092 12.0033C60.3092 15.7111 62.2839 18.2977 65.2862 18.2977C68.5066 18.2977 69.6776 15.3701 70.1168 13.7599L69.5312 13.4671C68.2958 15.7375 67.1525 16.102 66.1645 16.102Z" />
-              <path d="M80.6562 16.8163C80.2815 16.8163 80.2171 16.5162 80.2171 15.8092V9.95395C80.2171 7.03803 78.7899 5.5625 75.8257 5.5625C73.0444 5.5625 71.5806 7.02632 71.5806 8.78289C71.5806 9.68168 72.3315 10.1003 72.898 10.1003C73.6241 10.1003 74.2155 9.5148 74.2155 8.63651V8.05099C74.2155 7.02632 75.1523 6.73355 75.8257 6.73355C77.2412 6.73355 77.875 7.51084 77.875 9.66118V10.3931C73.7163 11.7047 71.1414 12.5229 71.1414 15.2237C71.1414 16.9803 72.3842 18.2977 74.1027 18.2977C75.8213 18.2977 76.9499 17.2233 77.875 16.2484C78.0214 17.8586 78.6655 18.2977 79.778 18.2977C80.7382 18.2977 81.5799 17.5482 82.1201 16.3947L81.5345 16.102C81.2315 16.525 80.9212 16.8163 80.6562 16.8163ZM77.875 15.0773C76.9967 15.9556 76.0306 16.4635 75.2123 16.4635C74.173 16.4635 73.6299 15.6643 73.6299 14.4918C73.6299 12.7484 75.1333 12.2346 77.875 11.2714V15.0773Z" />
-              <path d="M116.959 5.85526V6.58717C118.423 6.58717 118.569 7.31908 117.984 8.78289L115.641 14.4918L113.299 8.34375C112.86 7.1727 113.007 6.58717 114.617 6.58717V5.85526H109.201V6.58717C109.786 6.58717 110.079 6.73355 110.372 7.31908C110.487 7.55036 114.91 18.0049 114.91 18.0049H115.349L119.447 8.19737C119.887 7.02632 120.179 6.58717 121.058 6.58717V5.85526H116.959Z" />
-              <path d="M34.0659 15.9571V9.61141C34.0659 6.97655 32.9285 5.5625 30.8485 5.5625C30.2044 5.5625 28.5224 5.71035 26.8947 7.46546C26.4424 6.18901 25.5319 5.5625 24.112 5.5625C22.6921 5.5625 21.2531 6.60181 20.451 7.46546V5.85526L20.1582 5.41612L16.3523 7.19612L16.5089 7.75822C16.5089 7.75822 17.0842 7.61038 17.377 7.61038C17.8161 7.61038 18.1089 7.90314 18.1089 8.34229V16.2484C18.1089 16.8954 17.6697 17.4194 16.9378 17.4194C16.4972 17.4194 16.1078 17.1764 15.9117 16.8149C14.7436 14.6382 8.59553 0 8.59553 0H8.15638L1.90296 15.3042C1.37306 16.6187 0.787533 17.1266 0 17.2745V18.0049H4.49684V17.2745C4.2802 17.2745 3.62002 17.2774 3.32579 16.8353C3.04474 16.4108 3.12086 15.7565 3.47363 14.9177L4.36656 12.7367H11.1821L12.0501 14.7992C12.4 15.6204 12.4263 16.2645 12.1292 16.7124C11.8701 17.1047 11.2728 17.2745 10.6434 17.2745V18.0049H21.9148L21.906 17.2745C20.7437 17.2745 20.451 16.9817 20.451 15.9571L20.4671 8.49013C21.1229 7.7509 22.127 7.31908 22.9395 7.31908C24.2979 7.31908 24.9888 8.01585 24.9888 9.95395V15.9571C24.9888 16.9817 24.696 17.2745 23.525 17.2745V18.0049H28.7947V17.2745C27.6237 17.2745 27.3309 16.9817 27.3309 15.9571V9.95395C27.3309 9.50309 27.3309 9.07566 27.1845 8.49013C27.7481 7.90314 28.6747 7.31908 29.673 7.31908C31.0666 7.31908 31.7224 8.13589 31.7224 10.1003V15.9571C31.7224 16.9817 31.4296 17.2745 30.2585 17.2745V18.0049H35.5283V17.2745C34.3601 17.2745 34.0688 16.9817 34.0645 15.9571H34.0659ZM4.90525 11.4178L7.74066 4.39145L10.6419 11.4178H4.90525Z" />
-              <path d="M58.5526 15.9571V5.85526L58.2599 5.41612L54.8521 6.8448C54.7818 6.05141 54.189 5.52883 53.3341 5.52883C52.7867 5.52883 52.2026 5.75572 51.5966 6.20511C51.1735 6.51837 50.6993 6.97069 50.2938 7.46546V5.85526L50.001 5.41612L46.1951 7.19758L46.3517 7.75969C46.3517 7.75969 46.927 7.61184 47.2198 7.61184C47.6589 7.61184 47.9517 7.9046 47.9517 8.34375V15.9556C47.9517 16.9803 47.6589 17.273 46.4879 17.273V18.0035H51.7576V17.273C50.5865 17.273 50.2938 16.9803 50.2938 15.9556V8.63505C50.7036 8.01732 51.355 7.51669 51.8718 7.51669C52.1148 7.51669 52.2494 7.66015 52.4178 7.84166C52.6461 8.08612 52.9286 8.39059 53.5713 8.39059C54.069 8.39059 54.4905 8.11832 54.7101 7.66015C54.858 7.6338 55.1873 7.61038 55.4801 7.61184C55.9192 7.61184 56.212 7.9046 56.212 8.34375V15.9556C56.212 16.9803 55.9192 17.273 54.7482 17.273V18.0035H60.0179V17.273C58.8469 17.273 58.5541 16.9803 58.5541 15.9556L58.5526 15.9571Z" />
-              <path d="M57.2352 4.09868C58.1245 4.09868 58.8454 3.37777 58.8454 2.48849C58.8454 1.5992 58.1245 0.878289 57.2352 0.878289C56.3459 0.878289 55.625 1.5992 55.625 2.48849C55.625 3.37777 56.3459 4.09868 57.2352 4.09868Z" />
-              <path d="M84.6085 18.2977C85.4978 18.2977 86.2187 17.5768 86.2187 16.6875C86.2187 15.7982 85.4978 15.0773 84.6085 15.0773C83.7193 15.0773 82.9984 15.7982 82.9984 16.6875C82.9984 17.5768 83.7193 18.2977 84.6085 18.2977Z" />
-              <path d="M96.0131 15.5545C94.9211 15.1607 93.9213 15.2237 92.3111 15.0773C90.9908 14.9573 89.9559 14.8314 89.669 14.7187C89.4099 14.6162 89.2898 14.4654 89.2898 14.2429C89.3337 13.795 89.8519 13.533 90.3306 13.3456C90.8254 13.5183 91.3684 13.6135 91.9452 13.6135C94.5069 13.6135 96.4098 11.7383 96.4098 9.5148C96.4098 8.50038 96.0131 7.58988 95.3398 6.89896C95.5506 6.6384 95.8682 6.29441 96.1171 6.29441C96.5562 6.29441 96.6294 7.1727 97.5809 7.1727C98.3128 7.1727 98.7519 6.58717 98.7519 6.00164C98.7519 5.26974 98.1664 4.68421 97.4345 4.68421C96.4215 4.68421 95.694 5.40002 94.5449 6.26513C93.8233 5.82013 92.9333 5.5625 91.9452 5.5625C89.3835 5.5625 87.4806 7.29127 87.4806 9.5148C87.4806 10.8893 88.2081 12.1292 89.3689 12.8772C88.9634 13.0997 88.6194 13.3441 88.3486 13.6091C87.4806 14.3454 87.5171 15.474 88.2198 16.1283C88.4101 16.3084 88.6545 16.4606 88.9473 16.5806C87.8377 17.2569 86.8028 18.3211 86.8043 19.5785C86.8599 21.5664 88.9444 22.2515 90.9937 22.2515C93.3358 22.2515 95.8902 21.4098 97.2618 19.5844C97.9542 18.6841 98.0171 17.2086 97.3276 16.3918C97.0085 16.0156 96.5665 15.7346 96.0146 15.556L96.0131 15.5545ZM91.3392 6.48763C92.6361 6.25928 93.6271 7.40398 93.9213 9.07566C94.2156 10.7473 93.9213 12.2961 92.4048 12.542C91.1416 12.7469 90.1169 11.4792 89.8227 9.80757C89.5284 8.13589 90.0422 6.71599 91.3392 6.48763ZM94.6825 20.1348C93.4529 20.5578 90.8327 20.6647 89.5914 20.0674C88.6062 19.6839 88.4394 18.4748 89.0776 17.6975C89.2957 17.4223 89.6236 17.1384 90.0525 16.8544C90.6848 16.9964 93.3505 17.1998 94.0575 17.2789C94.8743 17.3638 96.6865 17.5189 96.6733 18.4207C96.587 19.3092 95.6735 19.7966 94.6825 20.1348Z" />
-              <path d="M104.224 5.5625C101.038 5.5625 98.222 8.19444 98.222 11.7105C98.222 15.2266 100.564 18.2977 103.785 18.2977C107.005 18.2977 109.786 15.5164 109.755 11.8569C109.726 8.34375 107.409 5.5625 104.224 5.5625ZM104.705 17.0798C102.574 17.4165 101.341 15.2398 100.867 12.2434C100.419 9.40794 101.385 7.08194 103.319 6.776C105.289 6.46421 106.655 8.54722 107.103 11.3782C107.58 14.401 106.623 16.7753 104.705 17.0783V17.0798Z" />
-            </svg>
+  <nav class="nav-main container" aria-label="Main navigation">
+    <div class="flex h-[var(--header-height)] items-center justify-between gap-4">
+      <a href="/" class="site-logo flex items-center gap-2 flex-shrink-0" aria-label="GovLink home">
+        <svg class="w-8 h-8 text-accent-primary" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="currentColor"/>
+          <path d="M8 16L14 22L24 10" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="font-display font-semibold text-lg text-text-primary hidden sm:block">GovLink</span>
+      </a>
+
+      <div class="nav-actions flex items-center gap-2">
+        <ThemeToggle currentTheme={currentTheme} />
+
+        <LanguageSelector currentLanguage={currentLanguage} />
+
+        <button
+          type="button"
+          class="btn btn-primary btn-md hidden sm:flex"
+          aria-label="Open menu"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
-        </a>
+          <span>Menu</span>
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-ghost btn-icon-lg sm:hidden"
+          aria-label="Open menu"
+          data-mobile-menu-trigger
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
       </div>
-      <div class="relative flex min-w-0 flex-1 items-center justify-end gap-2">
-        <div class="site-menu-trigger relative justify-self-end">
-          <div aria-hidden="true" class="pointer-events-none absolute inset-0"></div>
-          <div class="relative" style="opacity:1">
-            <button
-              type="button"
-              tabindex="0"
-              aria-haspopup="dialog"
-              aria-expanded="false"
-              class="menu-button"
-            >
-              Menu
-            </button>
-          </div>
+    </div>
+  </nav>
+
+  <div class="mobile-menu hidden sm:hidden fixed inset-0 z-[var(--z-modal)] bg-background-overlay" data-mobile-menu-backdrop aria-hidden="true"></div>
+  <aside class="mobile-menu fixed top-0 right-0 bottom-0 z-[var(--z-modal)] w-full max-w-sm bg-background-elevated shadow-2xl transform translate-x-full transition-transform duration-300 ease-out" data-mobile-menu-panel aria-label="Mobile menu">
+    <div class="flex h-full flex-col">
+      <div class="flex h-16 items-center justify-between border-b border-border-primary px-4">
+        <span class="font-semibold text-text-primary">Menu</span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-icon"
+          aria-label="Close menu"
+          data-mobile-menu-close
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <nav class="flex-1 overflow-y-auto p-4 space-y-2" aria-label="Mobile navigation">
+        <a href="/" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>Home</a>
+        <a href="/chat" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>Chat</a>
+        <a href="/how-it-works" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>How It Works</a>
+        <a href="/about" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>About</a>
+        <a href="/privacy-policy" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>Privacy Policy</a>
+        <a href="/terms" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>Terms of Use</a>
+        <a href="/faq" class="btn btn-secondary btn-lg w-full justify-start px-4" data-mobile-menu-link>FAQ</a>
+        <div class="pt-4 border-t border-border-primary">
+          <ThemeToggle currentTheme={currentTheme} />
+          <LanguageSelector currentLanguage={currentLanguage} />
         </div>
-      </div>
-    </header>
-  </div>
+      </nav>
+    </div>
+  </aside>
 </header>
 
+<script is:inline>
+  // Gov banner toggle
+  const bannerTrigger = document.querySelector('.gov-banner-trigger');
+  const bannerPanel = document.querySelector('#gov-banner-panel');
+  if (bannerTrigger && bannerPanel) {
+    bannerTrigger.addEventListener('click', () => {
+      const expanded = bannerTrigger.getAttribute('aria-expanded') === 'true';
+      bannerTrigger.setAttribute('aria-expanded', (!expanded).toString());
+      bannerPanel.classList.toggle('hidden');
+      bannerTrigger.querySelector('svg:last-of-type').style.transform = expanded ? 'rotate(0deg)' : 'rotate(180deg)';
+    });
+  }
+
+  // Mobile menu
+  const mobileMenuTrigger = document.querySelector('[data-mobile-menu-trigger]');
+  const mobileMenuBackdrop = document.querySelector('[data-mobile-menu-backdrop]');
+  const mobileMenuPanel = document.querySelector('[data-mobile-menu-panel]');
+  const mobileMenuClose = document.querySelector('[data-mobile-menu-close]');
+  const mobileMenuLinks = document.querySelectorAll('[data-mobile-menu-link]');
+
+  function openMobileMenu() {
+    mobileMenuBackdrop.classList.remove('hidden');
+    mobileMenuPanel.classList.remove('translate-x-full');
+    document.body.style.overflow = 'hidden';
+    mobileMenuTrigger?.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeMobileMenu() {
+    mobileMenuBackdrop.classList.add('hidden');
+    mobileMenuPanel.classList.add('translate-x-full');
+    document.body.style.overflow = '';
+    mobileMenuTrigger?.setAttribute('aria-expanded', 'false');
+  }
+
+  mobileMenuTrigger?.addEventListener('click', openMobileMenu);
+  mobileMenuBackdrop?.addEventListener('click', closeMobileMenu);
+  mobileMenuClose?.addEventListener('click', closeMobileMenu);
+  mobileMenuLinks.forEach(link => link.addEventListener('click', closeMobileMenu));
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !mobileMenuPanel?.classList.contains('translate-x-full')) {
+      closeMobileMenu();
+    }
+  });
+</script>
+
 <style>
+  .gov-banner-trigger svg:last-of-type {
+    transition: transform var(--duration-fast) var(--ease-out);
+  }
+
+  .gov-banner-panel {
+    animation: slideDown var(--duration-normal) var(--ease-out);
+  }
+
   .focus-visible-ring:focus-visible {
     outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
-  }
-
-  .group-hover-text-primary:hover {
-    color: var(--color-text-primary);
-  }
-
-  .group:hover .group-hover-text-primary {
-    color: var(--color-text-primary);
-  }
-
-  .menu-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    font-weight: 500;
-    padding: 0 1.25rem;
-    height: 2.75rem;
-    border-radius: 9999px;
-    background-color: var(--color-blue-700);
-    color: var(--color-white);
-    transition: background-color 150ms ease-out, color 150ms ease-out;
-  }
-
-  .menu-button:hover {
-    background-color: var(--color-blue-800);
-  }
-
-  .menu-button:active {
-    background-color: var(--color-blue-700);
-    transform: scale(0.98);
-  }
-
-  .menu-button:focus-visible {
-    outline: 2px solid var(--color-focus-ring);
-    outline-offset: 2px;
-  }
-
-  .menu-button:disabled {
-    pointer-events: none;
-    background-color: var(--color-background-tertiary);
-    color: var(--color-text-disabled);
-  }
-
-  .menu-button svg {
-    pointer-events: none;
-    flex-shrink: 0;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .menu-button {
-      transition: none;
-    }
   }
 </style>

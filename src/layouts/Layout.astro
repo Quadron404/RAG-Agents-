@@ -110,7 +110,7 @@ const ogImage = new URL('/images/social/govlink-og.png', Astro.site || 'https://
 
   <a href="#landing-main" class="skip-link">Skip to main content</a>
 
-  <Header />
+  <Header currentTheme={currentTheme} currentLanguage={currentLanguage} />
 
   {chatReturn && (
     <div class="chat-return-curtain" data-chat-return-curtain aria-hidden="true"></div>
@@ -120,7 +120,7 @@ const ogImage = new URL('/images/social/govlink-og.png', Astro.site || 'https://
     <slot />
   </main>
 
-  <Footer />
+  <Footer currentLanguage={currentLanguage} />
 
   <script is:inline>
     (() => {

@@ -2,6 +2,8 @@
 interface Props {
   currentTheme: 'light' | 'dark' | 'system';
 }
+
+const { currentTheme } = Astro.props;
 ---
 <script is:inline>
   const button = document.querySelector('[data-theme-toggle]');
@@ -51,39 +53,80 @@ interface Props {
 <button
   data-theme-toggle
   data-current-theme={currentTheme}
-  class="inline-flex items-center justify-center gap-2 rounded-full p-1.5 text-tertiary hover:text-primary transition-colors duration-200 focus-visible-ring"
+  class="btn btn-ghost btn-icon p-2 rounded-full relative"
   aria-label={currentTheme === 'light' ? 'Switch to dark mode' : currentTheme === 'dark' ? 'Switch to light mode' : 'Use system preference'}
 >
-  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+  <!-- Light mode icon (sun) -->
+  <svg class="w-5 h-5 theme-icon theme-icon-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
   </svg>
-  <svg class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-dark-icon>
+
+  <!-- Dark mode icon (moon) -->
+  <svg class="w-5 h-5 theme-icon theme-icon-dark hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
   </svg>
-  <svg class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-system-icon>
+
+  <!-- System mode icon (monitor) -->
+  <svg class="w-5 h-5 theme-icon theme-icon-system hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
     <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2" />
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 21h8M12 17v4" />
   </svg>
+
+  <span class="theme-tooltip absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded opacity-0 invisible transition-all duration-200 whitespace-nowrap pointer-events-none">
+    <span data-tooltip-text></span>
+  </span>
 </button>
 
+<script is:inline>
+  const button = document.querySelector('[data-theme-toggle]');
+  if (button) {
+    const tooltip = button.querySelector('.theme-tooltip');
+    const tooltipText = button.querySelector('[data-tooltip-text]');
+
+    const labels = {
+      light: 'Switch to dark mode',
+      dark: 'Switch to light mode',
+      system: 'Use system preference'
+    };
+
+    button.addEventListener('mouseenter', () => {
+      const current = button.getAttribute('data-current-theme');
+      if (tooltipText) tooltipText.textContent = labels[current];
+      tooltip?.classList.remove('opacity-0', 'invisible');
+      tooltip?.classList.add('opacity-100', 'visible');
+    });
+
+    button.addEventListener('mouseleave', () => {
+      tooltip?.classList.add('opacity-0', 'invisible');
+      tooltip?.classList.remove('opacity-100', 'visible');
+    });
+  }
+</script>
+
 <style>
-  [data-theme-toggle][data-current-theme="light"] [data-dark-icon],
-  [data-theme-toggle][data-current-theme="light"] [data-system-icon],
-  [data-theme-toggle][data-current-theme="dark"] [data-system-icon],
-  [data-theme-toggle][data-current-theme="system"] [data-dark-icon],
-  [data-theme-toggle][data-current-theme="system"] [data-system-icon] {
-    display: none;
+  [data-theme-toggle][data-current-theme="light"] .theme-icon-light { display: block; }
+  [data-theme-toggle][data-current-theme="light"] .theme-icon-dark,
+  [data-theme-toggle][data-current-theme="light"] .theme-icon-system { display: none; }
+
+  [data-theme-toggle][data-current-theme="dark"] .theme-icon-dark { display: block; }
+  [data-theme-toggle][data-current-theme="dark"] .theme-icon-light,
+  [data-theme-toggle][data-current-theme="dark"] .theme-icon-system { display: none; }
+
+  [data-theme-toggle][data-current-theme="system"] .theme-icon-system { display: block; }
+  [data-theme-toggle][data-current-theme="system"] .theme-icon-light,
+  [data-theme-toggle][data-current-theme="system"] .theme-icon-dark { display: none; }
+
+  .theme-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: var(--color-slate-900);
   }
 
-  [data-theme-toggle][data-current-theme="light"] svg:first-child {
-    display: block;
-  }
-
-  [data-theme-toggle][data-current-theme="dark"] [data-dark-icon] {
-    display: block;
-  }
-
-  [data-theme-toggle][data-current-theme="system"] [data-system-icon] {
-    display: block;
+  .dark .theme-tooltip::after {
+    border-top-color: var(--color-slate-100);
   }
 </style>

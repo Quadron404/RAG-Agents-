@@ -1,24 +1,165 @@
 ---
 interface Props {}
 ---
-<section id="upcoming-features" class="py-16 px-4 mobile:py-12 bg-background-secondary" aria-labelledby="upcoming-title">
-  <div class="max-w-site mx-auto">
-    <h2 id="upcoming-title" class="text-3xl font-semibold text-center mb-8 mobile:text-2xl">More coming in 2027</h2>
+<section class="upcoming py-16 lg:py-24 bg-background-secondary" aria-labelledby="upcoming-title">
+  <div class="container">
+    <header class="text-center mb-12 lg:mb-16">
+      <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-primary/10 text-accent-primary text-xs font-medium mb-4 animate-fade-in stagger-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Coming in 2027</span>
+      </span>
+      <h2 id="upcoming-title" class="text-3xl lg:text-4xl font-display font-semibold text-text-primary mb-4 animate-fade-in stagger-2">
+        More features on the way
+      </h2>
+      <p class="text-lg text-text-secondary max-w-2xl mx-auto animate-fade-in stagger-3">
+        We\'re building new tools to make government services even more accessible. Here\'s a preview of what\'s on our roadmap.
+      </p>
+    </header>
 
-    <div class="flex flex-col items-center gap-6 max-w-2xl mx-auto text-center">
-      <div class="w-full">
-        <div class="aspect-video rounded-2xl bg-background-tertiary border border-border-primary flex items-center justify-center">
-          <div class="text-center px-6">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mx-auto mb-4 text-tertiary" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-            <h3 class="text-xl font-semibold mb-2">Personalized dashboard</h3>
-            <p class="text-secondary mb-4">Your benefits, deadlines, and tasks in one place.</p>
-            <a href="/coming-soon" class="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">See what's ahead →</a>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+      {[
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 9h6v6H9z" /></svg>,
+          iconBg: 'bg-blue-100 dark:bg-blue-900/30',
+          iconColor: 'text-blue-600 dark:text-blue-400',
+          title: 'Personal Dashboard',
+          description: 'Your benefits, deadlines, and saved searches in one place. Customizable widgets for what matters most.',
+          badge: 'Q1 2027',
+          badgeColor: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+        },
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
+          iconBg: 'bg-emerald-100 dark:bg-emerald-900/30',
+          iconColor: 'text-emerald-600 dark:text-emerald-400',
+          title: 'Benefit Eligibility',
+          description: 'Check what programs you qualify for based on your situation. Anonymous, instant results.',
+          badge: 'Q1 2027',
+          badgeColor: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+        },
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>,
+          iconBg: 'bg-amber-100 dark:bg-amber-900/30',
+          iconColor: 'text-amber-600 dark:text-amber-400',
+          title: 'Deadline Reminders',
+          description: 'Never miss a filing date, renewal, or enrollment period. Smart notifications via email or SMS.',
+          badge: 'Q2 2027',
+          badgeColor: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+        },
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>,
+          iconBg: 'bg-purple-100 dark:bg-purple-900/30',
+          iconColor: 'text-purple-600 dark:text-purple-400',
+          title: 'Family Profiles',
+          description: 'Manage benefits for dependents and household members. Secure sharing with caregivers.',
+          badge: 'Q2 2027',
+          badgeColor: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+        },
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" /></svg>,
+          iconBg: 'bg-red-100 dark:bg-red-900/30',
+          iconColor: 'text-red-600 dark:text-red-400',
+          title: 'Status Tracking',
+          description: 'Real-time updates on applications, claims, and requests. Know exactly where things stand.',
+          badge: 'Q3 2027',
+          badgeColor: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+        },
+        {
+          icon: <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>,
+          iconBg: 'bg-pink-100 dark:bg-pink-900/30',
+          iconColor: 'text-pink-600 dark:text-pink-400',
+          title: 'Verified Answers',
+          description: 'Cryptographic proof that answers come from official sources. Tamper-evident citations.',
+          badge: 'Q3 2027',
+          badgeColor: 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300'
+        }
+      ].map((feature, index) => (
+        <article class="upcoming-card card p-6 lg:p-8 group animate-fade-in stagger-1" style={{animationDelay: `${(index + 1) * 80}ms`}}>
+          <div class="flex items-start gap-4">
+            <div class={`upcoming-icon w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${feature.iconBg} ${feature.iconColor} group-hover:scale-110 transition-transform duration-300`}>
+              {feature.icon}
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center justify-between gap-4 mb-3">
+                <h3 class="text-lg lg:text-xl font-display font-semibold text-text-primary">{feature.title}</h3>
+                <span class={`upcoming-badge badge px-2 py-0.5 text-xs font-medium ${feature.badgeColor}`}>
+                  {feature.badge}
+                </span>
+              </div>
+              <p class="text-text-secondary leading-relaxed">{feature.description}</p>
+            </div>
           </div>
-        </div>
-      </div>
+
+          <div class="upcoming-progress mt-4 h-1 bg-background-tertiary rounded-full overflow-hidden">
+            <div class="progress-bar h-full bg-accent-primary/20 rounded-full transition-all duration-1000 ease-out" style="width: 0%"></div>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <div class="mt-12 lg:mt-16 text-center animate-fade-in stagger-2">
+      <p class="text-text-secondary mb-6 max-w-xl mx-auto">
+        Want to be the first to know when these features launch?
+      </p>
+      <a href="/" class="btn btn-primary btn-lg inline-flex items-center gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        <span>Try GovLink Now</span>
+      </a>
     </div>
   </div>
 </section>
+
+<script is:inline>
+  // Animate progress bars on scroll
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const progressBar = entry.target.querySelector('.progress-bar');
+        if (progressBar) {
+          // Random progress between 15-45% for visual variety
+          const progress = Math.floor(Math.random() * 30) + 15;
+          setTimeout(() => {
+            progressBar.style.width = `${progress}%`;
+          }, 200);
+        }
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.2 });
+
+  document.querySelectorAll('.upcoming-card').forEach(card => {
+    observer.observe(card);
+  });
+</script>
+
+<style>
+  .upcoming-card {
+    transition: all var(--duration-normal) var(--ease-out);
+  }
+
+  .upcoming-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-xl);
+    border-color: var(--color-border-secondary);
+  }
+
+  .upcoming-icon {
+    transition: all var(--duration-normal) var(--ease-out);
+  }
+
+  .upcoming-badge {
+    transition: all var(--duration-fast) var(--ease-out);
+  }
+
+  .upcoming-card:hover .upcoming-badge {
+    background-color: var(--color-accent-primary);
+    color: var(--color-white);
+  }
+
+  .progress-bar {
+    border-radius: var(--radius-full);
+  }
+</style>

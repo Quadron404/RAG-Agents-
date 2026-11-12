@@ -4,105 +4,65 @@ interface Props {
     id: string;
     title: string;
     description: string;
-    image: string;
+    icon?: string;
   }>;
 }
 ---
-
-<section class="studio-scene" style="--studio-scan: #8bb695;" data-studio-scene="home">
-  <div class="studio-art">
-    <div class="studio-art-plane">
-      <div class="studio-art-accessories" aria-hidden="true">
-        <svg class="studio-art-image" width="402" height="410" viewBox="0 0 402 410" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <defs>
-            <linearGradient id="studio-gradient" x1="0" y1="0" x2="402" y2="410" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#1e40af" stop-opacity="0.3"/>
-              <stop offset="50%" stop-color="#059669" stop-opacity="0.2"/>
-              <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0.3"/>
-            </linearGradient>
-            <radialGradient id="studio-glow" cx="201" cy="205" r="200" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#2563eb" stop-opacity="0.4"/>
-              <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
-            </radialGradient>
-          </defs>
-          <rect width="402" height="410" rx="16" fill="url(#studio-gradient)"/>
-          <ellipse cx="201" cy="205" rx="180" ry="150" fill="url(#studio-glow)"/>
-          <circle cx="320" cy="80" r="80" fill="#2563eb" opacity="0.15"/>
-          <circle cx="80" cy="330" r="60" fill="#10b981" opacity="0.12"/>
-          <path d="M100 300 Q150 250 201 205 Q252 255 302 305" stroke="#2563eb" stroke-width="3" fill="none" opacity="0.3"/>
-          <path d="M100 200 Q150 180 201 180 Q252 180 302 200" stroke="#10b981" stroke-width="2" fill="none" opacity="0.2"/>
-        </svg>
-      </div>
-      <div class="studio-frame-scan" aria-hidden="true"></div>
-    </div>
-  </div>
-
-  <div class="studio-carousel" aria-label="Government service cards">
-    <div class="studio-carousel-track" role="list">
-      {(
-        Astro.props.cards || [
-          { id: 'medicare', title: 'Medicare', description: 'Health coverage for people 65+', image: '' },
-          { id: 'social-security', title: 'Social Security', description: 'Retirement, disability, and survivors benefits', image: '' },
-          { id: 'veteran-care', title: 'Veteran Care', description: 'Health care and benefits for veterans', image: '' },
-          { id: 'passport', title: 'Passports', description: 'Apply for or renew your US passport', image: '' },
-          { id: 'national-park', title: 'National Parks', description: 'Explore America\'s national parks', image: '' },
-          { id: 'new-job', title: 'New Job', description: 'Resources for job seekers', image: '' }
-        ]
-      ).map((card, index) => (
-        <div class="studio-portrait-seat" role="listitem" style={index === 0 ? 'opacity: 1; transform: translateX(-50%) scale(1); z-index: 10;' : 'opacity: 0.4; transform: translateX(-50%) scale(0.8); z-index: 1;'}>
-          <div class="studio-portrait-wrapper" style="border-radius: 16px; overflow: hidden; width: 100%; height: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.15);">
-            <svg class="studio-portrait" width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <defs>
-                <linearGradient id={`card-gradient-${card.id}`} x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stop-color="#1e40af" stop-opacity="0.4"/>
-                  <stop offset="100%" stop-color="#059669" stop-opacity="0.3"/>
-                </linearGradient>
-              </defs>
-              <rect width="120" height="120" fill="url(#card-gradient-0)"/>
-              <text x="60" y="60" text-anchor="middle" dominant-baseline="middle" font-family="system-ui" font-size="10" font-weight="600" fill="white" opacity="0.9">{card.title}</text>
-            </svg>
-          </div>
-        </div>
-      ))}
-    </div>
-    <div class="studio-assess-scan" aria-hidden="true"></div>
-  </div>
-</section>
-
 <script is:inline>
   const track = document.querySelector('.studio-carousel-track');
   const seats = document.querySelectorAll('.studio-portrait-seat');
+  const prevBtn = document.querySelector('[data-carousel-prev]');
+  const nextBtn = document.querySelector('[data-carousel-next]');
+  const pauseBtn = document.querySelector('[data-carousel-pause]');
+  const pauseIcon = document.querySelector('[data-pause-icon]');
+  const playIcon = document.querySelector('[data-play-icon]');
+
   if (track && seats.length > 0) {
     let currentIndex = 0;
     const totalCards = seats.length;
     let autoRotateInterval;
     let isAnimating = false;
+    let isPaused = false;
 
-    function updateCarousel(index) {
-      if (isAnimating) return;
-      isAnimating = true;
+    function updateCarousel(index, instant = false) {
+      if (isAnimating && !instant) return;
+      isAnimating = !instant;
 
       seats.forEach((seat, i) => {
         const distance = (i - index + totalCards) % totalCards;
         const normalizedDistance = distance > totalCards / 2 ? distance - totalCards : distance;
         const absDistance = Math.abs(normalizedDistance);
 
-        let scale = 1 - absDistance * 0.15;
-        let opacity = 1 - absDistance * 0.3;
+        let scale = 1 - absDistance * 0.12;
+        let opacity = 1 - absDistance * 0.25;
         let zIndex = totalCards - absDistance;
+        let translateX = 0;
 
         if (absDistance > totalCards / 2) {
           opacity = 0;
-          scale = 0.6;
+          scale = 0.7;
         }
 
-        seat.style.transition = 'transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms cubic-bezier(0.22, 1, 0.36, 1), z-index 0ms';
-        seat.style.transform = `translateX(-50%) scale(${scale})`;
+        if (normalizedDistance < 0) {
+          translateX = -20 * absDistance;
+        } else if (normalizedDistance > 0) {
+          translateX = 20 * absDistance;
+        }
+
+        const transition = instant ? 'none' : 'transform 500ms cubic-bezier(0.22, 1, 0.36, 1), opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), z-index 0ms, filter 500ms cubic-bezier(0.22, 1, 0.36, 1)';
+        seat.style.transition = transition;
+        seat.style.transform = `translateX(calc(-50% + ${translateX}px)) scale(${scale})`;
         seat.style.opacity = opacity.toString();
         seat.style.zIndex = zIndex.toString();
+        seat.style.filter = absDistance === 0 ? 'none' : `blur(${absDistance * 1.5}px) grayscale(${absDistance * 30}%)`;
+
+        const btn = seat.querySelector('button');
+        if (btn) {
+          btn.setAttribute('aria-current', (index === i).toString());
+        }
       });
 
-      setTimeout(() => { isAnimating = false; }, 400);
+      setTimeout(() => { isAnimating = false; }, 500);
     }
 
     function nextCard() {
@@ -116,20 +76,45 @@ interface Props {
     }
 
     function startAutoRotate() {
-      autoRotateInterval = window.setInterval(nextCard, 5000);
+      if (autoRotateInterval) clearInterval(autoRotateInterval);
+      autoRotateInterval = window.setInterval(nextCard, 6000);
     }
 
     function stopAutoRotate() {
       if (autoRotateInterval) {
         clearInterval(autoRotateInterval);
+        autoRotateInterval = null;
       }
     }
 
-    const carousel = document.querySelector('.studio-carousel');
-    carousel?.addEventListener('mouseenter', stopAutoRotate);
-    carousel?.addEventListener('mouseleave', startAutoRotate);
-    carousel?.addEventListener('focusin', stopAutoRotate);
-    carousel?.addEventListener('focusout', startAutoRotate);
+    function togglePause() {
+      isPaused = !isPaused;
+      if (isPaused) {
+        stopAutoRotate();
+        pauseIcon?.classList.add('hidden');
+        playIcon?.classList.remove('hidden');
+        pauseBtn?.setAttribute('aria-label', 'Resume carousel');
+      } else {
+        startAutoRotate();
+        pauseIcon?.classList.remove('hidden');
+        playIcon?.classList.add('hidden');
+        pauseBtn?.setAttribute('aria-label', 'Pause carousel');
+      }
+    }
+
+    prevBtn?.addEventListener('click', () => {
+      prevCard();
+      stopAutoRotate();
+      if (!isPaused) startAutoRotate();
+    });
+
+    nextBtn?.addEventListener('click', () => {
+      nextCard();
+      stopAutoRotate();
+      if (!isPaused) startAutoRotate();
+    });
+
+    pauseBtn?.addEventListener('click', togglePause);
 
     seats.forEach((seat, index) => {
       seat.addEventListener('click', () => {
@@ -137,7 +122,7 @@ interface Props {
           currentIndex = index;
           updateCarousel(currentIndex);
           stopAutoRotate();
-          startAutoRotate();
+          if (!isPaused) startAutoRotate();
         }
       });
 
@@ -148,34 +133,215 @@ interface Props {
             currentIndex = index;
             updateCarousel(currentIndex);
             stopAutoRotate();
-            startAutoRotate();
+            if (!isPaused) startAutoRotate();
           }
         } else if (e.key === 'ArrowRight') {
           e.preventDefault();
           nextCard();
           stopAutoRotate();
-          startAutoRotate();
+          if (!isPaused) startAutoRotate();
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault();
           prevCard();
           stopAutoRotate();
-          startAutoRotate();
+          if (!isPaused) startAutoRotate();
         }
       });
 
       seat.setAttribute('tabindex', '0');
       seat.setAttribute('role', 'button');
-      seat.setAttribute('aria-label', `View card ${index + 1}`);
+      seat.setAttribute('aria-label', `View ${seats.length > index ? seats[index].querySelector('.studio-portrait-title')?.textContent || `card ${index + 1}` : `card ${index + 1}`}`);
+      seat.setAttribute('aria-current', (index === 0).toString());
     });
 
-    updateCarousel(0);
+    // Pause on hover/focus
+    const carousel = document.querySelector('.studio-carousel');
+    carousel?.addEventListener('mouseenter', () => {
+      if (!isPaused) stopAutoRotate();
+    });
+    carousel?.addEventListener('mouseleave', () => {
+      if (!isPaused) startAutoRotate();
+    });
+    carousel?.addEventListener('focusin', () => {
+      if (!isPaused) stopAutoRotate();
+    });
+    carousel?.addEventListener('focusout', () => {
+      if (!isPaused) startAutoRotate();
+    });
+
+    // Keyboard navigation for carousel container
+    carousel?.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nextCard();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevCard();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        togglePause();
+      }
+    });
+
+    updateCarousel(0, true);
     startAutoRotate();
   }
 </script>
 
+<section class="studio-section py-16 lg:py-24 relative" aria-labelledby="studio-title">
+  <div class="container">
+    <header class="text-center mb-12 lg:mb-16">
+      <h2 id="studio-title" class="text-3xl lg:text-4xl font-display font-semibold text-text-primary mb-4 animate-fade-in stagger-1">
+        Government services at a glance
+      </h2>
+      <p class="text-lg text-text-secondary max-w-2xl mx-auto animate-fade-in stagger-2">
+        Explore key federal programs and services. Each card represents a gateway to official government resources.
+      </p>
+    </header>
+
+    <div class="studio-carousel relative" role="region" aria-label="Government service cards" aria-roledescription="carousel">
+      <div class="studio-carousel-track flex items-center justify-center gap-4 lg:gap-6 pb-8 lg:pb-12" role="list">
+        {(
+          Astro.props.cards || [
+            { id: 'medicare', title: 'Medicare', description: 'Health coverage for people 65+', icon: '🏥' },
+            { id: 'social-security', title: 'Social Security', description: 'Retirement, disability, and survivors benefits', icon: '💰' },
+            { id: 'veteran-care', title: 'Veteran Care', description: 'Health care and benefits for veterans', icon: '🎖️' },
+            { id: 'passport', title: 'Passports', description: 'Apply for or renew your US passport', icon: '📘' },
+            { id: 'national-park', title: 'National Parks', description: 'Explore America\'s national parks', icon: '🏞️' },
+            { id: 'new-job', title: 'New Job', description: 'Resources for job seekers', icon: '💼' },
+            { id: 'taxes', title: 'Taxes', description: 'File taxes and get refund info', icon: '📊' },
+            { id: 'student-aid', title: 'Student Aid', description: 'FAFSA and federal student loans', icon: '🎓' },
+            { id: 'small-business', title: 'Small Business', description: 'SBA loans and resources', icon: '🏪' },
+            { id: 'immigration', title: 'Immigration', description: 'Citizenship and visa services', icon: '🌍' },
+            { id: 'disaster-relief', title: 'Disaster Relief', description: 'FEMA assistance and recovery', icon: '🆘' },
+            { id: 'housing', title: 'Housing', description: 'HUD programs and fair housing', icon: '🏠' }
+          ]
+        ).map((card, index) => (
+          <article class="studio-portrait-seat group" role="listitem" style={index === 0 ? 'opacity: 1; transform: translateX(-50%) scale(1); z-index: 10;' : 'opacity: 0.4; transform: translateX(-50%) scale(0.88); z-index: 1; filter: blur(1.5px) grayscale(30%);'}>
+            <button class="studio-portrait w-full aspect-square rounded-2xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-900/30 dark:to-emerald-900/30 border border-border-primary/50 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-500 ease-out relative" aria-label={`View ${card.title}`}>
+              <div class="absolute inset-0 bg-gradient-to-br from-accent-primary/5 to-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" aria-hidden="true"></div>
+              <div class="relative z-10 p-6 lg:p-8 flex flex-col items-center justify-center h-full">
+                <div class="studio-icon w-16 h-16 lg:w-20 lg:h-20 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm flex items-center justify-center shadow-lg mb-4 lg:mb-6 transition-transform duration-500 group-hover:scale-110" aria-hidden="true">
+                  <span class="text-3xl lg:text-4xl">{card.icon}</span>
+                </div>
+                <h3 class="studio-portrait-title text-lg lg:text-xl font-display font-semibold text-text-primary text-center mb-2 lg:mb-3">{card.title}</h3>
+                <p class="text-sm lg:text-base text-text-secondary text-center leading-relaxed px-2">{card.description}</p>
+              </div>
+              <div class="studio-glow absolute inset-0 bg-gradient-to-t from-accent-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" aria-hidden="true"></div>
+            </button>
+          </article>
+        ))}
+      </div>
+
+      <div class="carousel-controls flex items-center justify-center gap-4 mt-8 animate-fade-in stagger-3">
+        <button
+          data-carousel-prev
+          type="button"
+          class="btn btn-secondary btn-icon p-2 lg:p-3 rounded-full"
+          aria-label="Previous card"
+        >
+          <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <div class="carousel-indicators flex items-center gap-1.5" aria-hidden="true">
+          {(
+            Astro.props.cards || [
+              { id: 'medicare' }, { id: 'social-security' }, { id: 'veteran-care' },
+              { id: 'passport' }, { id: 'national-park' }, { id: 'new-job' },
+              { id: 'taxes' }, { id: 'student-aid' }, { id: 'small-business' },
+              { id: 'immigration' }, { id: 'disaster-relief' }, { id: 'housing' }
+            ]
+          ).map((_, index) => (
+            <button
+              class="carousel-indicator w-2 h-2 lg:w-2.5 lg:h-2.5 rounded-full transition-all duration-300 ease-out bg-border-primary"
+              data-carousel-indicator={index}
+              aria-label={`Go to card ${index + 1}`}
+              style={index === 0 ? 'background-color: var(--color-accent-primary); width: 24px; border-radius: var(--radius-full);' : ''}
+            ></button>
+          ))}
+        </div>
+
+        <button
+          data-carousel-next
+          type="button"
+          class="btn btn-secondary btn-icon p-2 lg:p-3 rounded-full"
+          aria-label="Next card"
+        >
+          <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        <button
+          data-carousel-pause
+          type="button"
+          class="btn btn-ghost btn-icon p-2 lg:p-3 rounded-full"
+          aria-label="Pause carousel"
+        >
+          <svg class="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-pause-icon>
+            <rect x="6" y="4" width="4" height="16" rx="1" />
+            <rect x="14" y="4" width="4" height="16" rx="1" />
+          </svg>
+          <svg class="w-5 h-5 lg:w-6 lg:h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" data-play-icon>
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script is:inline>
+  // Indicator click handlers
+  document.querySelectorAll('[data-carousel-indicator]').forEach((indicator, index) => {
+    indicator.addEventListener('click', () => {
+      const carousel = indicator.closest('.studio-carousel');
+      if (carousel) {
+        // We need to trigger the carousel update
+        const track = carousel.querySelector('.studio-carousel-track');
+        const seats = carousel.querySelectorAll('.studio-portrait-seat');
+        if (track && seats.length > 0) {
+          // Dispatch a custom event that the main carousel script can listen to
+          carousel.dispatchEvent(new CustomEvent('carousel-navigate', { detail: { index } }));
+        }
+      }
+    });
+  });
+
+  // Listen for navigation events
+  document.querySelectorAll('.studio-carousel').forEach(carousel => {
+    carousel.addEventListener('carousel-navigate', (e) => {
+      const seats = carousel.querySelectorAll('.studio-portrait-seat');
+      const indicators = carousel.querySelectorAll('[data-carousel-indicator]');
+      const index = e.detail.index;
+
+      if (index >= 0 && index < seats.length) {
+        // Update indicators
+        indicators.forEach((ind, i) => {
+          if (i === index) {
+            ind.style.backgroundColor = 'var(--color-accent-primary)';
+            ind.style.width = '24px';
+            ind.style.borderRadius = 'var(--radius-full)';
+          } else {
+            ind.style.backgroundColor = 'var(--color-border-primary)';
+            ind.style.width = '';
+            ind.style.borderRadius = '';
+          }
+        });
+
+        // Update carousel (the main script handles this via global state)
+        // We'll just click the seat to trigger the existing logic
+        seats[index]?.click();
+      }
+    });
+  });
+</script>
+
 <style>
   .studio-portrait-seat {
-    transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform 500ms cubic-bezier(0.22, 1, 0.36, 1), opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), filter 500ms cubic-bezier(0.22, 1, 0.36, 1), z-index 0ms;
   }
 
   .studio-portrait-seat:focus-visible {
@@ -183,9 +349,54 @@ interface Props {
     outline-offset: 4px;
   }
 
+  .studio-portrait {
+    will-change: transform, box-shadow;
+  }
+
+  .studio-portrait:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 4px;
+  }
+
+  .carousel-indicator {
+    cursor: pointer;
+  }
+
+  .carousel-indicator:hover {
+    transform: scale(1.2);
+  }
+
+  .carousel-indicator:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    .studio-portrait-seat,
+    .studio-portrait,
+    .carousel-indicator {
+      transition: none !important;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .studio-carousel-track {
+      padding-bottom: var(--space-6);
+    }
+
     .studio-portrait-seat {
-      transition: none;
+      min-width: 280px;
+    }
+
+    .carousel-controls {
+      flex-wrap: wrap;
+    }
+
+    .carousel-indicators {
+      order: -1;
+      width: 100%;
+      justify-content: center;
+      margin-bottom: var(--space-4);
     }
   }
 </style>

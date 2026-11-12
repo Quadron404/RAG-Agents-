@@ -3,7 +3,6 @@ interface Props {
   isChatPage?: boolean;
 }
 ---
-
 <script is:inline>
   const form = document.querySelector('[data-chat-form]');
   const textarea = document.querySelector('[data-chat-input]');
@@ -12,28 +11,145 @@ interface Props {
   const fileInput = document.querySelector('[data-file-input]');
   const uploadButton = document.querySelector('[data-upload-button]');
   const voiceButton = document.querySelector('[data-voice-button]');
+  const filePreviews = document.querySelector('[data-file-previews]');
+  const charCount = document.querySelector('[data-char-count]');
 
   if (form && textarea && sendButton) {
+    const MAX_CHARS = 4000;
+    const MAX_FILES = 5;
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const ACCEPTED_TYPES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+    const uploadedFiles = new Map();
+
     function updateSendButton() {
-      const hasContent = textarea.value.trim().length > 0;
+      const hasContent = textarea.value.trim().length > 0 || uploadedFiles.size > 0;
       sendButton.disabled = !hasContent;
       sendButton.setAttribute('aria-disabled', (!hasContent).toString());
     }
 
     function autoResize() {
       textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+      const newHeight = Math.min(textarea.scrollHeight, 200);
+      textarea.style.height = newHeight + 'px';
+    }
+
+    function updateCharCount() {
+      const length = textarea.value.length;
+      if (charCount) {
+        charCount.textContent = `${length}/${MAX_CHARS}`;
+        charCount.style.color = length > MAX_CHARS * 0.9 ? 'var(--color-accent-destructive)' : 'var(--color-text-tertiary)';
+      }
+    }
+
+    function createFilePreview(file, id) {
+      const preview = document.createElement('div');
+      preview.className = 'file-preview flex items-center gap-2 px-3 py-2 bg-background-tertiary rounded-xl';
+      preview.dataset.fileId = id;
+
+      const icon = getFileIcon(file.type);
+      const size = formatFileSize(file.size);
+
+      preview.innerHTML = `
+        <span class="file-icon flex-shrink-0">${icon}</span>
+        <div class="file-info flex-1 min-w-0">
+          <span class="file-name block text-sm font-medium text-text-primary truncate">${escapeHtml(file.name)}</span>
+          <span class="file-size text-xs text-text-tertiary">${size}</span>
+        </div>
+        <button type="button" class="file-remove btn btn-ghost btn-icon p-1 text-text-tertiary hover:text-accent-destructive" aria-label="Remove ${escapeHtml(file.name)}">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      `;
+
+      preview.querySelector('.file-remove').addEventListener('click', () => {
+        uploadedFiles.delete(id);
+        preview.remove();
+        updateSendButton();
+        updateFileInput();
+      });
+
+      return preview;
+    }
+
+    function getFileIcon(mimeType) {
+      if (mimeType.startsWith('image/')) {
+        return `<svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`;
+      }
+      if (mimeType === 'application/pdf') {
+        return `<svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>`;
+      }
+      if (mimeType.includes('word')) {
+        return `<svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`;
+      }
+      return `<svg class="w-5 h-5 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>`;
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function updateFileInput() {
+      const dt = new DataTransfer();
+      uploadedFiles.forEach(file => dt.items.add(file));
+      fileInput.files = dt.files;
+    }
+
+    function handleFiles(files) {
+      Array.from(files).forEach(file => {
+        if (!ACCEPTED_TYPES.includes(file.type)) {
+          showToast('File type not supported. Please upload PDF, DOC, DOCX, TXT, PNG, JPG, GIF, or WEBP.', 'error');
+          return;
+        }
+        if (file.size > MAX_FILE_SIZE) {
+          showToast(`File too large. Maximum size is ${formatFileSize(MAX_FILE_SIZE)}.`, 'error');
+          return;
+        }
+        if (uploadedFiles.size >= MAX_FILES) {
+          showToast(`Maximum ${MAX_FILES} files allowed.`, 'error');
+          return;
+        }
+
+        const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        uploadedFiles.set(id, file);
+        const preview = createFilePreview(file, id);
+        filePreviews?.appendChild(preview);
+      });
+      updateFileInput();
+      updateSendButton();
+    }
+
+    function showToast(message, type = 'info') {
+      const toast = document.createElement('div');
+      toast.className = `toast fixed bottom-4 right-4 z-[var(--z-toast)] px-4 py-3 rounded-xl shadow-xl animate-slide-up ${type === 'error' ? 'bg-accent-destructive text-white' : 'bg-background-elevated border border-border-primary'}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        toast.style.animation = 'fadeOut 0.3s ease-out forwards';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
     }
 
     textarea.addEventListener('input', () => {
       updateSendButton();
       autoResize();
+      updateCharCount();
     });
 
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        if (textarea.value.trim()) {
+        if (textarea.value.trim() || uploadedFiles.size > 0) {
           form.dispatchEvent(new Event('submit'));
         }
       }
@@ -42,12 +158,22 @@ interface Props {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const message = textarea.value.trim();
-      if (!message) return;
+      if (!message && uploadedFiles.size === 0) return;
 
-      console.log('Sending message:', message);
+      const payload = {
+        message,
+        files: Array.from(uploadedFiles.values()).map(f => ({ name: f.name, type: f.type, size: f.size }))
+      };
+
+      console.log('Sending message:', payload);
+
       textarea.value = '';
+      uploadedFiles.clear();
+      filePreviews?.replaceChildren();
       autoResize();
       updateSendButton();
+      updateCharCount();
+      updateFileInput();
     });
 
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -84,44 +210,67 @@ interface Props {
       const target = e.target;
       if (target.files && target.files.length > 0) {
         handleFiles(target.files);
-        target.value = '';
       }
     });
-
-    function handleFiles(files) {
-      Array.from(files).forEach(file => {
-        console.log('File uploaded:', file.name, file.type, file.size);
-      });
-    }
 
     voiceButton?.addEventListener('click', () => {
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
         recognition.lang = 'en-US';
-        recognition.interimResults = false;
+        recognition.interimResults = true;
         recognition.maxAlternatives = 1;
+
+        let finalTranscript = '';
 
         recognition.onstart = () => {
           voiceButton.classList.add('listening');
           voiceButton.setAttribute('aria-label', 'Stop voice input');
+          voiceButton.innerHTML = `
+            <svg class="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c.3 0 .54.24.54.54v3.18c-.94.05-1.73.65-2.19 1.55-.2.38-.2.88 0 1.26.2.39.59.66 1.03.82.04-.34.07-.69.07-1.04V11.5c0-.55-.45-1-1-1h-.76v1.77c0 .22-.12.42-.3.53L15.6 18.33a.996.996 0 01-1.2 0L8.3 15.17a.996.996 0 010-1.41l1.59-1.59c-.34-.19-.5-.52-.5-.89V11.5c0-.3.03-.59.07-.86 0 0 .01-.01.01-.02.44-.17.84-.43 1.09-.83.46-.9 1.25-1.5 2.19-1.55V11.5c0-.3.24-.54.54-.54h.01c3.87 0 7 3.13 7 7s-3.13 7-7 7c-1.3 0-2.47-.5-3.33-1.31V21h3v-3.04c2.13.44 4.23-.43 5.12-2l-1.62-1.62z"/>
+            </svg>
+          `;
         };
 
         recognition.onresult = (event) => {
-          const transcript = event.results[0][0].transcript;
-          textarea.value = transcript;
+          let interimTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+          textarea.value = finalTranscript + interimTranscript;
           textarea.dispatchEvent(new Event('input'));
         };
 
-        recognition.onerror = () => {
+        recognition.onerror = (event) => {
+          console.error('Speech recognition error:', event.error);
+          if (event.error !== 'no-speech') {
+            showToast('Voice input error. Please try again.', 'error');
+          }
           voiceButton.classList.remove('listening');
           voiceButton.setAttribute('aria-label', 'Voice input');
+          resetVoiceButton();
         };
 
         recognition.onend = () => {
           voiceButton.classList.remove('listening');
           voiceButton.setAttribute('aria-label', 'Voice input');
+          resetVoiceButton();
         };
+
+        function resetVoiceButton() {
+          voiceButton.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10v2a7 7 0 01-14 0v-2" />
+              <line stroke-linecap="round" stroke-linejoin="round" stroke-width="2" x1="12" y1="19" x2="12" y2="22" />
+            </svg>
+          `;
+        }
 
         if (voiceButton.classList.contains('listening')) {
           recognition.stop();
@@ -129,168 +278,282 @@ interface Props {
           recognition.start();
         }
       } else {
-        alert('Voice input is not supported in this browser.');
+        showToast('Voice input is not supported in this browser.', 'error');
       }
     });
 
     updateSendButton();
     autoResize();
+    updateCharCount();
+
+    // Add fadeOut animation
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeOut {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(10px); }
+      }
+    `;
+    document.head.appendChild(style);
   }
 </script>
 
-<section class="hero-section" data-slot="carousel" data-has-own-composer="">
-  <div class="hero-background" aria-hidden="true">
-    <div class="hero-background-image" style="opacity: 1;">
-      <svg width="2000" height="1332" viewBox="0 0 2000 1332" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <defs>
-          <linearGradient id="hero-gradient-1" x1="0" y1="0" x2="2000" y2="1332" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#1e40af" stop-opacity="0.15"/>
-            <stop offset="50%" stop-color="#059669" stop-opacity="0.1"/>
-            <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0.15"/>
-          </linearGradient>
-          <radialGradient id="hero-glow-1" cx="50%" cy="50%" r="50%" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#2563eb" stop-opacity="0.2"/>
-            <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="2000" height="1332" fill="url(#hero-gradient-1)"/>
-        <ellipse cx="1000" cy="666" rx="800" ry="400" fill="url(#hero-glow-1)"/>
-        <circle cx="1600" cy="200" r="300" fill="#2563eb" opacity="0.08"/>
-        <circle cx="400" cy="1100" r="250" fill="#10b981" opacity="0.06"/>
-      </svg>
+<section class="hero-section relative min-h-[calc(100dvh-var(--header-height))] flex items-center justify-center px-4 sm:px-6 lg:px-8 py-16 lg:py-24 overflow-hidden" data-hero>
+  <div class="hero-gradient rounded-3xl lg:rounded-4xl" aria-hidden="true"></div>
+
+  <div class="noise-bg" aria-hidden="true"></div>
+
+  <div class="relative z-10 w-full max-w-4xl">
+    <div class="text-center mb-10 lg:mb-14 animate-fade-in stagger-1">
+      <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-primary/10 text-accent-primary text-xs font-medium mb-6 animate-fade-in stagger-2">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span>Search across 29,000+ government websites</span>
+      </span>
+
+      <h1 class="text-4xl sm:text-5xl lg:text-6xl font-display font-semibold text-text-primary leading-tight mb-6 animate-slide-up stagger-3 text-balance">
+        Hello,<br>
+        <span class="gradient-text">America</span>
+      </h1>
+
+      <p class="text-lg sm:text-xl lg:text-2xl text-text-secondary max-w-2xl mx-auto leading-relaxed animate-slide-up stagger-4 text-balance">
+        Whatever you need from government, start here. Clear answers from official sources.
+      </p>
     </div>
-  </div>
 
-  <div class="flex w-full justify-center mobile:mx-auto mobile:grid mobile:max-w-[1024px] mobile:grid-cols-[repeat(12,minmax(0,1fr))] mobile:gap-x-6">
-    <div class="flex w-[687.5px] flex-col items-center gap-[62px] mobile:col-span-full mobile:w-full mobile:gap-12 site-desktop-col-span-8 site-desktop-col-start-3">
-      <div class="landing-heading flex w-full flex-col items-center gap-4 text-center px-8 mobile:gap-5 mobile:px-0">
-        <div data-home-reveal="" data-site-hero-enter="0">
-          <h1 class="text-text-primary type-site-hero max-mobile:text-[clamp(36px,12vw,48px)]">
-            Hello,<br />
-            <span class="font-semibold">America</span>
-          </h1>
-        </div>
-        <div data-home-reveal="" data-site-hero-enter="1">
-          <p class="text-text-secondary type-home-supporting">
-            Whatever you need from government, start here.
-          </p>
-        </div>
-      </div>
-
-      <div data-home-reveal="" data-site-hero-enter="2" data-slot="hero-ask-pill" class="w-full">
-        <div data-slot="chat-input-surface" class="relative rounded-32 mobile-rounded-48">
-          <div class="relative">
-            <div class="w-full relative">
-              <form data-chat-form data-slot="chat-input-shell" aria-label="Describe what you need" class="chat-input-shell">
-                <div class="contents">
-                  <label id="chat-label" class="sr-only" for="chat-input">Describe what you need</label>
-
-                  <div class="w-full shrink-0 overflow-visible drop-shadow-[0_10px_20px_rgba(1,14,36,0.08)]" style="height:auto">
-                    <div class="flex items-start gap-2 overflow-x-auto overscroll-x-contain scrollbar-hide -ml-4">
-                    </div>
-                  </div>
-
-                  <div data-slot="chat-input-row" style="opacity:1;filter:blur(0px)">
-                    <textarea
-                      data-chat-input
-                      id="chat-input"
-                      class="chat-input-field w-full min-h-[2.5rem] max-h-[200px] resize-none"
-                      placeholder="How do I replace my Social Security card?"
-                      aria-describedby="chat-label"
-                      spellcheck="false"
-                    ></textarea>
-
-                    <div class="chat-input-actions flex items-center gap-1">
-                      <button
-                        data-upload-button
-                        type="button"
-                        class="chat-action-button"
-                        aria-label="Upload PDF"
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                          <line x1="16" y1="13" x2="8" y2="13" />
-                          <line x1="16" y1="17" x2="8" y2="17" />
-                          <polyline points="10 9 9 9 8 9" />
-                        </svg>
-                      </button>
-
-                      <button
-                        data-voice-button
-                        type="button"
-                        class="chat-action-button"
-                        aria-label="Voice input"
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                          <line x1="12" y1="19" x2="12" y2="22" />
-                        </svg>
-                      </button>
-
-                      <button
-                        data-chat-send
-                        type="submit"
-                        class="chat-send-button"
-                        disabled
-                        aria-label="Send message"
-                        aria-disabled="true"
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                          <line x1="22" y1="2" x2="11" y2="13" />
-                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div data-slot="chat-input-drop-zone" class="chat-drop-zone" aria-hidden="true">
-                    <div class="flex h-full items-center justify-center gap-2 text-tertiary type-label-s">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                      </svg>
-                      <span>Drop files here or click to upload</span>
-                    </div>
-                  </div>
-
-                  <input
-                    data-file-input
-                    type="file"
-                    accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
-                    multiple
-                    class="sr-only"
-                    aria-hidden="true"
-                  />
-                </div>
-              </form>
+    <div class="animate-slide-up stagger-5" data-chat-container>
+      <div class="chat-shell glass rounded-2xl lg:rounded-3xl border border-border-primary/50 overflow-hidden shadow-xl">
+        <div class="chat-header px-4 py-3 border-b border-border-primary/50 bg-background-primary/50">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <span class="text-sm font-medium text-text-secondary">GovLink Assistant</span>
+              <span class="w-2 h-2 rounded-full bg-emerald-500" aria-label="Online"></span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button class="btn btn-ghost btn-icon p-1" aria-label="New chat">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              <button class="btn btn-ghost btn-icon p-1" aria-label="Settings">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
+
+        <div class="chat-messages p-4 space-y-4 max-h-[400px] overflow-y-auto scrollbar-thin" data-messages>
+          <div class="message assistant flex gap-3 animate-fade-in">
+            <div class="w-8 h-8 rounded-full bg-accent-primary/10 flex items-center justify-center flex-shrink-0">
+              <svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-text-secondary">Hello! I can help you find answers from official government sources. Try asking about benefits, passports, taxes, veterans' services, or any government program.</p>
+            </div>
+          </div>
+          <div class="message assistant flex gap-3 animate-fade-in stagger-2">
+            <div class="w-8 h-8 rounded-full bg-accent-primary/10 flex items-center justify-center flex-shrink-0">
+              <svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <div class="example-chips flex flex-wrap gap-2">
+                <button class="example-chip btn btn-ghost btn-sm px-3 py-1.5" data-example="How do I replace my Social Security card?">How do I replace my Social Security card?</button>
+                <button class="example-chip btn btn-ghost btn-sm px-3 py-1.5" data-example="I'm a veteran. How do I get care?">I'm a veteran. How do I get care?</button>
+                <button class="example-chip btn btn-ghost btn-sm px-3 py-1.5" data-example="What are the requirements for a passport?">What are the requirements for a passport?</button>
+                <button class="example-chip btn btn-ghost btn-sm px-3 py-1.5" data-example="How do I apply for Medicare?">How do I apply for Medicare?</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <form data-chat-form class="chat-input-area p-4 border-t border-border-primary/50 bg-background-primary/50" aria-label="Describe what you need">
+          <div class="flex flex-col gap-3">
+            <div id="file-previews" data-file-previews class="flex flex-wrap gap-2 min-h-[2rem]"></div>
+
+            <div class="relative" data-chat-input-row>
+              <div class="relative flex-1">
+                <textarea
+                  data-chat-input
+                  id="chat-input"
+                  class="input w-full min-h-[60px] max-h-[160px] resize-none pr-16 bg-transparent border-border-primary/50 focus:border-accent-primary focus:ring-0 placeholder:text-text-tertiary"
+                  placeholder="Ask about benefits, passports, taxes, veterans' services..."
+                  aria-describedby="chat-hint"
+                  spellcheck="false"
+                  maxlength="4000"
+                ></textarea>
+                <div class="absolute bottom-2 right-2 flex items-center gap-2 pointer-events-none">
+                  <span id="chat-char-count" data-char-count class="text-xs text-text-tertiary pointer-events-auto">0/4000</span>
+                </div>
+              </div>
+
+              <div class="chat-actions flex items-center gap-1.5">
+                <button
+                  data-upload-button
+                  type="button"
+                  class="btn btn-ghost btn-icon p-1.5 text-text-tertiary hover:text-text-primary hover:bg-background-tertiary"
+                  aria-label="Attach files"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                </button>
+
+                <button
+                  data-voice-button
+                  type="button"
+                  class="btn btn-ghost btn-icon p-1.5 text-text-tertiary hover:text-text-primary hover:bg-background-tertiary"
+                  aria-label="Voice input"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10v2a7 7 0 01-14 0v-2" />
+                    <line stroke-linecap="round" stroke-linejoin="round" stroke-width="2" x1="12" y1="19" x2="12" y2="22" />
+                  </svg>
+                </button>
+
+                <button
+                  data-chat-send
+                  type="submit"
+                  class="btn btn-primary btn-icon p-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled
+                  aria-label="Send message"
+                  aria-disabled="true"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div id="chat-drop-zone" data-drop-zone class="drop-zone absolute inset-0 rounded-2xl border-2 border-dashed border-transparent bg-background-primary/50 transition-all duration-200 flex items-center justify-center pointer-events-none opacity-0">
+              <div class="text-center px-4">
+                <svg class="w-10 h-10 mx-auto mb-2 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <p class="text-sm font-medium text-text-secondary">Drop files here or click to upload</p>
+                <p class="text-xs text-text-tertiary mt-1">PDF, DOC, DOCX, TXT, PNG, JPG, GIF, WEBP • Up to 10MB each</p>
+              </div>
+            </div>
+
+            <input
+              data-file-input
+              type="file"
+              accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.gif,.webp"
+              multiple
+              class="sr-only"
+              aria-hidden="true"
+            />
+
+            <p id="chat-hint" class="text-xs text-text-tertiary text-center">
+              Press <kbd class="px-1.5 py-0.5 bg-background-tertiary rounded text-text-secondary font-mono text-xs">Enter</kbd> to send, <kbd class="px-1.5 py-0.5 bg-background-tertiary rounded text-text-secondary font-mono text-xs">Shift+Enter</kbd> for new line
+            </p>
+          </div>
+        </form>
       </div>
+    </div>
+
+    <div class="mt-8 text-center animate-fade-in stagger-6">
+      <p class="text-sm text-text-tertiary">
+        No tracking • No ads • Your data stays private
+        <a href="/privacy" class="ml-2 text-accent-primary hover:underline font-medium">Learn more</a>
+      </p>
     </div>
   </div>
 </section>
 
+<script is:inline>
+  // Example chip handlers
+  document.querySelectorAll('[data-example]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const textarea = document.querySelector('[data-chat-input]');
+      const form = document.querySelector('[data-chat-form]');
+      if (textarea && form) {
+        textarea.value = chip.dataset.example;
+        textarea.dispatchEvent(new Event('input'));
+        textarea.focus();
+        form.dispatchEvent(new Event('submit'));
+      }
+    });
+  });
+</script>
+
 <style>
-  .chat-action-button.listening {
-    color: var(--color-emerald-500);
+  .chat-shell {
+    animation: scaleIn var(--duration-slower) var(--ease-spring);
+  }
+
+  .drop-zone.active {
+    opacity: 1;
+    pointer-events: auto;
+    border-color: var(--color-accent-primary);
+    background-color: var(--color-accent-primary/5);
+  }
+
+  .file-preview {
+    animation: scaleIn var(--duration-fast) var(--ease-spring);
+  }
+
+  .example-chip {
+    transition: all var(--duration-fast) var(--ease-out);
+  }
+
+  .example-chip:hover {
+    background-color: var(--color-accent-primary/10);
+    border-color: var(--color-accent-primary/30);
+    color: var(--color-accent-primary);
+  }
+
+  .message {
+    animation: fadeIn var(--duration-normal) var(--ease-out);
+  }
+
+  .chat-input-area {
+    position: relative;
+  }
+
+  .voice-button.listening {
+    background-color: var(--color-accent-destructive/10);
+    color: var(--color-accent-destructive);
     animation: pulse 1.5s ease-in-out infinite;
   }
 
   @keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.1); }
+    0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-destructive/40); }
+    50% { box-shadow: 0 0 0 8px transparent; }
   }
 
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
+  @media (max-width: 640px) {
+    .hero-section {
+      min-h-auto;
+      padding: var(--space-12) var(--space-4);
+    }
 
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
+    .chat-header {
+      padding: var(--space-3);
+    }
+
+    .chat-messages {
+      max-h-[300px];
+    }
+
+    .chat-input-area {
+      padding: var(--space-3);
+    }
+
+    .chat-actions {
+      gap: var(--space-1);
+    }
   }
 </style>
