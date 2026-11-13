@@ -261,3 +261,43 @@
 **Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
 
 **Next Action**: Prompt 27 — Create one canonical durable transcript (ensure message ordering, editing, deletion, and tool calls are in a single source of truth)
+
+---
+
+## Prompt 27: Create one canonical durable transcript — REPORT
+
+**Status**: PASS (implemented and deployed)
+
+**Baseline**: 
+- Messages were retrievable via `listMessages` but no single API for the complete transcript
+- Edits stored in `message_edits` but not included in message listings
+- Deletions tracked in `message_tombstones` but not exposed
+- Tool calls/results stored in message `data` but not extracted
+- No single source of truth for the complete conversation history
+
+**Files Modified**:
+1. `/workspace/app/worker/src/chat/store.ts` — Added:
+   - `TranscriptEntry` interface with types: `message`, `edit`, `tombstone`, `tool_call`, `tool_result`
+   - `getCanonicalTranscript` function that returns a chronologically ordered array of all transcript entries:
+     - All messages in seq order
+     - Edit history for each message (from `message_edits`)
+     - Tombstone entries for deleted messages (from `message_tombstones`)
+     - Tool calls extracted from message `data.tool_calls`
+     - Tool results extracted from message `data.tool_results`
+   - Entries sorted by `seq` then `created_at` for deterministic ordering
+
+2. `/workspace/app/worker/src/chat/routes.ts` — Added:
+   - Import `getCanonicalTranscript` from store
+   - `handleTranscript` function for `GET /threads/:conversationId/transcript`
+   - Route dispatcher entry for transcript endpoint
+
+**Tests**: 
+- Worker typecheck passes (new code only; pre-existing errors unchanged)
+- Frontend typecheck and build pass
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 6b585787-a364-4ef1-9ada-d8a85e09b762) with updated frontend assets
+
+**Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
+
+**Next Action**: Prompt 28 — Persist message editing on the server (frontend integration for edit API)
