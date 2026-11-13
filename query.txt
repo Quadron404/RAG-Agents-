@@ -1608,5 +1608,86 @@ All 10 prompts (91-100) have been implemented and deployed:
 - Worker: `src/chat/store.ts`, `src/chat/routes.ts`, `src/codespace.ts`, `migrations/0013_computer_sessions.sql`
 - Frontend: `src/core.ts`, `src/components/TerminalPane.tsx`, `src/components/FilePreview.tsx`, `src/views/Files.tsx`
 
+---
+
+## QA Prompt 4: Chief orchestration, tools, approvals, and task activity — REPORT
+
+**Status**: BLOCKED (production authentication required; no isolated preview available)
+
+**Baseline**: 
+- Production at `https://rag-agents.pratyakshrawat768.workers.dev` exposes Google OAuth sign-in (working redirect with PKCE S256, state, nonce)
+- GET /auth/session returns `authenticated:false, user:null`
+- GET /auth/login redirects to Google with correct scopes (openid email profile)
+- No "Skip Sign In — AI Testing" button observed (removed or not configured)
+- Production Worker version: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba (v36, deployed 2026-11-12T20:51:34Z)
+- Production has GOOGLE_CLIENT_SECRET, SESSION_SECRET, RAG_INTERNAL_TOKEN, D1, AI_SEARCH, ASSETS bindings
+- Production MISSING: GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, GMAIL_SENDER_REFRESH_TOKEN; CODESPACE_NAME empty
+- Worker source requires GROQ_API_KEY for configured Groq provider → chat/summaries non-operational
+- Main source: no first-class channels table/channel_id/API; message edit/delete/pin local-only; conversation pin/archive localStorage; ChiefAvatar.tsx absent; multiple bot identities in store
+
+**Browserless Session**: `s:0fdc283e-7131-4d87-b573-5d1fd77d7a4a`
+- Timestamp: 2026-11-13T13:35:00Z (Asia/Kolkata)
+- Viewport: 1280×720 (default desktop)
+- Routes tested: `/`, `/auth/session`, `/auth/login`, `/threads`, `/chat/status`, `/routines/connectors/approvals`, `/tasks`
+
+**Test Steps & Results**:
+1. **Root page (/)**: Returns sign-in shell with "Continue with Google" link only. No bypass observed.
+2. **GET /auth/session**: HTTP 200, `{"authenticated":false,"user":null,"gmail":{"connected":false,"status":"unknown"}}`
+3. **GET /auth/login**: HTTP 200, redirects to Google accounts with PKCE (code_challenge=II39UksePghGUyTmXZdJZKwlDaFcChbBebJTaCyJP38, code_challenge_method=S256), state, nonce, scopes=openid+email+profile, redirect_uri=https://rag-agents.pratyakshrawat768.workers.dev/auth/callback
+4. **GET /threads (unauthenticated)**: HTTP 401, `{"error":"authentication required"}` ✓ Correctly protected
+5. **GET /chat/status (unauthenticated)**: HTTP 401, `{"error":"authentication required"}` ✓ Correctly protected
+6. **GET /routines/connectors/approvals (unauthenticated)**: HTTP 401, `{"error":"authentication required"}` ✓ Correctly protected
+7. **GET /tasks**: HTTP 200, returns frontend HTML (served by ASSETS), not API
+
+**Authenticated Paths - BLOCKED**:
+- Cannot complete Google OAuth without credentials (no test identity available)
+- No isolated preview deployment with dedicated D1/AI Search verified
+- Production missing GROQ_API_KEY → Chief chat/SSE non-functional even if authenticated
+- Production missing GITHUB_TOKEN, CODESPACE_NAME → Computer wake, routines dispatch non-functional
+- Production missing GMAIL_SENDER_EMAIL/REFRESH_TOKEN → Connector approvals (Gmail) non-functional
+
+**Source Code Assessment** (worker/src/):
+- **Chat routes** (`chat/routes.ts`): Implements plan → tool → approval → result via SSE streaming
+  - `startTurn` acquires conversation lock, streams provider events
+  - Tools: ROUTINE_TOOLS (Worker-native D1), HISTORY_TOOL, MAIL_TOOL_CALL_TOOL, CONNECTOR_TOOLS
+  - Connector tools create pending approvals in D1 (`connector_approvals` table)
+  - Approval endpoints: `/routines/connectors/approvals` (GET/POST execute/deny)
+  - Request deduplication via `request_id`, conversation lock prevents concurrent turns
+- **Connector approvals** (`connector-approvals.ts`, `connector-tools.ts`):
+  - One-time, owner-scoped, 30-min TTL approvals
+  - Atomic claim transition (pending → executing) prevents double-execution
+  - Gmail send_email: recipient fixed to authenticated user's verified email
+- **Task/approval infrastructure** (from Prompts 51-57 in query.txt):
+  - `tasks` table with status (queued/working/waiting/completed/failed/cancelled/scheduled)
+  - `task_events` for progress, `task_dependencies` with cycle detection
+  - `attention_queue` aggregates approvals, blocked tasks, failures, decisions
+  - `task_notifications` table with deep links (Prompt 59)
+  - BUT: No `/tasks` API routes in current `chat/routes.ts` — tasks appear frontend-only (Core state `run.steps`)
+  - Routines scheduler exists (`scheduler.ts`, `routines.ts`) but requires GITHUB_TOKEN/CODESPACE_NAME
+
+**Defects Found**:
+1. **No authenticated test path**: Production OAuth works but no test identity; no preview deployment verified
+2. **Chief chat non-operational**: GROQ_API_KEY missing from Production → 503 on chat turn
+3. **Tasks not API-backed**: Frontend TasksView uses transient `run.steps` (Core state), no server persistence visible in current Worker routes
+4. **Routines/Computer blocked**: Missing GITHUB_TOKEN, CODESPACE_NAME in Production
+5. **Gmail connector blocked**: Missing GMAIL_SENDER_EMAIL/REFRESH_TOKEN
+6. **No approval UI tested**: Cannot reach approval card without authenticated chat turn
+
+**Root Cause**: Production secret bindings incomplete (GROQ_API_KEY, GITHUB_TOKEN, GMAIL secrets, CODESPACE_NAME) and no isolated preview environment provisioned for synthetic authenticated testing.
+
+**Changed Files**: None (QA-only investigation)
+
+**Tests**: Browserless live-browser verification of unauthenticated protections (all PASS)
+
+**Deployment**: Not applicable — no code changes
+
+**Same-Session Retest**: N/A (blocked at authentication)
+
+**Status**: BLOCKED — Cannot exercise Chief orchestration, tool calls, approvals, or task activity without authenticated session. Requires either:
+- Provisioned isolated preview with D1/AI Search and test OAuth identity, OR
+- Production secret bindings completed (GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, GMAIL_SENDER_REFRESH_TOKEN, CODESPACE_NAME) AND test Google account available
+
+**Next Action**: Provision isolated preview deployment (Prompt 1 prerequisite) OR report missing Production secrets to owner for configuration. Then re-run QA Prompt 4 with authenticated Browserless session.
+
 **Total Worker Deployments**: 7 versions deployed to `https://rag-agents.pratyakshrawat768.workers.dev`
 
