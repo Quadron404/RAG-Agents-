@@ -2,21 +2,23 @@ RAG AGENTS — 11 MANDATORY LIVE BROWSERLESS QA + REPAIR PROMPTS
 Repository: https://github.com/Quadron404/RAG-Agents-
 Report branch: main
 Production origin: https://rag-agents.pratyakshrawat768.workers.dev
-Refresh: 2026-11-13 (Asia/Kolkata)
+Refresh: 2026-11-14 03:20 (Asia/Kolkata)
 
 PURPOSE
-These are exhaustive real-user journeys and repair assignments, not smoke tests. Execute all 11 in order, one at a time. Each prompt repeats the AI7 Browserless MCP import and hard-use requirement. Browserless is the only accepted live-browser evidence for this queue. The Chief's Firecrawl inspection is an independent baseline, not a substitute.
+These are exhaustive real-user journeys and repair assignments, not smoke tests. Execute all 11 in order, one at a time. Every prompt repeats the AI7 Browserless MCP import block and mandatory tool-use gate. Browserless is the only accepted live-browser evidence for this queue. The Chief's Firecrawl inspection is an independent baseline only, never a substitute for AI7 Browserless QA.
 
-CURRENT VERIFIED BASELINE
-- Firecrawl desktop/mobile Production shows only the unauthenticated sign-in shell; no Skip Sign In/test control.
-- GET /auth/session returns HTTP 200 with authenticated:false, user:null.
-- GET /auth/login redirects to Google using /auth/callback, openid email profile, PKCE S256, state, nonce. No credentials entered; callback/session unverified.
-- Production Worker version 36: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba, deployed 2026-11-12T20:51:34Z.
-- Cloudflare has Google client secret, session secret, RAG internal token, D1, AI_SEARCH, ASSETS. No secret values read.
-- Production does not list GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN; CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty.
-- Main has no channel entity/API. Message edit/delete/pin and conversation pin/archive include local-only paths. Tasks are not proven durable. Computer, routines, Files, restricted browsing, memory, summaries, approvals have substantial source/tests but need real end-to-end verification.
-- query.txt is present and empty after previous review; it is now append-only.
-
+BROWSERLESS IS A HARD DEPENDENCY — NO VOLUNTARY SKIP
+AI7 is expected to have the remote MCP server configured as browserless. Before source edits or declaring QA blocked, inspect AI7 → MCP → browserless → remote, inspect the actual tool names/schema, and invoke the live Browserless tool against the production origin or a verified isolated preview. If the server/tool is not exposed, inspect the existing MCP configuration, reconnect/retry it, read Browserless recovery guidance, and diagnose the exact tool error. Do not merely write that Browserless is unavailable. Do not substitute Firecrawl, Playwright, local Chrome, curl, screenshots, or source inspection. QA has not started until a real Browserless call returns a usable session ID and browser evidence. Preserve that session ID across every action and post-deployment retest. Never invent a session ID, tool result, credentials, or authentication bypass.
+CURRENT VERIFIED BASELINE — 2026-11-14 03:20 Asia/Kolkata
+- GitHub main HEAD is 54695806811fcdcd1220eefe17a67aa4ef1c501f. The latest main commit only added the QA Prompt 8 report to query.txt; no recent application-source implementation from the reports is merged into main.
+- Main contains Worker migrations 0001–0011 only; 0012_channels.sql and 0013_computer_sessions.sql are absent. Production D1 rag-agents-auth confirms d1_migrations 0001–0011 only. No first-class channels, user/channel memory, durable message pins/reactions/edits/tombstones, durable task/event tables, or artifact tables exist in the live D1 schema. conversations has no channel_id/pinned_at/archived_at; messages has no reply_to_id.
+- Query ledger review found implementation reports for prompt IDs 21–40, 51–59, and 91–100 (39 prompt IDs across 38 report sections), plus only QA Prompt 8. QA Prompt 8 is BLOCKED; QA prompts 1–7 and 9–11 have no report. Several implementation reports marked PASS still disclose remote D1 migration failures (7403), missing backend/Codespace redeploy, or deferred UI/artifact/share/template work. Do not treat these as verified completion. The report coverage is not 118/118 or 11/11.
+- Latest Production Worker deployment is 0c5d1a87-fa05-4d50-ba39-0abbd3e2ff8a, version 5f13af22-e077-4c42-ab46-60b2ef9683e6, created 2026-11-13T20:55:59Z. Production bindings include DB, AI_SEARCH, ASSETS and Google/session/internal-token secrets. No Worker secret binding named GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN is listed; CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty. No secret values were read.
+- Firecrawl's independent live check on 2026-11-14 found the production root returns HTTP 200 on desktop and mobile but shows only the sign-in shell. Clicking Continue with Google reaches Google's Sign in page with /auth/callback, PKCE S256, state, nonce, and openid email profile; no credentials were entered and no callback/session was completed. GET /auth/session returns authenticated:false, user:null.
+- Unauthenticated /channels and /tasks navigation currently returns the sign-in SPA shell with HTTP 200. That is not evidence that the API exists or works; inspect content type/body and use an isolated authenticated preview session for feature QA. Never infer route success from HTTP 200 alone.
+- Main source has no /channels API or channel entity; Chat.tsx retains localStorage message pins; Tasks.tsx uses Core run state and routines rather than a verified durable task inbox; no dedicated ChiefAvatar.tsx exists. Computer, noVNC, CDP, Terminal, Files, routines, restricted browsing, memory, summaries, and approvals have source/tests but still require real-user end-to-end QA.
+- The supplied Google Drive avatar link did not return inspectable image content. Retain the design brief: original glowing 3×3-dot Chief avatar, burgundy identity, restrained premium motion.
+- query.txt was archived into AI7_PROGRESS.md and reset to zero bytes by the Chief for this new active batch. Agents must append each prompt's detailed report to both working-branch and main/query.txt. Never clear it during an active batch.
 
 
 Prompt 1 : Authentication, onboarding, and protected application shell
@@ -46,12 +48,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 2 : Channels, shared memory, and one unified Chief chat
@@ -81,12 +84,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 3 : Chief chat, composer, streaming, and message interactions
@@ -116,12 +120,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 4 : Chief orchestration, tools, approvals, and task activity
@@ -151,12 +156,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 5 : Memory, history, search, summaries, and provenance
@@ -186,12 +192,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 6 : Tasks, routines, scheduling, and notifications
@@ -221,12 +228,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 7 : Gmail inbox, drafts, approvals, and connected services
@@ -256,12 +264,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 8 : Computer, remote Chrome, terminal, and restricted browsing
@@ -291,12 +300,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 9 : Files, previews, generated artifacts, and sharing
@@ -326,12 +336,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 10 : Premium visual quality, responsive behavior, and Chief identity
@@ -361,12 +372,13 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 
 Prompt 11 : Full production regression, security, resilience, and release
@@ -396,11 +408,12 @@ COMPULSORY REPAIR LOOP
 - Reproduce failure in Browserless as a real user. Capture timestamp, URL, viewport, session ID, screenshot/DOM, console, failed network requests/statuses, exact steps.
 - Trace UI → Worker → D1/backend/provider. Fix root cause, not cosmetic state or hardcoded success.
 - Add focused regression test; run relevant full suite; rebuild/typecheck.
+- If the fix changes schema, apply the exact migration to remote Production D1 with the existing Wrangler config after token export; verify its name in d1_migrations and inspect the actual columns/tables. Local-only migration is not PASS; do not deploy code that assumes missing schema.
 - Before Wrangler run exactly: export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY". Confirm variables exist without printing. Deploy changed runtime/frontend assets through existing Worker config; preserve ASSETS, D1, AI_SEARCH, Cron, routes, vars, secrets. Diagnose API errors; never manual-upload, delete Worker, alter bindings as workaround.
 - Verify deployment/version, then repeat exact failure in SAME Browserless session ID against deployed Worker. Recheck adjacent flows.
 - Repeat reproduce → root-cause fix → tests → deploy → same-session Browserless retest until all assertions pass. If a real external binding blocks a path, inspect correct runtime metadata, keep fail-closed, report BLOCKED; never claim PASS.
 
 MANDATORY AI7 TO-DO + MAIN REPORT
-Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Never clear/truncate query.txt. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
+Add this QA prompt as separate AI7 To-Do item. Append detailed report to query.txt on working branch and sync exact report to GitHub main/query.txt via separate latest-main report-only worktree before next prompt. Verify main readback and commit SHA. Do not clear/truncate query.txt during an active QA batch. Only the Chief may reset it between cycles after archiving the report summary in AI7_PROGRESS.md. Include Browserless tool name, session ID, timestamps, viewport, routes, steps, screenshot/DOM, console/network results, defects, root cause, changed files, tests, build, deployment/version, same-session retest, status, blockers, next action. Redact secrets/cookies/private content. Update AI7_PROGRESS.md.
 
 END OF 11 MANDATORY BROWSERLESS QA + REPAIR PROMPTS
