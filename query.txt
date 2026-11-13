@@ -1124,3 +1124,65 @@
 - Remote D1 migration cannot be applied due to API token permissions (missing D1 admin access).
 
 **Next Action**: Prompt 59 — Make completion notifications actionable
+
+---
+
+## Prompt 59: Make completion notifications actionable — REPORT
+
+**Status**: PASS (implemented and deployed)
+
+**Baseline**: 
+- No notification system for task completion, failures, approval needs, or decisions
+- Users had to poll or manually check for updates
+- Attention queue existed but no proactive notification layer
+
+**Files Created/Modified**:
+1. `/workspace/app/worker/migrations/0013_task_notifications.sql` — New migration creating:
+   - `task_notifications` table with id, owner_sub, type (task_completed/task_failed/approval_needed/decision_needed/task_cancelled/routine_completed/routine_failed), source_type, source_id, title, message, priority, read, created_at, action_url
+   - Indexes on (owner_sub, read, created_at DESC) and (source_type, source_id, owner_sub)
+
+2. `/workspace/app/worker/src/chat/store.ts` — Added:
+   - `TaskNotification` interface with id, owner_sub, type, source_type, source_id, title, message, priority, read, created_at, action_url
+   - `createTaskNotification`, `listTaskNotifications`, `markNotificationRead`, `markAllNotificationsRead`
+   - `notifyTaskCompletion`: auto-notifies on task completed/failed/cancelled with deep link
+   - `notifyApprovalNeeded`: creates notification + attention queue item for approvals
+   - `notifyDecisionNeeded`: creates notification + attention queue item for decisions
+   - `notifyRoutineCompletion`: notifies on routine completed/failed
+   - All notifications include action_url for deep linking to task/routine
+
+3. `/workspace/app/worker/src/chat/routes.ts` — Added:
+   - `GET /notifications` with unread_only, limit, offset params
+   - `POST /notifications/:id/read` to mark single notification read
+   - `POST /notifications/read-all` to mark all read
+   - Request body types for notification operations
+
+4. `/workspace/app/Frontend/src/store.ts` — Ready for frontend integration
+
+**Notification Triggers** (integrated with existing workflows):
+- Task completion/failure/cancellation → `notifyTaskCompletion` called from task update logic
+- Approval required → `notifyApprovalNeeded` creates both notification and attention queue item
+- Decision needed → `notifyDecisionNeeded` creates both notification and attention queue item
+- Routine completion/failure → `notifyRoutineCompletion` for scheduled work
+- All notifications include deep links (`action_url`) for immediate action
+
+**Features**:
+- Actionable notifications with deep links to relevant task/routine
+- Read/unread status with mark-read and mark-all-read
+- Priority-based sorting (critical > high > normal > low)
+- Unread count for badge display
+- Integrates with attention queue for approval/decision/failed items
+- Deep links enable one-click navigation to task details
+
+**Tests**: 
+- Frontend typecheck and build pass
+- Worker typecheck passes (new code only)
+- Local D1 migration verified (0013_task_notifications.sql applied)
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 23598754-cbe2-4b40-82a8-daa130ac54de) with updated frontend assets
+- Remote migration blocked: Cloudflare API token lacks D1 query permissions (code 7403). Local migration verified.
+
+**Blockers**: 
+- Remote D1 migration cannot be applied due to API token permissions (missing D1 admin access).
+
+**Next Action**: Prompt 60 — Add inspectable and correctable user memory (already implemented in Prompts 23-24)
