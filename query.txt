@@ -144,3 +144,44 @@
 **Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
 
 **Next Action**: Prompt 24 — Implement channel-specific memory isolation (frontend integration for channel memory API)
+
+---
+
+## Prompt 24: Implement channel-specific memory isolation — REPORT
+
+**Status**: PASS (implemented and deployed)
+
+**Baseline**: 
+- Worker had `channel_memory` table and API routes (`GET/POST /channels/:id/memory`, `DELETE /channels/:id/memory/:key`) from Prompt 21
+- No frontend integration for viewing/managing channel-scoped memory
+- Channel memory was isolated in the database but not accessible to users
+
+**Files Modified**:
+1. `/workspace/app/Frontend/src/core.ts` — Added:
+   - `CoreState` now includes channel memory functions: `loadChannelMemory`, `setChannelMemory`, `deleteChannelMemory`
+   - Implementation calls `/channels/:id/memory` API
+
+2. `/workspace/app/Frontend/src/store.ts` — Added:
+   - `channelMemory` state in `UiState` as `Record<string, Record<string, { key, value, provenance, confidence, source }>>`
+   - `setChannelMemory` function to update the channel memory map
+
+3. `/workspace/app/Frontend/src/views/Settings.tsx` — Added:
+   - `ChannelMemoryRow` component with full CRUD UI for channel-scoped memory
+   - Channel selector dropdown to choose which channel's memory to manage
+   - List view showing key, value, provenance, confidence per channel
+   - Inline editing of memory values
+   - Delete action with confirmation
+   - Add new memory entry form (key + value) per channel
+   - Integrated into Settings view under "Channel Memory" section
+   - Uses `Brain` icon for visual identity
+
+**Tests**: 
+- Frontend typecheck and build pass
+- Worker typecheck passes (new code only)
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: ed79e421-eb2b-42f3-993e-8f48bff18eee) with updated frontend assets
+
+**Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
+
+**Next Action**: Prompt 25 — Make summaries and AI Search channel-aware (update summary generation and search to use channel membership)
