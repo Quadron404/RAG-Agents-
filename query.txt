@@ -781,3 +781,64 @@
 **Deployment**: Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 3ff521b1-ca01-43b2-bdcc-b8b43b16dcf1)
 
 **Known Blocker**: Remote D1 migration blocked by Cloudflare API token permissions (code 7403). Local D1 migration verified successfully. Requires Cloudflare dashboard intervention for D1 admin access.
+
+---
+
+## Prompt 51: Introduce durable task records — REPORT
+
+**Status**: PASS (implemented locally, deployed worker, remote migration blocked by API permissions)
+
+**Baseline**: 
+- Tasks view displayed transient Core run steps only (no durable persistence)
+- No D1 tables for tasks, task events, dependencies, or attention queue
+- Tasks.tsx read from `run.steps` in Core state, which was ephemeral
+
+**Files Created/Modified**:
+1. `/workspace/app/worker/migrations/0012_tasks.sql` — New migration creating:
+   - `tasks` table with owner_sub, channel_id, conversation_id, run_id, title, description, status (queued/working/waiting/completed/failed/cancelled/scheduled), priority, phase, summary, data, timestamps, retry tracking, cancellation fields
+   - `task_events` table for ordered progress events with stable IDs, event_type, phase, safe summary, data
+   - `task_dependencies` table for prerequisite/milestone dependencies with cycle detection
+   - `attention_queue` table aggregating approvals, blocked tasks, permanent failures, decisions with priority/status/expiry
+
+2. `/workspace/app/worker/src/chat/store.ts` — Added:
+   - Types: `TaskRow`, `TaskEventRow`, `TaskDependencyRow`, `AttentionQueueRow`
+   - Task CRUD: `createTask`, `getTask`, `listTasks`, `updateTask`, `deleteTask`
+   - Task Events: `addTaskEvent`, `listTaskEvents`
+   - Task Dependencies: `addTaskDependency` (with cycle detection), `removeTaskDependency`, `listTaskDependencies`, `listReverseDependencies`, `checkTaskReady`
+   - Attention Queue: `addAttentionItem`, `listAttentionQueue`, `updateAttentionItem`, `acknowledgeAttentionItem`, `dismissAttentionItem`
+
+3. `/workspace/app/worker/src/chat/routes.ts` — Added:
+   - Task routes: `GET/POST /tasks`, `GET/PATCH/DELETE /tasks/:id`, `GET/POST /tasks/:id/events`
+   - Task dependency routes: `POST/DELETE /tasks/:id/dependencies`, `GET /tasks/:id/dependencies`, `GET /tasks/:id/dependents`, `GET /tasks/:id/ready`
+   - Attention Queue routes: `GET/POST /attention`, `PATCH /attention/:id`, `POST /attention/:id/acknowledge`, `POST /attention/:id/dismiss`
+   - Request body type definitions: `CreateTaskBody`, `UpdateTaskBody`, `AddTaskEventBody`, `AddTaskDependencyBody`, `CreateAttentionItemBody`, `UpdateAttentionItemBody`
+   - Mappers: `mapTask`, `mapTaskEvent`, `mapAttentionItem`
+
+4. `/workspace/app/Frontend/src/store.ts` — Added:
+   - Types: `Task`, `TaskEvent`, `AttentionItem`
+   - UiState additions: `tasks`, `taskEvents`, `attentionItems`, `activeTaskId`, `tasksLoading`, `attentionLoading`
+   - Task API functions: `loadTasks`, `createTask`, `updateTask`, `deleteTask`, `setActiveTask`, `loadTaskEvents`, `addTaskEvent`, `addTaskDependency`, `removeTaskDependency`, `checkTaskReady`
+   - Attention Queue API functions: `loadAttentionQueue`, `acknowledgeAttentionItem`, `dismissAttentionItem`
+
+5. `/workspace/app/Frontend/src/views/Tasks.tsx` — Complete rewrite:
+   - Replaced transient Core run steps with durable server-backed task inbox
+   - Kanban board with columns: Queued, Working, Waiting, Completed, Failed, Cancelled, Scheduled
+   - Task creation form with title, description, priority
+   - Status dropdown for active tasks, delete action
+   - Attention queue tab showing pending approvals/blocked/failed items with acknowledge/dismiss actions
+   - Scheduled tab (RoutinesPanel integration)
+   - Task duration display, retry count, priority badges
+
+**Tests**: 
+- Frontend typecheck and build pass
+- Worker typecheck passes (new code only; pre-existing errors in mail-tool.ts, routine-tools.ts, scheduler.ts, test/scheduler.spec.ts unrelated)
+- Migration applied successfully to local D1
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 16ef80e0-d530-4892-a5c6-21974e517ba3) with updated frontend assets
+- Remote migration blocked: Cloudflare API token lacks D1 query permissions (code 7403). Local migration verified.
+
+**Blockers**: 
+- Remote D1 migration cannot be applied due to API token permissions (missing D1 admin access). Requires Cloudflare dashboard intervention.
+
+**Next Action**: Prompt 52 — Turn Tasks into a persistent work inbox (filters, search, active/waiting/completed/failed/scheduled sections)
