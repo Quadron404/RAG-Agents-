@@ -1,6 +1,6 @@
 # RAG Agents — AI7 Progress Ledger
 
-Last updated: 2026-11-12 (Asia/Kolkata)
+Last updated: 2026-11-14 (Asia/Kolkata)
 Repository: https://github.com/Quadron404/RAG-Agents-
 Branch: main
 
@@ -305,3 +305,40 @@ No app source change, Worker deployment, new schedule, or authenticated producti
 5. Execute QA prompts 1–11 through AI7 Browserless remote MCP. Each prompt must produce a verified main/query.txt report before the next begins.
 
 No new schedule, source-code change, secret change, or Cloudflare application deployment was performed.
+
+
+## Chief refresh — 2026-11-14 03:20 Asia/Kolkata
+
+### Verified repository and production state
+- GitHub main HEAD before this refresh was 54695806811fcdcd1220eefe17a67aa4ef1c501f. The latest application-repository commit only synced QA Prompt 8's report into query.txt; its diff changed query.txt only. No implementation from the recent report batches had reached main.
+- Main has 298 tracked paths. Worker migrations in main are 0001–0011 only; 0012_channels.sql and 0013_computer_sessions.sql are absent. Main worker/src/chat/routes.ts has no /channels API; worker/src/chat/store.ts has no channel_id; Frontend/src/views/Chat.tsx still uses localStorage message pins; Frontend/src/views/Tasks.tsx uses Core run state and RoutinesPanel rather than a proven durable task inbox; Frontend/src/components/Shell.tsx still shows Chat/Bots/Tasks/Computer/Files; no dedicated ChiefAvatar.tsx exists. README says Gmail inbox reading and incoming replies are not implemented.
+- Cloudflare Production Worker latest observed deployment: deployment 0c5d1a87-fa05-4d50-ba39-0abbd3e2ff8a, version 5f13af22-e077-4c42-ab46-60b2ef9683e6, created 2026-11-13T20:55:59Z. Production retains DB, AI_SEARCH, ASSETS, GOOGLE_CLIENT_SECRET, SESSION_SECRET, and RAG_INTERNAL_TOKEN. Secret values were not read. No Worker secret binding named GROQ_API_KEY, GITHUB_TOKEN, GMAIL_SENDER_EMAIL, or GMAIL_SENDER_REFRESH_TOKEN is listed; CODESPACE_NAME and GMAIL_SENDER_ALIAS are empty. AGENT_PROVIDER/SUMMARY_PROVIDER are Groq, but Worker source requires GROQ_API_KEY.
+- Read-only D1 inspection of rag-agents-auth (UUID 55e7322a-4dba-4a41-acc4-273c902d97d2) confirmed d1_migrations contains only 0001–0011. Existing tables include users, sessions, oauth_states, login_audit, conversations, messages, routines, routine_runs, summary tables, chat_requests, and connector_approvals, plus channel_daily_summaries. There are no first-class channels, channel/user memory, message pin/reaction/edit/tombstone, task/event, or artifact tables. conversations lacks channel_id/pinned_at/archived_at; messages lacks reply_to_id. This directly contradicts the implication that reported branch-only migrations are deployed to Production.
+- Firecrawl independently inspected live Production desktop and mobile on 2026-11-14. Root returned HTTP 200 and showed only the RAG Agents sign-in shell. Clicking Continue with Google in the live Firecrawl browser reached Google's Sign in page with redirect_uri /auth/callback, PKCE S256, state, nonce, and openid email profile. No credentials were entered and no callback/session was completed. GET /auth/session returned authenticated:false, user:null. Unauthenticated /channels and /tasks navigation returned the sign-in SPA shell with HTTP 200; HTTP 200 alone is not API proof.
+- The supplied Google Drive avatar reference did not expose inspectable image content in this run. Preserve the original animated 3×3 glowing-dot Chief face brief, burgundy identity, and tasteful sequential patterns.
+
+### query.txt report audit — archived before reset
+- Before reset, query.txt contained 79,270 characters / 1,664 lines and 38 implementation report sections covering 39 prompt IDs: 21–40, 51–59, and 91–100. Prompts 94 and 95 were combined in one report section.
+- Status labels across those implementation reports: 33 PASS claims, 4 PARTIAL (36, 38, 39, 40), and 1 BLOCKED (35); there was one QA Prompt 8 report, BLOCKED. The PASS labels are not verified completion: many reports explicitly state remote D1 migrations failed with Cloudflare error 7403; Prompts 91–96 also state backend/Codespace redeploy was not performed; Prompts 97–100 defer major UI/version/share/template work. The remote D1 check confirms only migrations 0001–0011 are applied.
+- QA coverage was only QA Prompt 8 (blocked); QA prompts 1–7 and 9–11 had no report. Historical coverage was 39/118 implementation prompt IDs and 1/11 QA prompts, not complete.
+- QA Prompt 8 verified only the signed-out shell and 401 protection for Computer endpoints. It did not test authenticated Computer/noVNC/CDP/Terminal/restricted browsing because no isolated AI TEST SESSION / preview D1+AI Search was available.
+- This summary preserves report coverage and blockers. The raw query.txt ledger is now reset to zero bytes while the file remains present. Agents must append every prompt report to working-branch query.txt and main/query.txt and must never clear it during an active batch.
+
+### Prompt refresh and integrity
+- Replaced prompt.txt in full with an updated 118-prompt queue. Verified 118/118 headings; every prompt has an AI7 To-Do requirement, exact Wrangler token export, detailed report requirement, and main/query.txt verification gate. It now includes the verified main/Production/D1 baseline, a strict source-of-truth rule, and a remote D1 migration gate.
+  - Commit: f0a5057f8290da65afce7150ee0b034c3b8b5577
+  - Content blob: 76c7046b5a2e5bba79998866a70643357ffe3f63
+- Replaced prompt2.txt in full with an updated 11-prompt Browserless QA queue. Verified 11/11 headings; every prompt repeats the exact AI7 remote Browserless import block and trusted-server notice, requires an actual Browserless call before QA, preserves session ID, mandates reproduce → root-cause fix → tests → deploy → same-session retest, exports the Wrangler token, and syncs a detailed report to main/query.txt. It also rejects SPA fallback HTTP 200 as API proof.
+  - Commit: 0a3ffda27ad2540a6e50c70f0c7cfb5efbd20f9f
+  - Content blob: 251b94883b60372233ed72fd0c7a9605d773a039
+- Claude Duet benchmark refreshed from its official announcement and feature guide plus an independent hands-on review. RAG Agents should learn from its one ongoing main thread, shared-memory topic channels, Tasks tab, Make/artifacts, morning briefings, background cloud computer, connected apps, and approval gates, while differentiating through desktop/mobile continuity and visible/takeover-capable Computer.
+
+### Scope and next priorities
+1. Start implementation Prompt 1: create only a fail-closed isolated preview AI TEST SESSION; never bypass Production auth.
+2. Resolve provider readiness from an authorized secret source without exposing values; keep chat honestly unavailable until GROQ_API_KEY or a real configured fallback is present.
+3. Make the remote D1 migration path work and reconcile branch-only changes into main through review/tests; do not mark channels, durable messages, or tasks complete while migrations are absent.
+4. Finish channel/Main UI and server-authoritative message actions, then durable task inbox and artifact UI.
+5. Verify/redeploy the backend/Codespace path separately; a Worker deployment does not prove backend code shipped.
+6. Execute all 11 QA prompts through AI7 Browserless remote MCP. The Chief used Firecrawl only for independent live baseline inspection; this refresh did not perform Browserless QA or claim any QA PASS.
+
+No application source code, Production Worker code, secrets, D1 rows, or Cloudflare bindings were changed by this Chief refresh. No Cloudflare application deployment or authenticated production login was performed.
