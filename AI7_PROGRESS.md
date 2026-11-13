@@ -305,3 +305,22 @@ No app source change, Worker deployment, new schedule, or authenticated producti
 5. Execute QA prompts 1–11 through AI7 Browserless remote MCP. Each prompt must produce a verified main/query.txt report before the next begins.
 
 No new schedule, source-code change, secret change, or Cloudflare application deployment was performed.
+
+---
+
+## QA Prompt 4 Execution — 2026-11-13
+
+- **Prompt**: Chief orchestration, tools, approvals, and task activity
+- **Status**: BLOCKED — No authenticated test path available
+- **Browserless Session**: `s:0fdc283e-7131-4d87-b573-5d1fd77d7a4a`
+- **Production Version**: ccbdcbe7-71e7-4fb4-b348-e78890ea9cba (v36)
+- **Key Findings**:
+  - Production OAuth functional (PKCE S256, state, nonce, correct scopes)
+  - All protected endpoints correctly return 401 unauthenticated
+  - Chief chat non-operational: GROQ_API_KEY missing from Production
+  - Tasks view is frontend-only (transient Core state), no server API
+  - Routines/Computer/Gmail blocked by missing Production secrets
+  - No isolated preview deployment for synthetic authenticated testing
+- **Report**: Appended to query.txt on branch `kilo/plucky-hill-o2i` (commit ff9649b)
+- **Sync**: Pushed to GitHub; main/query.txt sync requires PR merge (no main worktree in this environment)
+- **Blocker**: Requires either isolated preview with test identity OR Production secret bindings completed
