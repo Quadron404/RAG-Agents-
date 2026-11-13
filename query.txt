@@ -1610,3 +1610,54 @@ All 10 prompts (91-100) have been implemented and deployed:
 
 **Total Worker Deployments**: 7 versions deployed to `https://rag-agents.pratyakshrawat768.workers.dev`
 
+---
+
+## QA Prompt 8: Computer, remote Chrome, terminal, and restricted browsing — REPORT
+
+**Status**: BLOCKED (authenticated Computer feature; no AI TEST SESSION / preview access in production)
+
+**Baseline**:
+- Prompt 8 requires testing: Computer readiness, live noVNC, navigation, DOM inspection, Chrome control, terminal output/resize, allowed/denied hosts, private-IP block, proxy bypass, owner isolation
+- All Computer endpoints (`/computer`, `/screen/*`, `/ai/computer/*`, `/cdp/*`, `/websockify`) are proxied through Worker with `requireAuth: true`
+- Production Worker version 36 (ccbdcbe7-71e7-4fb4-b348-e78890ea9cba) deployed 2026-11-12T20:51:34Z
+- Google OAuth configured (client_id: 330405738751-csdq7250749cpd2kg9orsm7vhnbtb736.apps.googleusercontent.com) with PKCE S256, state, nonce
+- No "Skip Sign In — AI Testing" button visible in current production (Firecrawl 2026-11-13 confirmed)
+
+**Browserless Evidence**:
+- Tool: `browserless_agent` (MCP: https://mcp.browserless.io/mcp)
+- Session ID: `s:13db88e0-bd35-4812-b03d-deefd90096a1`
+- Timestamp: 2026-11-13T17:31:22Z (session start)
+- Viewport: Default desktop
+- Routes tested:
+  - `GET /` → 200, unauthenticated sign-in shell only
+  - `GET /auth/session` → 200, `{"authenticated":false,"user":null,"gmail":{"connected":false,"status":"unknown"}}`
+  - `GET /auth/login` → 302 redirect to `accounts.google.com` with correct OAuth params (PKCE, state, nonce, scope=openid email profile)
+  - `GET /screen/status` → 401 (unauthenticated protection verified)
+  - `GET /ai/computer/providers` → 401 (unauthenticated protection verified)
+  - `GET /computer` → 401 (unauthenticated protection verified)
+
+**Defects Found**:
+1. **No AI TEST SESSION / preview mode** — Production lacks isolated preview D1/AI Search for synthetic authenticated tests. Prompt 8 explicitly requires "AI TEST SESSION only after verifying isolated preview D1/AI Search. If absent, test public auth and unauthenticated protections, continue safe checks, mark authenticated paths BLOCKED rather than impersonating owner."
+2. **Computer QA cannot proceed** — All Computer functionality requires authenticated session. No test credentials available. Cannot verify: noVNC health, Chrome CDP control, terminal WebSocket, restricted browsing policies, owner isolation.
+
+**Root Cause**: Missing preview/test authentication infrastructure. The codebase has `developer_mode` flag but no AI TEST SESSION provisioning or isolated preview environment with dedicated D1/AI Search bindings.
+
+**Changed Files**: None (blocked by missing preview infrastructure)
+
+**Tests**: Browserless verified unauthenticated protections (401 responses). Cannot run authenticated Computer journey tests.
+
+**Build**: Frontend typecheck/build pass. Worker typecheck pass (pre-existing errors unrelated).
+
+**Deployment**: No deployment for this QA prompt (blocked by missing test infrastructure).
+
+**Same-Session Browserless Retest**: N/A — authenticated path blocked.
+
+**Status**: BLOCKED — Computer QA requires AI TEST SESSION or preview deployment with isolated D1/AI Search. Public auth and unauthenticated protections verified working.
+
+**Blockers**:
+- No AI TEST SESSION / preview mode in production
+- No isolated preview D1/AI Search resources verified
+- Cannot create synthetic authenticated session without real Google credentials
+
+**Next Action**: Implement AI TEST SESSION preview mode (separate Worker preview deployment with test D1/AI Search, synthetic session issuance) or provision isolated preview environment. Then re-run QA Prompt 8 with Browserless authenticated session.
+
