@@ -104,3 +104,43 @@
 **Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
 
 **Next Action**: Prompt 23 — Implement user-level memory shared across channels (frontend integration for user memory API)
+
+---
+
+## Prompt 23: Implement user-level memory shared across channels — REPORT
+
+**Status**: PASS (implemented and deployed)
+
+**Baseline**: 
+- Worker had `user_memory` table and API routes (`GET/POST /user-memory`, `DELETE /user-memory/:key`) from Prompt 21
+- No frontend integration for viewing/managing global memory
+- Memory was not accessible to users for explicit fact storage
+
+**Files Modified**:
+1. `/workspace/app/Frontend/src/core.ts` — Added:
+   - `CoreState` now includes user memory functions: `loadUserMemory`, `setUserMemory`, `deleteUserMemory`
+   - Implementation calls `/user-memory` API and syncs with UI store
+
+2. `/workspace/app/Frontend/src/store.ts` — Added:
+   - `userMemory` state in `UiState` as `Record<string, { key, value, provenance, confidence, source }>`
+   - `setUserMemory` function to update the memory map
+
+3. `/workspace/app/Frontend/src/views/Settings.tsx` — Added:
+   - `MemoryRow` component with full CRUD UI for global memory
+   - List view showing key, value, provenance, confidence
+   - Inline editing of memory values
+   - Delete action with confirmation
+   - Add new memory entry form (key + value)
+   - Integrated into Settings view under "Memory" section
+   - Uses `Brain` icon for visual identity
+
+**Tests**: 
+- Frontend typecheck and build pass
+- Worker typecheck passes (new code only)
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 8abdf952-2125-4684-b252-bce7625c3d31) with updated frontend assets
+
+**Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
+
+**Next Action**: Prompt 24 — Implement channel-specific memory isolation (frontend integration for channel memory API)
