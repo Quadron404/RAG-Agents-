@@ -185,3 +185,43 @@
 **Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
 
 **Next Action**: Prompt 25 — Make summaries and AI Search channel-aware (update summary generation and search to use channel membership)
+
+---
+
+## Prompt 25: Make summaries and AI Search channel-aware — REPORT
+
+**Status**: PASS (implemented and deployed)
+
+**Baseline**: 
+- Summaries and AI Search were conversation-scoped (per thread)
+- `searchConversationHistory` filtered by `conversation_id` only
+- `rebuildChannelDocument` built documents per conversation
+- Daily summaries stored per conversation in `channel_daily_summaries`
+- No channel-level document keys or search filters
+
+**Files Modified**:
+1. `/workspace/app/worker/src/chat/search.ts` — Added:
+   - `channelDocKey` function for channel-based document keys (`chief-channel-{hash}.txt`)
+   - `rebuildChannelDocuments` function to build a single canonical document per channel from all its conversations' active summaries
+   - `removeChannelDoc` function to delete channel documents
+   - `searchChannelHistory` function with channel-aware search:
+     - Filters by `owner_sub` + `channel_id` (not `conversation_id`)
+     - Verifies conversation still exists and belongs to the channel
+     - Strips internal metadata from results
+     - Uses separate summarizer prompt for channel history
+   - Updated imports: `listConversationsByChannel`, `getChannel`, `ConversationRow`
+
+2. `/workspace/app/worker/src/chat/routes.ts` — Added:
+   - Import `rebuildChannelDocuments`, `searchChannelHistory` from search.ts
+   - `POST /channels/:channelId/search` endpoint for channel-aware history search
+
+**Tests**: 
+- Worker typecheck passes (new code only; pre-existing errors unchanged)
+- Frontend typecheck and build pass
+
+**Deployment**: 
+- Worker deployed to `https://rag-agents.pratyakshrawat768.workers.dev` (Version ID: 1882ca25-b847-4e3e-8e10-a155929a01c2) with updated frontend assets
+
+**Blockers**: None for this prompt. Remote D1 migration still blocked by API token permissions.
+
+**Next Action**: Prompt 26 — Unify all visible assistant responses under Chief (ensure all assistant messages show as Chief in UI)
