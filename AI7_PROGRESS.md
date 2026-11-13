@@ -305,3 +305,33 @@ No app source change, Worker deployment, new schedule, or authenticated producti
 5. Execute QA prompts 1–11 through AI7 Browserless remote MCP. Each prompt must produce a verified main/query.txt report before the next begins.
 
 No new schedule, source-code change, secret change, or Cloudflare application deployment was performed.
+
+
+## QA Prompt 8 Execution — 2026-11-13 17:31 Asia/Kolkata
+
+### QA Prompt 8: Computer, remote Chrome, terminal, and restricted browsing
+
+**Status**: BLOCKED (authenticated Computer feature; no AI TEST SESSION / preview access in production)
+
+**Browserless Session**: `s:13db88e0-bd35-4812-b03d-deefd90096a1` (MCP: https://mcp.browserless.io/mcp)
+
+**Evidence Captured**:
+- `GET /` → 200, unauthenticated sign-in shell only
+- `GET /auth/session` → 200, `authenticated:false, user:null`
+- `GET /auth/login` → 302 redirect to Google OAuth with PKCE S256, state, nonce, scope=openid email profile
+- `GET /screen/status` → 401 (unauthenticated protection verified)
+- `GET /ai/computer/providers` → 401 (unauthenticated protection verified)
+- `GET /computer` → 401 (unauthenticated protection verified)
+
+**Findings**:
+- Production Worker version 36 (ccbdcbe7-71e7-4fb4-b348-e78890ea9cba) has Google OAuth configured and working
+- No "Skip Sign In — AI Testing" button in current production
+- All Computer endpoints properly protected (401 when unauthenticated)
+- No AI TEST SESSION / preview mode available for synthetic authenticated tests
+- Computer QA cannot proceed without authenticated session
+
+**Report**: Appended to query.txt (working branch commit db18081, main commit 5469580)
+
+**Blockers**: Missing preview/test authentication infrastructure. Requires AI TEST SESSION preview mode or isolated preview environment with dedicated D1/AI Search.
+
+**Next Action**: Implement AI TEST SESSION preview mode or provision isolated preview environment before re-running QA Prompt 8.
