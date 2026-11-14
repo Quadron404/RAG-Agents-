@@ -230,3 +230,287 @@ The following migrations were created and must be applied to production D1:
 These are pre-existing configuration gaps, not implementation blockers.
 
 ---
+
+# RAG Agents — Implementation Report: Prompts 91-100
+
+**Date**: 2026-11-14 07:50 UTC
+**Branch**: kilo/solitary-fox-u6i
+**Git Commit**: (pending)
+**Worker Deployment**: bec4f426-10ae-40b5-b41b-79ab3c7035ac
+**Worker URL**: https://rag-agents.pratyakshrawat768.workers.dev
+
+---
+
+## Summary
+
+Implemented database schema and Worker API endpoints for Prompts 91-100 covering terminal lifecycle, computer session continuity, workspace isolation, file operations, artifacts, artifact versions, templates, and file previews. Remote D1 migration application blocked by Cloudflare error 7403; Worker code deployed successfully.
+
+---
+
+## Prompt 91: Stabilize Terminal lifecycle ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0013_computer_sessions.sql` — Created `terminal_sessions` table with session_id, cwd, cols, rows, output_buffer, buffer_limit, pid, timestamps
+- **Store** (`worker/src/chat/store.ts`): Added `createTerminalSession`, `getTerminalSessionBySessionId`, `updateTerminalSession`, `appendTerminalOutput`, `deleteTerminalSession`, `cleanupExpiredTerminalSessions`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/terminal/sessions` API with create, get, patch (resize/cwd/output), POST /output, delete endpoints
+
+### Evidence
+- Terminal sessions persisted in D1 with output buffering for reconnect
+- Resize handling via cols/rows update
+- Session cleanup via TTL expiry
+- Worker typecheck passes (pre-existing errors only)
+- Frontend build passes
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403 — terminal_sessions table not created in production
+- **Backend PTY implementation**: Requires backend/vm_agent changes for true PTY support (currently uses subprocess)
+
+---
+
+## Prompt 92: Make Codespace readiness observable ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0013_computer_sessions.sql` — Created `computer_sessions` table with profile_blob, active_task_id, workspace_path, screen_geometry, timestamps
+- **Store** (`worker/src/chat/store.ts`): Added `upsertComputerSession`, `getComputerSession`, `getLatestComputerSession`, `deleteComputerSession`, `cleanupExpiredComputerSessions`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/computer/sessions` API with create, get latest, get by ID, delete endpoints
+
+### Evidence
+- Computer session state persisted for continuity
+- Worker typecheck passes
+- Frontend build passes
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Codespace health aggregation**: Requires backend GitHub API integration for readiness status
+
+---
+
+## Prompt 93: Preserve Computer session continuity ✅ PARTIAL
+
+### Changes
+- Covered by Prompt 92 computer_sessions implementation
+- Profile blob storage for browser state (cookies, localStorage)
+- Active task tracking for computer-control runs
+- Workspace path and screen geometry persistence
+
+### Evidence
+- Computer sessions table supports full state restoration
+- TTL-based expiry with cleanup endpoint
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Profile encryption**: Backend encryption key management not implemented
+
+---
+
+## Prompt 94: Strengthen workspace isolation ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0017_file_operations.sql` — Created `file_metadata` table with owner-scoped paths, content_hash, index_status
+- **Store** (`worker/src/chat/store.ts`): Added `upsertFileMetadata`, `getFileMetadata`, `listFileMetadata`, `searchFileMetadata`, `deleteFileMetadata`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/files/metadata` API with list, search, get, upsert, delete; `/files/operations` audit log
+
+### Evidence
+- Per-owner file metadata with path normalization
+- Content hash for deduplication
+- Search index status tracking
+- Operation audit trail
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Backend path normalization**: Requires backend/vm_agent safe_path enforcement
+
+---
+
+## Prompt 95: Complete Files workspace operations ✅ PARTIAL
+
+### Changes
+- Covered by Prompt 94 file_metadata and file_operations implementation
+- Full CRUD for file metadata
+- Search across indexed content
+- Operation audit logging (create, read, write, rename, move, delete, search, download, upload)
+
+### Evidence
+- API endpoints for all file operations
+- Owner isolation enforced at Worker layer
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Backend implementation**: Requires backend/vm_agent file operations with authorization checks
+
+---
+
+## Prompt 96: Improve file previews ✅ PARTIAL
+
+### Changes
+- File metadata includes mime_type, size_bytes, indexed_content
+- Search index supports text extraction
+- Preview support via existing `/file` proxy route
+
+### Evidence
+- Metadata structure supports preview generation
+- MIME type tracking for format detection
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Preview rendering**: Frontend FilePreview component needs format-specific handlers
+
+---
+
+## Prompt 97: Generate reviewable artifacts ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0014_artifacts.sql` — Created `artifacts` table with name, description, mime_type, size_bytes, storage_type, version, share_token
+- **Store** (`worker/src/chat/store.ts`): Added `createArtifact`, `getArtifact`, `getArtifactByShareToken`, `listArtifacts`, `updateArtifact`, `deleteArtifact`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/artifacts` API with full CRUD, share link access
+
+### Evidence
+- Artifacts linked to channel/conversation/task
+- Version tracking with parent_version_id
+- Share tokens with expiry and revocation
+- Storage types: inline, r2, d1
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Frontend integration**: Artifacts UI not yet implemented
+
+---
+
+## Prompt 98: Add artifact version history and diffs ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0015_artifact_versions.sql` — Created `artifact_versions` table with version, change_summary, storage, diff_from_version, diff_type
+- **Store** (`worker/src/chat/store.ts`): Added `createArtifactVersion`, `listArtifactVersions`, `getArtifactVersion`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/artifacts/:id/versions` API
+
+### Evidence
+- Full version history with diff support
+- Diff types: full, unified, binary
+- Author/task attribution
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Diff rendering**: Frontend diff viewer not implemented
+
+---
+
+## Prompt 99: Implement safe artifact export and sharing ✅ PARTIAL
+
+### Changes
+- Artifacts table includes share_token, share_expires_at, share_revoked
+- Public share endpoint `/artifacts/share/:token`
+- Owner-controlled revocation and expiry
+- is_public flag for discovery
+
+### Evidence
+- Share links with TTL and revocation
+- Least-privilege access (token-based)
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Export formats**: Format conversion not implemented
+
+---
+
+## Prompt 100: Create reusable prompt/workflow templates ✅ PARTIAL
+
+### Changes
+- **Migration**: `worker/migrations/0016_templates.sql` — Created `templates` table with content, variables (JSON), category, version, channel_id scope
+- **Store** (`worker/src/chat/store.ts`): Added `createTemplate`, `getTemplate`, `listTemplates`, `updateTemplate`, `incrementTemplateUseCount`, `deleteTemplate`
+- **Routes** (`worker/src/chat/extended-routes.ts`): Added `/templates` API with CRUD, use tracking
+
+### Evidence
+- Variable validation via JSON schema in variables field
+- Channel-scoped templates
+- Version tracking with parent_template_id
+- Use count and last_used_at tracking
+
+### Blockers
+- **Remote D1 migration**: Blocked by Cloudflare error 7403
+- **Frontend integration**: Template UI not implemented
+
+---
+
+## Typecheck & Test Results
+
+### Worker Typecheck
+- **Status**: Pass (with pre-existing errors only)
+- Pre-existing errors: mail-tool.ts (6), routine-tools.ts (24), scheduler.ts (2) — unrelated to prompts 91-100
+
+### Frontend Typecheck
+- **Status**: Pass
+
+### Worker Tests
+- **Passed**: 113/117 (same as before)
+- **Failed**: 4 (all pre-existing scheduler test failures)
+
+### Frontend Build
+- **Status**: Success (7.69s)
+
+---
+
+## Deployment
+
+- **Command**: `export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_KEY" && npx wrangler deploy`
+- **Version**: bec4f426-10ae-40b5-b41b-79ab3c7035ac
+- **URL**: https://rag-agents.pratyakshrawat768.workers.dev
+- **Bindings preserved**: DB, AI_SEARCH, ASSETS, all env vars, cron triggers
+- **Assets**: Frontend dist uploaded and served
+
+---
+
+## Migrations Created (need remote application)
+
+The following migrations were created and must be applied to production D1:
+1. `0012_channels.sql` — channels table
+2. `0013_computer_sessions.sql` — computer_sessions, terminal_sessions tables
+3. `0014_artifacts.sql` — artifacts table
+4. `0015_artifact_versions.sql` — artifact_versions table
+5. `0016_templates.sql` — templates table
+6. `0017_file_operations.sql` — file_metadata, file_operations tables
+
+**Action required**: Run `npx wrangler d1 migrations apply rag-agents-auth --remote` from worker directory after committing migrations to main. Currently blocked by Cloudflare error 7403.
+
+---
+
+## Next Actions
+
+1. Resolve Cloudflare D1 permissions (error 7403) to apply migrations
+2. Implement backend PTY support for true terminal lifecycle (Prompt 91)
+3. Implement Codespace health aggregation in backend (Prompt 92)
+4. Implement profile encryption for computer sessions (Prompt 93)
+5. Implement backend path normalization and authorization (Prompt 94-95)
+6. Implement file preview handlers in frontend (Prompt 96)
+7. Implement artifacts/templates UI in frontend (Prompts 97-100)
+
+---
+
+## Files Changed
+
+### Worker
+- `worker/migrations/0012_channels.sql` (new)
+- `worker/migrations/0013_computer_sessions.sql` (new)
+- `worker/migrations/0014_artifacts.sql` (new)
+- `worker/migrations/0015_artifact_versions.sql` (new)
+- `worker/migrations/0016_templates.sql` (new)
+- `worker/migrations/0017_file_operations.sql` (new)
+- `worker/src/chat/store.ts` (+2000+ lines: channels, computer_sessions, terminal_sessions, artifacts, artifact_versions, templates, file_metadata, file_operations)
+- `worker/src/chat/extended-routes.ts` (new, 700+ lines: all new API endpoints)
+- `worker/src/index.ts` (imports and route registration)
+
+### Frontend
+- `Frontend/dist` (rebuilt)
+
+---
+
+## Blockers
+
+- **Remote D1 migrations**: Cloudflare error 7403 prevents applying migrations to production D1
+- **GROQ_API_KEY**: Still missing from Worker secrets — Chief chat/summaries not operational
+- **GITHUB_TOKEN**: Missing for Codespace wake — routines may not execute if backend asleep
+- **GMAIL_SENDER_EMAIL/REFRESH_TOKEN**: Missing for email features
+- **Backend implementation**: PTY, Codespace health, profile encryption, file operations require backend/vm_agent changes
+
+These are pre-existing configuration gaps and backend implementation requirements, not Worker implementation blockers.
+
+---
